@@ -1,0 +1,190 @@
+import type { AuditRepository } from './audit.repository.js';
+import type { AuditQueryFilters, AuditRecord } from './audit.types.js';
+import type { PostgresAccess } from '../persistence/postgres-access.js';
+import { getSharedPostgresAccess } from '../persistence/postgres-access.js';
+
+type AuditRecordRow = {
+  audit_id: string;
+  action: string;
+  device_id: string;
+  command_id: string;
+  actor: string;
+  created_at: string | Date;
+  result: string;
+  metadata: Record<string, unknown> | null;
+};
+
+function toIsoTimestamp(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function parseTimestamp(value: string | Date | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const timestamp = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+export class InMemoryAuditRepository implements AuditRepository {
+  private readonly records = new Map<string, AuditRecord>();
+  private readonly postgres: PostgresAccess | null;
+
+  private constructor(postgres: PostgresAccess | null = getSharedPostgresAccess()) {
+    this.postgres = postgres;
+  }
+
+  static async create(postgres: PostgresAccess | null = getSharedPostgresAccess()): Promise<InMemoryAuditRepository> {
+    const repository = new InMemoryAuditRepository(postgres);
+    await repository.loadFromPersistence();
+    return repository;
+  }
+
+  private listAllDescending(): AuditRecord[] {
+    return [...this.records.values()].reverse();
+  }
+
+  private filterByQuery(filters: AuditQueryFilters = {}): AuditRecord[] {
+    const fromTimestamp = parseTimestamp(filters.from);
+    const toTimestamp = parseTimestamp(filters.to);
+
+    if (
+      (filters.from !== undefined && fromTimestamp === null) ||
+      (filters.to !== undefined && toTimestamp === null)
+    ) {
+      return [];
+    }
+
+    return this.listAllDescending().filter((record) => {
+      if (filters.actor !== undefined && record.actor !== filters.actor) {
+        return false;
+      }
+
+      if (filters.action !== undefined && record.action !== filters.action) {
+        return false;
+      }
+
+      if (filters.commandId !== undefined && record.commandId !== filters.commandId) {
+        return false;
+      }
+
+      if (filters.deviceId !== undefined && record.deviceId !== filters.deviceId) {
+        return false;
+      }
+
+      const recordTimestamp = Date.parse(record.createdAt);
+      if (Number.isNaN(recordTimestamp)) {
+        return false;
+      }
+
+      if (fromTimestamp !== null && recordTimestamp < fromTimestamp) {
+        return false;
+      }
+
+      if (toTimestamp !== null && recordTimestamp > toTimestamp) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  save(record: AuditRecord): void {
+    this.records.set(record.auditId, record);
+    void this.persistRecord(record);
+  }
+
+  get(auditId: string): AuditRecord | null {
+    return this.records.get(auditId) || null;
+  }
+
+  list(limit = 100): AuditRecord[] {
+    return this.listAllDescending().slice(0, limit);
+  }
+
+  query(filters: AuditQueryFilters = {}): AuditRecord[] {
+    const { limit = 100 } = filters;
+    return this.filterByQuery(filters).slice(0, limit);
+  }
+
+  listByCommandId(commandId: string, limit = 100): AuditRecord[] {
+    return this.query({ commandId, limit });
+  }
+
+  listByDeviceId(deviceId: string, limit = 100): AuditRecord[] {
+    return this.query({ deviceId, limit });
+  }
+
+  listByActor(actor: string, limit = 100): AuditRecord[] {
+    return this.query({ actor, limit });
+  }
+
+  listByAction(action: string, limit = 100): AuditRecord[] {
+    return this.query({ action, limit });
+  }
+
+  listByTimeRange(from?: string | Date, to?: string | Date, limit = 100): AuditRecord[] {
+    return this.query({ from, to, limit });
+  }
+
+  private async persistRecord(record: AuditRecord): Promise<void> {
+    if (!this.postgres) {
+      return;
+    }
+
+    await this.postgres.execute(
+      `
+        INSERT INTO audit_logs (
+          audit_id, action, device_id, command_id, actor, created_at, result, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8::jsonb)
+        ON CONFLICT (audit_id) DO UPDATE SET
+          action = EXCLUDED.action,
+          device_id = EXCLUDED.device_id,
+          command_id = EXCLUDED.command_id,
+          actor = EXCLUDED.actor,
+          created_at = EXCLUDED.created_at,
+          result = EXCLUDED.result,
+          metadata = EXCLUDED.metadata
+      `,
+      [
+        record.auditId,
+        record.action,
+        record.deviceId,
+        record.commandId,
+        record.actor,
+        record.createdAt,
+        record.result,
+        record.metadata ? JSON.stringify(record.metadata) : null,
+      ],
+    );
+  }
+
+  private async loadFromPersistence(): Promise<void> {
+    if (!this.postgres) {
+      return;
+    }
+
+    const rows = await this.postgres.query<AuditRecordRow>(
+      `
+        SELECT audit_id, action, device_id, command_id, actor, created_at, result, metadata
+        FROM audit_logs
+        ORDER BY created_at ASC
+      `,
+    );
+
+    for (const row of rows) {
+      this.records.set(row.audit_id, {
+        auditId: row.audit_id,
+        action: row.action,
+        deviceId: row.device_id,
+        commandId: row.command_id,
+        actor: row.actor,
+        createdAt: toIsoTimestamp(row.created_at),
+        result: row.result,
+        metadata: row.metadata ?? undefined,
+      });
+    }
+  }
+}

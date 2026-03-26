@@ -1,0 +1,38 @@
+{
+  "name": "sgp-vibration-datacenter-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:nodemon": "nodemon --watch src --ext ts --exec \"tsx src/index.ts\"",
+    "dev:web": "cd ../web && npm run dev",
+    "build": "tsc -p tsconfig.json",
+    "build:web": "cd ../web && npm run build",
+    "start": "node dist/index.js",
+    "simulate:devices": "tsx src/tools/device-simulator.ts",
+    "quality:s8": "tsx src/tools/sprint8-quality-gate.ts",
+    "quality:s9": "tsx src/tools/sprint9-rollout-drill.ts",
+    "quality:s10": "tsx src/tools/sprint10-phase-exit.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/static": "^8.3.0",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.8.4",
+    "ioredis": "^5.10.1",
+    "pg": "^8.20.0",
+    "pino": "^10.3.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "nodemon": "^3.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}
