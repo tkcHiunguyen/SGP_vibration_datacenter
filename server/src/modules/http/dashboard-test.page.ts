@@ -915,6 +915,7 @@ export function renderDashboardTestPage(): string {
       telemetryLines: [],
       alertLines: [],
       auditLogs: [],
+      devices: [],
       fleetGroups: [],
       fleetPreview: [],
       fleetBatchResult: {
@@ -2097,6 +2098,96 @@ export function renderDashboardTestPage(): string {
       deviceCount.textContent = String(list.filter((item) => item && item.online).length);
     }
 
+    function syncDeviceMetadataFromSocket(message) {
+      const payload = unwrapPayload(message);
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      const deviceId = typeof payload.deviceId === 'string' ? payload.deviceId.trim() : '';
+      if (!deviceId) {
+        return;
+      }
+
+      const metadataPayload =
+        payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
+          ? payload.metadata
+          : {};
+
+      const existingIndex = state.devices.findIndex((item) => item && item.deviceId === deviceId);
+      const existing =
+        existingIndex >= 0 && state.devices[existingIndex] && typeof state.devices[existingIndex] === 'object'
+          ? state.devices[existingIndex]
+          : {
+              deviceId,
+              online: true,
+              metadata: {},
+            };
+
+      const merged = {
+        ...existing,
+        deviceId,
+        metadata: {
+          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+          ...metadataPayload,
+        },
+      };
+
+      if (existingIndex >= 0) {
+        state.devices.splice(existingIndex, 1, merged);
+      } else {
+        state.devices.push(merged);
+      }
+
+      renderDevices(state.devices);
+    }
+
+    function syncDeviceHeartbeatFromSocket(message) {
+      const payload = unwrapPayload(message);
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      const deviceId = typeof payload.deviceId === 'string' ? payload.deviceId.trim() : '';
+      if (!deviceId) {
+        return;
+      }
+
+      const heartbeatPayload =
+        payload.heartbeat && typeof payload.heartbeat === 'object' && !Array.isArray(payload.heartbeat)
+          ? payload.heartbeat
+          : {};
+
+      const existingIndex = state.devices.findIndex((item) => item && item.deviceId === deviceId);
+      const existing =
+        existingIndex >= 0 && state.devices[existingIndex] && typeof state.devices[existingIndex] === 'object'
+          ? state.devices[existingIndex]
+          : {
+              deviceId,
+              online: true,
+              metadata: {},
+            };
+
+      const merged = {
+        ...existing,
+        deviceId,
+        connectedAt: payload.connectedAt || existing.connectedAt,
+        lastHeartbeatAt: payload.lastHeartbeatAt || existing.lastHeartbeatAt,
+        heartbeat: {
+          ...(existing.heartbeat && typeof existing.heartbeat === 'object' ? existing.heartbeat : {}),
+          ...heartbeatPayload,
+        },
+      };
+
+      if (existingIndex >= 0) {
+        state.devices.splice(existingIndex, 1, merged);
+      } else {
+        state.devices.push(merged);
+      }
+
+      renderDevices(state.devices);
+    }
+
     function renderOpsHealth(overallPayload, readinessPayload) {
       const view = {
         overall: unwrapPayload(overallPayload),
@@ -2409,15 +2500,18 @@ export function renderDashboardTestPage(): string {
       const data = await fetchJsonMaybe('/api/devices');
       const list = normalizeArray(data);
       if (!list.length && data && typeof data === 'object' && Array.isArray(data.data)) {
-        renderDevices(data.data);
+        state.devices = data.data;
+        renderDevices(state.devices);
         return;
       }
       if (!list.length && !data) {
+        state.devices = [];
         deviceList.textContent = getAuthFailureHint('Device API') || 'Device API unavailable or returned no data.';
         deviceCount.textContent = '-';
         return;
       }
-      renderDevices(list);
+      state.devices = list;
+      renderDevices(state.devices);
     }
 
     async function refreshOpsDashboard() {
@@ -3016,6 +3110,14 @@ export function renderDashboardTestPage(): string {
 
       socket.on('alert', (message) => {
         syncAlertFromSocket(message);
+      });
+
+      socket.on('device:metadata', (message) => {
+        syncDeviceMetadataFromSocket(message);
+      });
+
+      socket.on('device:heartbeat', (message) => {
+        syncDeviceHeartbeatFromSocket(message);
       });
     }
 

@@ -35,11 +35,11 @@ export class TelemetryService {
     return this.repository.getLast();
   }
 
-  listHistory(query: TelemetryHistoryQuery): TelemetryHistoryResult {
-    return this.repository.listHistory(query);
+  async listHistory(query: TelemetryHistoryQuery): Promise<TelemetryHistoryResult> {
+    return await this.repository.listHistory(query);
   }
 
-  applyRetention(): { removed: number; kept: number; cutoffAt: string } | null {
-    return this.repository.applyRetention();
+  async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {
+    return await this.repository.applyRetention();
   }
 }

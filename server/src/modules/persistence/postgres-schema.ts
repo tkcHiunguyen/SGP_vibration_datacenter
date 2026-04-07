@@ -1,6 +1,7 @@
 export const POSTGRES_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS device_metadata (
   device_id TEXT PRIMARY KEY,
+  uuid TEXT,
   name TEXT,
   site TEXT,
   zone TEXT,
@@ -15,8 +16,18 @@ CREATE TABLE IF NOT EXISTS device_sessions (
   device_id TEXT PRIMARY KEY,
   socket_id TEXT NOT NULL,
   connected_at TIMESTAMPTZ NOT NULL,
-  last_heartbeat_at TIMESTAMPTZ NOT NULL
+  last_heartbeat_at TIMESTAMPTZ NOT NULL,
+  socket_connected BOOLEAN,
+  sta_connected BOOLEAN,
+  signal INTEGER,
+  uptime_sec INTEGER
 );
+
+ALTER TABLE IF EXISTS device_metadata ADD COLUMN IF NOT EXISTS uuid TEXT;
+ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS socket_connected BOOLEAN;
+ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS sta_connected BOOLEAN;
+ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS signal INTEGER;
+ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS uptime_sec INTEGER;
 
 CREATE TABLE IF NOT EXISTS alert_rules (
   rule_id TEXT PRIMARY KEY,

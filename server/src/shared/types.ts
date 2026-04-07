@@ -116,11 +116,22 @@ export type IncidentRecord = {
 export type DeviceSession = {
   deviceId: string;
   socketId: string;
+  clientIp?: string;
   connectedAt: string;
+  lastHeartbeatAt: string;
+  heartbeat?: DeviceHeartbeat;
+};
+
+export type DeviceHeartbeat = {
+  socketConnected?: boolean;
+  staConnected?: boolean;
+  signal?: number;
+  uptimeSec?: number;
 };
 
 export type DeviceMetadata = {
   deviceId: string;
+  uuid?: string;
   name?: string;
   site?: string;
   zone?: string;

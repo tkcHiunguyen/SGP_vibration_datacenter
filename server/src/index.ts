@@ -12,7 +12,7 @@ import { AuditService } from './modules/audit/audit.service.js';
 import { createAuthServiceFromEnv } from './modules/auth/index.js';
 import { InMemoryDeviceRepository } from './modules/device/in-memory-device.repository.js';
 import { DeviceService } from './modules/device/device.service.js';
-import { InMemoryTelemetryRepository } from './modules/telemetry/in-memory-telemetry.repository.js';
+import { MySqlTelemetryRepository } from './modules/telemetry/mysql-telemetry.repository.js';
 import { TelemetryService } from './modules/telemetry/telemetry.service.js';
 import { InMemoryCommandRepository } from './modules/command/in-memory-command.repository.js';
 import { CommandService } from './modules/command/command.service.js';
@@ -26,15 +26,24 @@ import {
   createObservabilityMetrics,
   registerObservabilityRoutes,
 } from './modules/observability/index.js';
-import { getSharedPostgresAccess, isPostgresAccessEnabled } from './modules/persistence/postgres-access.js';
+import { getSharedMySqlAccess, isMySqlAccessEnabled } from './modules/persistence/mysql-access.js';
 import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
 import { registerSocketHandlers } from './modules/realtime/socket.handlers.js';
 import { TelemetryIngressGuard } from './modules/reliability/telemetry-ingress-guard.js';
 
 const serviceName = 'sgp-vibration-datacenter-server';
+const isRunningViaPnpm = (process.env.npm_execpath || '').includes('pnpm');
 const app = Fastify({
-  logger: { level: env.LOG_LEVEL },
+  logger: {
+    level: env.LOG_LEVEL,
+    formatters: {
+      bindings: () => ({}),
+      level: (label) => (isRunningViaPnpm ? {} : { level: label }),
+    },
+    timestamp: false,
+  },
+  disableRequestLogging: true,
 });
 
 await app.register(cors, { origin: true });
@@ -48,15 +57,15 @@ await app.register(fastifyStatic, {
   prefix: '/app/',
 });
 
-const postgresAccess = getSharedPostgresAccess();
-await postgresAccess?.ensureReady();
+const mysqlAccess = getSharedMySqlAccess();
+await mysqlAccess?.ensureReady();
 
-const deviceRepository = await InMemoryDeviceRepository.create(postgresAccess);
-const telemetryRepository = new InMemoryTelemetryRepository();
+const deviceRepository = await InMemoryDeviceRepository.create(mysqlAccess);
+const telemetryRepository = await MySqlTelemetryRepository.create(mysqlAccess);
 const commandRepository = new InMemoryCommandRepository();
-const alertRepository = await InMemoryAlertRepository.create(postgresAccess);
-const auditRepository = await InMemoryAuditRepository.create(postgresAccess);
-const incidentRepository = await InMemoryIncidentRepository.create(postgresAccess);
+const alertRepository = await InMemoryAlertRepository.create(mysqlAccess);
+const auditRepository = await InMemoryAuditRepository.create(mysqlAccess);
+const incidentRepository = await InMemoryIncidentRepository.create(mysqlAccess);
 const fleetRepository = new InMemoryFleetRepository();
 const governanceRepository = new InMemoryGovernanceRepository();
 const rolloutRepository = new InMemoryRolloutRepository();
@@ -109,10 +118,10 @@ const updateRuntimeGauges = () => {
     'Alert signals classified as flapping',
   );
   metrics.setGauge(
-    'postgres_persistence_enabled',
-    isPostgresAccessEnabled() ? 1 : 0,
+    'mysql_persistence_enabled',
+    isMySqlAccessEnabled() ? 1 : 0,
     {},
-    'Whether Postgres-backed persistence is configured',
+    'Whether MySQL-backed persistence is configured',
   );
   metrics.setGauge(
     'rollout_running_plans',
@@ -196,24 +205,24 @@ registerObservabilityRoutes({
       },
     ];
 
-    if (!postgresAccess) {
+    if (!mysqlAccess) {
       checks.push({
-        name: 'postgres',
+        name: 'mysql',
         status: 'degraded',
-        message: 'Postgres persistence not configured; using local fallback',
+        message: 'MySQL persistence not configured; using local fallback',
       });
     } else {
       try {
-        await postgresAccess.ensureReady();
-        await postgresAccess.execute('SELECT 1');
+        await mysqlAccess.ensureReady();
+        await mysqlAccess.execute('SELECT 1');
         checks.push({
-          name: 'postgres',
+          name: 'mysql',
           status: 'healthy',
-          message: 'Postgres persistence ready',
+          message: 'MySQL persistence ready',
         });
       } catch (error) {
         checks.push({
-          name: 'postgres',
+          name: 'mysql',
           status: 'unhealthy',
           message: error instanceof Error ? error.message : String(error),
         });
@@ -309,7 +318,7 @@ const shutdown = async (signal: string) => {
   clearInterval(rolloutEngineSweep);
   realtimeGateway.close();
   await app.close();
-  await postgresAccess?.close();
+  await mysqlAccess?.close();
   process.exit(0);
 };
 
@@ -318,6 +327,6 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ port: env.PORT, host: env.HOST });
 app.log.info(
-  { port: env.PORT, host: env.HOST, postgresPersistence: isPostgresAccessEnabled() },
+  { port: env.PORT, host: env.HOST, mysqlPersistence: isMySqlAccessEnabled() },
   'Server started',
 );

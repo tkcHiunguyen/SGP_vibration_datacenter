@@ -3,6 +3,7 @@
 
 # Local tooling artifacts
 .playwright-cli/
+.vscode/
 
 # Logs
 *.log
@@ -23,3 +24,16 @@ web/.vite/
 
 # TypeScript
 *.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+tests/
+playwright.config.ts
+
+# Runtime telemetry data (do not track)
+server/data/telemetry/
+output/

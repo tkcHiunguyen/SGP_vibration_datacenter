@@ -5,8 +5,8 @@ import type {
   IncidentStatus,
   IncidentTimelineEntry,
 } from '../../shared/types.js';
-import type { PostgresAccess } from '../persistence/postgres-access.js';
-import { getSharedPostgresAccess } from '../persistence/postgres-access.js';
+import type { MySqlAccess } from '../persistence/mysql-access.js';
+import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 import type { IncidentQueryFilters, IncidentRepository, IncidentSummary } from './incident.repository.js';
 
 type IncidentRow = {
@@ -18,7 +18,7 @@ type IncidentRow = {
   owner: string | null;
   site: string | null;
   device_id: string | null;
-  alert_ids: string[] | null;
+  alert_ids: string[] | string | null;
   primary_alert_id: string | null;
   created_at: string | Date;
   updated_at: string | Date;
@@ -39,7 +39,7 @@ type IncidentTimelineRow = {
   actor: string;
   created_at: string | Date;
   message: string | null;
-  metadata: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | string | null;
 };
 
 function toIsoTimestamp(value: string | Date): string {
@@ -54,14 +54,14 @@ export class InMemoryIncidentRepository implements IncidentRepository {
   private readonly incidents = new Map<string, IncidentRecord>();
   private readonly timelineByIncident = new Map<string, IncidentTimelineEntry[]>();
   private readonly order: string[] = [];
-  private readonly postgres: PostgresAccess | null;
+  private readonly mysql: MySqlAccess | null;
 
-  private constructor(postgres: PostgresAccess | null = getSharedPostgresAccess()) {
-    this.postgres = postgres;
+  private constructor(mysql: MySqlAccess | null = getSharedMySqlAccess()) {
+    this.mysql = mysql;
   }
 
-  static async create(postgres: PostgresAccess | null = getSharedPostgresAccess()): Promise<InMemoryIncidentRepository> {
-    const repository = new InMemoryIncidentRepository(postgres);
+  static async create(mysql: MySqlAccess | null = getSharedMySqlAccess()): Promise<InMemoryIncidentRepository> {
+    const repository = new InMemoryIncidentRepository(mysql);
     await repository.ensurePersistenceShape();
     await repository.loadFromPersistence();
     return repository;
@@ -186,57 +186,20 @@ export class InMemoryIncidentRepository implements IncidentRepository {
   }
 
   private async ensurePersistenceShape(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(`
-      CREATE TABLE IF NOT EXISTS incidents (
-        incident_id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        summary TEXT,
-        severity TEXT NOT NULL,
-        status TEXT NOT NULL,
-        owner TEXT,
-        site TEXT,
-        device_id TEXT,
-        alert_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-        primary_alert_id TEXT,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        opened_at TIMESTAMPTZ NOT NULL,
-        assigned_at TIMESTAMPTZ,
-        assigned_by TEXT,
-        monitoring_at TIMESTAMPTZ,
-        resolved_at TIMESTAMPTZ,
-        resolved_by TEXT,
-        closed_at TIMESTAMPTZ,
-        closed_by TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS incident_timeline (
-        entry_id TEXT PRIMARY KEY,
-        incident_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        actor TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        message TEXT,
-        metadata JSONB
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_incidents_status_updated_at ON incidents (status, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_incidents_owner_updated_at ON incidents (owner, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_incidents_site_updated_at ON incidents (site, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_incident_timeline_incident_created_at ON incident_timeline (incident_id, created_at ASC);
-    `);
+    // Schema is initialized globally in MySqlAccess.
+    await this.mysql.execute('SELECT 1');
   }
 
   private async loadFromPersistence(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    const incidents = await this.postgres.query<IncidentRow>(`
+    const incidents = await this.mysql.query<IncidentRow>(`
       SELECT incident_id, title, summary, severity, status, owner, site, device_id, alert_ids, primary_alert_id,
              created_at, updated_at, opened_at, assigned_at, assigned_by, monitoring_at,
              resolved_at, resolved_by, closed_at, closed_by
@@ -254,7 +217,10 @@ export class InMemoryIncidentRepository implements IncidentRepository {
         owner: row.owner ?? undefined,
         site: row.site ?? undefined,
         deviceId: row.device_id ?? undefined,
-        alertIds: row.alert_ids ?? [],
+        alertIds:
+          typeof row.alert_ids === 'string'
+            ? (JSON.parse(row.alert_ids) as string[])
+            : (row.alert_ids ?? []),
         primaryAlertId: row.primary_alert_id ?? undefined,
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
@@ -271,7 +237,7 @@ export class InMemoryIncidentRepository implements IncidentRepository {
       this.order.push(record.incidentId);
     }
 
-    const timeline = await this.postgres.query<IncidentTimelineRow>(`
+    const timeline = await this.mysql.query<IncidentTimelineRow>(`
       SELECT entry_id, incident_id, type, actor, created_at, message, metadata
       FROM incident_timeline
       ORDER BY created_at ASC
@@ -285,7 +251,10 @@ export class InMemoryIncidentRepository implements IncidentRepository {
         actor: row.actor,
         createdAt: toIsoTimestamp(row.created_at),
         message: row.message ?? undefined,
-        metadata: row.metadata ?? undefined,
+        metadata:
+          typeof row.metadata === 'string'
+            ? (JSON.parse(row.metadata) as Record<string, unknown>)
+            : (row.metadata ?? undefined),
       };
       const entries = this.timelineByIncident.get(entry.incidentId) ?? [];
       entries.push(entry);
@@ -294,11 +263,11 @@ export class InMemoryIncidentRepository implements IncidentRepository {
   }
 
   private async persistIncident(record: IncidentRecord): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO incidents (
           incident_id, title, summary, severity, status, owner, site, device_id, alert_ids, primary_alert_id,
@@ -306,30 +275,30 @@ export class InMemoryIncidentRepository implements IncidentRepository {
           resolved_at, resolved_by, closed_at, closed_by
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
-          $11::timestamptz, $12::timestamptz, $13::timestamptz, $14::timestamptz, $15, $16::timestamptz,
-          $17::timestamptz, $18, $19::timestamptz, $20
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?
         )
-        ON CONFLICT (incident_id) DO UPDATE SET
-          title = EXCLUDED.title,
-          summary = EXCLUDED.summary,
-          severity = EXCLUDED.severity,
-          status = EXCLUDED.status,
-          owner = EXCLUDED.owner,
-          site = EXCLUDED.site,
-          device_id = EXCLUDED.device_id,
-          alert_ids = EXCLUDED.alert_ids,
-          primary_alert_id = EXCLUDED.primary_alert_id,
-          created_at = EXCLUDED.created_at,
-          updated_at = EXCLUDED.updated_at,
-          opened_at = EXCLUDED.opened_at,
-          assigned_at = EXCLUDED.assigned_at,
-          assigned_by = EXCLUDED.assigned_by,
-          monitoring_at = EXCLUDED.monitoring_at,
-          resolved_at = EXCLUDED.resolved_at,
-          resolved_by = EXCLUDED.resolved_by,
-          closed_at = EXCLUDED.closed_at,
-          closed_by = EXCLUDED.closed_by
+        ON DUPLICATE KEY UPDATE
+          title = VALUES(title),
+          summary = VALUES(summary),
+          severity = VALUES(severity),
+          status = VALUES(status),
+          owner = VALUES(owner),
+          site = VALUES(site),
+          device_id = VALUES(device_id),
+          alert_ids = VALUES(alert_ids),
+          primary_alert_id = VALUES(primary_alert_id),
+          created_at = VALUES(created_at),
+          updated_at = VALUES(updated_at),
+          opened_at = VALUES(opened_at),
+          assigned_at = VALUES(assigned_at),
+          assigned_by = VALUES(assigned_by),
+          monitoring_at = VALUES(monitoring_at),
+          resolved_at = VALUES(resolved_at),
+          resolved_by = VALUES(resolved_by),
+          closed_at = VALUES(closed_at),
+          closed_by = VALUES(closed_by)
       `,
       [
         record.incidentId,
@@ -357,23 +326,23 @@ export class InMemoryIncidentRepository implements IncidentRepository {
   }
 
   private async persistTimeline(entry: IncidentTimelineEntry): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO incident_timeline (
           entry_id, incident_id, type, actor, created_at, message, metadata
         )
-        VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7::jsonb)
-        ON CONFLICT (entry_id) DO UPDATE SET
-          incident_id = EXCLUDED.incident_id,
-          type = EXCLUDED.type,
-          actor = EXCLUDED.actor,
-          created_at = EXCLUDED.created_at,
-          message = EXCLUDED.message,
-          metadata = EXCLUDED.metadata
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          incident_id = VALUES(incident_id),
+          type = VALUES(type),
+          actor = VALUES(actor),
+          created_at = VALUES(created_at),
+          message = VALUES(message),
+          metadata = VALUES(metadata)
       `,
       [
         entry.entryId,

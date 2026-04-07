@@ -1,4 +1,4 @@
-import type { DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
 
 export interface DeviceRepository {
   upsertMetadata(metadata: DeviceMetadata): void;
@@ -9,7 +9,7 @@ export interface DeviceRepository {
   getSession(deviceId: string): DeviceSession | null;
   listSessions(): DeviceSession[];
   removeIfSocketMatches(deviceId: string, socketId: string): boolean;
-  touch(deviceId: string, isoTime: string): void;
+  touch(deviceId: string, isoTime: string, heartbeat?: DeviceHeartbeat): DeviceSession | null;
   isConnected(deviceId: string): boolean;
   countConnected(): number;
 }

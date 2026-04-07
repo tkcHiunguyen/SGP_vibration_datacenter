@@ -1,7 +1,13 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import type { Socket } from 'socket.io';
-import type { AlertRecord, DeviceCommand, TelemetryMessage } from '../../shared/types.js';
+import type {
+  AlertRecord,
+  DeviceCommand,
+  DeviceHeartbeat,
+  DeviceMetadata,
+  TelemetryMessage,
+} from '../../shared/types.js';
 import type { RealtimeGateway } from './realtime.gateway.js';
 
 export class SocketIoGateway implements RealtimeGateway {
@@ -21,6 +27,19 @@ export class SocketIoGateway implements RealtimeGateway {
 
   broadcastAlert(record: AlertRecord): void {
     this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('alert', record);
+  }
+
+  broadcastDeviceHeartbeat(payload: {
+    deviceId: string;
+    connectedAt?: string;
+    lastHeartbeatAt?: string;
+    heartbeat?: DeviceHeartbeat;
+  }): void {
+    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('device:heartbeat', payload);
+  }
+
+  broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void {
+    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('device:metadata', payload);
   }
 
   sendCommand(deviceId: string, command: DeviceCommand): void {

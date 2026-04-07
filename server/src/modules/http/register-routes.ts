@@ -58,6 +58,7 @@ export function registerRoutes({
 
   const deviceCreateSchema = z.object({
     deviceId: z.string().min(1),
+    uuid: z.string().optional(),
     name: z.string().optional(),
     site: z.string().optional(),
     zone: z.string().optional(),
@@ -67,6 +68,7 @@ export function registerRoutes({
   });
 
   const deviceUpdateSchema = z.object({
+    uuid: z.string().optional(),
     name: z.string().optional(),
     site: z.string().optional(),
     zone: z.string().optional(),
@@ -550,6 +552,10 @@ export function registerRoutes({
   });
 
   app.get('/fleet', async (_, reply) => {
+    return reply.sendFile('index.html');
+  });
+
+  app.get('/threed', async (_, reply) => {
     return reply.sendFile('index.html');
   });
 
@@ -1893,6 +1899,8 @@ export function registerRoutes({
         online: Boolean(session),
         socketId: session?.socketId,
         connectedAt: session?.connectedAt,
+        lastHeartbeatAt: session?.lastHeartbeatAt,
+        heartbeat: session?.heartbeat,
         metadata,
       },
     };
@@ -1909,7 +1917,7 @@ export function registerRoutes({
 
     return {
       ok: true,
-      data: telemetryService.listHistory({
+      data: await telemetryService.listHistory({
         deviceId,
         from: query.from,
         to: query.to,
@@ -2714,6 +2722,7 @@ export function registerRoutes({
     events: [
       'device:telemetry',
       'device:heartbeat',
+      'device:metadata',
       'device:command',
       'device:command:ack',
       'telemetry',

@@ -4,16 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:nodemon": "nodemon --watch src --ext ts --exec \"tsx src/index.ts\"",
-    "dev:web": "cd ../web && npm run dev",
+    "dev": "nodemon --watch src --ext ts --exec \"tsx src/index.ts\"",
+    "dev:web": "npm --prefix ../web run dev",
     "build": "tsc -p tsconfig.json",
-    "build:web": "cd ../web && npm run build",
-    "start": "node dist/index.js",
+    "build:web": "npm --prefix ../web run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "nodemon --watch src --ext ts --exec \"tsx src/index.ts\"",
+    "start:prod": "node dist/index.js",
+    "start:dev": "npm run dev",
     "simulate:devices": "tsx src/tools/device-simulator.ts",
     "quality:s8": "tsx src/tools/sprint8-quality-gate.ts",
     "quality:s9": "tsx src/tools/sprint9-rollout-drill.ts",
-    "quality:s10": "tsx src/tools/sprint10-phase-exit.ts"
+    "quality:s10": "tsx src/tools/sprint10-phase-exit.ts",
+    "migrate:pg-to-mysql": "tsx src/tools/migrate-postgres-to-mysql.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
@@ -23,6 +26,7 @@
     "dotenv": "^17.3.1",
     "fastify": "^5.8.4",
     "ioredis": "^5.10.1",
+    "mysql2": "^3.20.0",
     "pg": "^8.20.0",
     "pino": "^10.3.1",
     "socket.io": "^4.8.3",

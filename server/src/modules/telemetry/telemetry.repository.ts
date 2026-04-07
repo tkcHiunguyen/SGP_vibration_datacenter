@@ -21,9 +21,11 @@ export type TelemetryHistoryResult = {
   bucketMs?: number;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface TelemetryRepository {
   setLast(message: TelemetryMessage): void;
   getLast(): TelemetryMessage | null;
-  listHistory(query: TelemetryHistoryQuery): TelemetryHistoryResult;
-  applyRetention(): { removed: number; kept: number; cutoffAt: string } | null;
+  listHistory(query: TelemetryHistoryQuery): MaybePromise<TelemetryHistoryResult>;
+  applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

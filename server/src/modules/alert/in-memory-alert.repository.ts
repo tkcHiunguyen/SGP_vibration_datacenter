@@ -1,7 +1,7 @@
 import type { AlertRecord, AlertRule, AlertStatus, AlertTimeWindow } from '../../shared/types.js';
 import type { AlertRepository, AlertSummary } from './alert.repository.js';
-import type { PostgresAccess } from '../persistence/postgres-access.js';
-import { getSharedPostgresAccess } from '../persistence/postgres-access.js';
+import type { MySqlAccess } from '../persistence/mysql-access.js';
+import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 
 type AlertRuleRow = {
   rule_id: string;
@@ -14,7 +14,7 @@ type AlertRuleRow = {
   suppression_window_ms: number | string | null;
   flapping_window_ms: number | string | null;
   flapping_threshold: number | string | null;
-  enabled: boolean;
+  enabled: boolean | number;
   time_window_start_hour: number | string | null;
   time_window_end_hour: number | string | null;
   time_window_timezone: string | null;
@@ -31,7 +31,7 @@ type AlertRecordRow = {
   severity: 'warning' | 'critical';
   threshold: number | string;
   trigger_value: number | string;
-  last_value: number | string;
+  last_reading_value: number | string;
   occurrence_count: number | string | null;
   suppressed_count: number | string | null;
   noise_state: 'normal' | 'coalesced' | 'suppressed' | 'flapping' | null;
@@ -79,14 +79,14 @@ export class InMemoryAlertRepository implements AlertRepository {
   private readonly alertOrder: string[] = [];
 
   private readonly activeByRuleAndDevice = new Map<string, string>();
-  private readonly postgres: PostgresAccess | null;
+  private readonly mysql: MySqlAccess | null;
 
-  private constructor(postgres: PostgresAccess | null = getSharedPostgresAccess()) {
-    this.postgres = postgres;
+  private constructor(mysql: MySqlAccess | null = getSharedMySqlAccess()) {
+    this.mysql = mysql;
   }
 
-  static async create(postgres: PostgresAccess | null = getSharedPostgresAccess()): Promise<InMemoryAlertRepository> {
-    const repository = new InMemoryAlertRepository(postgres);
+  static async create(mysql: MySqlAccess | null = getSharedMySqlAccess()): Promise<InMemoryAlertRepository> {
+    const repository = new InMemoryAlertRepository(mysql);
     await repository.ensurePersistenceShape();
     await repository.loadFromPersistence();
     return repository;
@@ -247,11 +247,11 @@ export class InMemoryAlertRepository implements AlertRepository {
   }
 
   private async persistRule(rule: AlertRule): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO alert_rules (
           rule_id, name, metric, threshold, severity, debounce_count, cooldown_ms, enabled,
@@ -259,27 +259,27 @@ export class InMemoryAlertRepository implements AlertRepository {
           time_window_start_hour, time_window_end_hour, time_window_timezone, created_at, updated_at
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11,
-          $12, $13, $14,
-          $15::timestamptz, $16::timestamptz
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?,
+          ?, ?
         )
-        ON CONFLICT (rule_id) DO UPDATE SET
-          name = EXCLUDED.name,
-          metric = EXCLUDED.metric,
-          threshold = EXCLUDED.threshold,
-          severity = EXCLUDED.severity,
-          debounce_count = EXCLUDED.debounce_count,
-          cooldown_ms = EXCLUDED.cooldown_ms,
-          enabled = EXCLUDED.enabled,
-          suppression_window_ms = EXCLUDED.suppression_window_ms,
-          flapping_window_ms = EXCLUDED.flapping_window_ms,
-          flapping_threshold = EXCLUDED.flapping_threshold,
-          time_window_start_hour = EXCLUDED.time_window_start_hour,
-          time_window_end_hour = EXCLUDED.time_window_end_hour,
-          time_window_timezone = EXCLUDED.time_window_timezone,
-          created_at = EXCLUDED.created_at,
-          updated_at = EXCLUDED.updated_at
+        ON DUPLICATE KEY UPDATE
+          name = VALUES(name),
+          metric = VALUES(metric),
+          threshold = VALUES(threshold),
+          severity = VALUES(severity),
+          debounce_count = VALUES(debounce_count),
+          cooldown_ms = VALUES(cooldown_ms),
+          enabled = VALUES(enabled),
+          suppression_window_ms = VALUES(suppression_window_ms),
+          flapping_window_ms = VALUES(flapping_window_ms),
+          flapping_threshold = VALUES(flapping_threshold),
+          time_window_start_hour = VALUES(time_window_start_hour),
+          time_window_end_hour = VALUES(time_window_end_hour),
+          time_window_timezone = VALUES(time_window_timezone),
+          created_at = VALUES(created_at),
+          updated_at = VALUES(updated_at)
       `,
       [
         rule.ruleId,
@@ -303,47 +303,47 @@ export class InMemoryAlertRepository implements AlertRepository {
   }
 
   private async writeAlert(record: AlertRecord): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO alerts (
           alert_id, rule_id, rule_name, device_id, metric, severity, threshold,
-          trigger_value, last_value, occurrence_count, suppressed_count, noise_state, last_suppressed_at, status, triggered_at,
+          trigger_value, last_reading_value, occurrence_count, suppressed_count, noise_state, last_suppressed_at, status, triggered_at,
           acknowledged_at, acknowledged_by, acknowledged_note,
           resolved_at, resolved_by, resolution_note,
           updated_at
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::timestamptz, $14, $15::timestamptz,
-          $16::timestamptz, $17, $18,
-          $19::timestamptz, $20, $21,
-          $22::timestamptz
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?,
+          ?
         )
-        ON CONFLICT (alert_id) DO UPDATE SET
-          rule_id = EXCLUDED.rule_id,
-          rule_name = EXCLUDED.rule_name,
-          device_id = EXCLUDED.device_id,
-          metric = EXCLUDED.metric,
-          severity = EXCLUDED.severity,
-          threshold = EXCLUDED.threshold,
-          trigger_value = EXCLUDED.trigger_value,
-          last_value = EXCLUDED.last_value,
-          occurrence_count = EXCLUDED.occurrence_count,
-          suppressed_count = EXCLUDED.suppressed_count,
-          noise_state = EXCLUDED.noise_state,
-          last_suppressed_at = EXCLUDED.last_suppressed_at,
-          status = EXCLUDED.status,
-          triggered_at = EXCLUDED.triggered_at,
-          acknowledged_at = EXCLUDED.acknowledged_at,
-          acknowledged_by = EXCLUDED.acknowledged_by,
-          acknowledged_note = EXCLUDED.acknowledged_note,
-          resolved_at = EXCLUDED.resolved_at,
-          resolved_by = EXCLUDED.resolved_by,
-          resolution_note = EXCLUDED.resolution_note,
-          updated_at = EXCLUDED.updated_at
+        ON DUPLICATE KEY UPDATE
+          rule_id = VALUES(rule_id),
+          rule_name = VALUES(rule_name),
+          device_id = VALUES(device_id),
+          metric = VALUES(metric),
+          severity = VALUES(severity),
+          threshold = VALUES(threshold),
+          trigger_value = VALUES(trigger_value),
+          last_reading_value = VALUES(last_reading_value),
+          occurrence_count = VALUES(occurrence_count),
+          suppressed_count = VALUES(suppressed_count),
+          noise_state = VALUES(noise_state),
+          last_suppressed_at = VALUES(last_suppressed_at),
+          status = VALUES(status),
+          triggered_at = VALUES(triggered_at),
+          acknowledged_at = VALUES(acknowledged_at),
+          acknowledged_by = VALUES(acknowledged_by),
+          acknowledged_note = VALUES(acknowledged_note),
+          resolved_at = VALUES(resolved_at),
+          resolved_by = VALUES(resolved_by),
+          resolution_note = VALUES(resolution_note),
+          updated_at = VALUES(updated_at)
       `,
       [
         record.alertId,
@@ -373,11 +373,11 @@ export class InMemoryAlertRepository implements AlertRepository {
   }
 
   private async loadFromPersistence(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    const rules = await this.postgres.query<AlertRuleRow>(
+    const rules = await this.mysql.query<AlertRuleRow>(
       `
         SELECT
           rule_id, name, metric, threshold, severity, debounce_count, cooldown_ms, enabled,
@@ -400,18 +400,18 @@ export class InMemoryAlertRepository implements AlertRepository {
         suppressionWindowMs: Number(row.suppression_window_ms ?? row.cooldown_ms ?? 45_000),
         flappingWindowMs: Number(row.flapping_window_ms ?? 180_000),
         flappingThreshold: Number(row.flapping_threshold ?? 3),
-        enabled: row.enabled,
+        enabled: Boolean(row.enabled),
         timeWindow: normalizeTimeWindowRow(row),
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
       });
     }
 
-    const alerts = await this.postgres.query<AlertRecordRow>(
+    const alerts = await this.mysql.query<AlertRecordRow>(
       `
         SELECT
           alert_id, rule_id, rule_name, device_id, metric, severity, threshold,
-          trigger_value, last_value, occurrence_count, suppressed_count, noise_state, last_suppressed_at, status, triggered_at,
+          trigger_value, last_reading_value, occurrence_count, suppressed_count, noise_state, last_suppressed_at, status, triggered_at,
           acknowledged_at, acknowledged_by, acknowledged_note,
           resolved_at, resolved_by, resolution_note,
           updated_at
@@ -429,7 +429,7 @@ export class InMemoryAlertRepository implements AlertRepository {
         severity: row.severity,
         threshold: Number(row.threshold),
         triggerValue: Number(row.trigger_value),
-        lastValue: Number(row.last_value),
+        lastValue: Number(row.last_reading_value),
         occurrenceCount: Number(row.occurrence_count ?? 1),
         suppressedCount: Number(row.suppressed_count ?? 0),
         noiseState: row.noise_state ?? 'normal',
@@ -453,53 +453,11 @@ export class InMemoryAlertRepository implements AlertRepository {
   }
 
   private async ensurePersistenceShape(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
-      `
-        ALTER TABLE alert_rules
-          ADD COLUMN IF NOT EXISTS time_window_start_hour INTEGER,
-          ADD COLUMN IF NOT EXISTS time_window_end_hour INTEGER,
-          ADD COLUMN IF NOT EXISTS time_window_timezone TEXT,
-          ADD COLUMN IF NOT EXISTS suppression_window_ms INTEGER,
-          ADD COLUMN IF NOT EXISTS flapping_window_ms INTEGER,
-          ADD COLUMN IF NOT EXISTS flapping_threshold INTEGER;
-
-        UPDATE alert_rules
-        SET
-          suppression_window_ms = COALESCE(suppression_window_ms, GREATEST(cooldown_ms, 45000)),
-          flapping_window_ms = COALESCE(flapping_window_ms, 180000),
-          flapping_threshold = COALESCE(flapping_threshold, 3)
-        WHERE suppression_window_ms IS NULL
-          OR flapping_window_ms IS NULL
-          OR flapping_threshold IS NULL;
-
-        ALTER TABLE alerts
-          ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ,
-          ADD COLUMN IF NOT EXISTS acknowledged_by TEXT,
-          ADD COLUMN IF NOT EXISTS acknowledged_note TEXT,
-          ADD COLUMN IF NOT EXISTS resolved_by TEXT,
-          ADD COLUMN IF NOT EXISTS resolution_note TEXT,
-          ADD COLUMN IF NOT EXISTS occurrence_count INTEGER,
-          ADD COLUMN IF NOT EXISTS suppressed_count INTEGER,
-          ADD COLUMN IF NOT EXISTS noise_state TEXT,
-          ADD COLUMN IF NOT EXISTS last_suppressed_at TIMESTAMPTZ;
-
-        UPDATE alerts
-        SET
-          occurrence_count = COALESCE(occurrence_count, 1),
-          suppressed_count = COALESCE(suppressed_count, 0),
-          noise_state = COALESCE(noise_state, 'normal')
-        WHERE occurrence_count IS NULL
-          OR suppressed_count IS NULL
-          OR noise_state IS NULL;
-
-        CREATE INDEX IF NOT EXISTS idx_alerts_status_updated_at ON alerts (status, updated_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_alerts_rule_device_status ON alerts (rule_id, device_id, status);
-      `,
-    );
+    await this.mysql.execute('SELECT 1');
   }
 
   private toTopCounts(source: Map<string, number>): Array<{ key: string; count: number }> {

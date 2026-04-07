@@ -1,7 +1,7 @@
 import type { AuditRepository } from './audit.repository.js';
 import type { AuditQueryFilters, AuditRecord } from './audit.types.js';
-import type { PostgresAccess } from '../persistence/postgres-access.js';
-import { getSharedPostgresAccess } from '../persistence/postgres-access.js';
+import type { MySqlAccess } from '../persistence/mysql-access.js';
+import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 
 type AuditRecordRow = {
   audit_id: string;
@@ -11,7 +11,7 @@ type AuditRecordRow = {
   actor: string;
   created_at: string | Date;
   result: string;
-  metadata: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | string | null;
 };
 
 function toIsoTimestamp(value: string | Date): string {
@@ -29,14 +29,14 @@ function parseTimestamp(value: string | Date | undefined): number | null {
 
 export class InMemoryAuditRepository implements AuditRepository {
   private readonly records = new Map<string, AuditRecord>();
-  private readonly postgres: PostgresAccess | null;
+  private readonly mysql: MySqlAccess | null;
 
-  private constructor(postgres: PostgresAccess | null = getSharedPostgresAccess()) {
-    this.postgres = postgres;
+  private constructor(mysql: MySqlAccess | null = getSharedMySqlAccess()) {
+    this.mysql = mysql;
   }
 
-  static async create(postgres: PostgresAccess | null = getSharedPostgresAccess()): Promise<InMemoryAuditRepository> {
-    const repository = new InMemoryAuditRepository(postgres);
+  static async create(mysql: MySqlAccess | null = getSharedMySqlAccess()): Promise<InMemoryAuditRepository> {
+    const repository = new InMemoryAuditRepository(mysql);
     await repository.loadFromPersistence();
     return repository;
   }
@@ -129,24 +129,24 @@ export class InMemoryAuditRepository implements AuditRepository {
   }
 
   private async persistRecord(record: AuditRecord): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO audit_logs (
           audit_id, action, device_id, command_id, actor, created_at, result, metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8::jsonb)
-        ON CONFLICT (audit_id) DO UPDATE SET
-          action = EXCLUDED.action,
-          device_id = EXCLUDED.device_id,
-          command_id = EXCLUDED.command_id,
-          actor = EXCLUDED.actor,
-          created_at = EXCLUDED.created_at,
-          result = EXCLUDED.result,
-          metadata = EXCLUDED.metadata
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          action = VALUES(action),
+          device_id = VALUES(device_id),
+          command_id = VALUES(command_id),
+          actor = VALUES(actor),
+          created_at = VALUES(created_at),
+          result = VALUES(result),
+          metadata = VALUES(metadata)
       `,
       [
         record.auditId,
@@ -162,11 +162,11 @@ export class InMemoryAuditRepository implements AuditRepository {
   }
 
   private async loadFromPersistence(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    const rows = await this.postgres.query<AuditRecordRow>(
+    const rows = await this.mysql.query<AuditRecordRow>(
       `
         SELECT audit_id, action, device_id, command_id, actor, created_at, result, metadata
         FROM audit_logs
@@ -183,7 +183,10 @@ export class InMemoryAuditRepository implements AuditRepository {
         actor: row.actor,
         createdAt: toIsoTimestamp(row.created_at),
         result: row.result,
-        metadata: row.metadata ?? undefined,
+        metadata:
+          typeof row.metadata === 'string'
+            ? (JSON.parse(row.metadata) as Record<string, unknown>)
+            : (row.metadata ?? undefined),
       });
     }
   }

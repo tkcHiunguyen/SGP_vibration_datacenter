@@ -1,10 +1,11 @@
 import type { DeviceRepository } from './device.repository.js';
-import type { DeviceMetadata, DeviceSession } from '../../shared/types.js';
-import type { PostgresAccess } from '../persistence/postgres-access.js';
-import { getSharedPostgresAccess } from '../persistence/postgres-access.js';
+import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { MySqlAccess } from '../persistence/mysql-access.js';
+import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 
 type DeviceMetadataRow = {
   device_id: string;
+  uuid: string | null;
   name: string | null;
   site: string | null;
   zone: string | null;
@@ -22,14 +23,14 @@ function toIsoTimestamp(value: string | Date): string {
 export class InMemoryDeviceRepository implements DeviceRepository {
   private readonly metadata = new Map<string, DeviceMetadata>();
   private readonly sessions = new Map<string, DeviceSession>();
-  private readonly postgres: PostgresAccess | null;
+  private readonly mysql: MySqlAccess | null;
 
-  private constructor(postgres: PostgresAccess | null = getSharedPostgresAccess()) {
-    this.postgres = postgres;
+  private constructor(mysql: MySqlAccess | null = getSharedMySqlAccess()) {
+    this.mysql = mysql;
   }
 
-  static async create(postgres: PostgresAccess | null = getSharedPostgresAccess()): Promise<InMemoryDeviceRepository> {
-    const repository = new InMemoryDeviceRepository(postgres);
+  static async create(mysql: MySqlAccess | null = getSharedMySqlAccess()): Promise<InMemoryDeviceRepository> {
+    const repository = new InMemoryDeviceRepository(mysql);
     await repository.loadFromPersistence();
     return repository;
   }
@@ -70,15 +71,20 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     return true;
   }
 
-  touch(deviceId: string, isoTime: string): void {
+  touch(deviceId: string, isoTime: string, heartbeat?: DeviceHeartbeat): DeviceSession | null {
     const found = this.sessions.get(deviceId);
     if (!found) {
-      return;
+      return null;
     }
-    this.sessions.set(deviceId, {
+
+    const next: DeviceSession = {
       ...found,
-      connectedAt: isoTime,
-    });
+      lastHeartbeatAt: isoTime,
+      heartbeat: heartbeat ? { ...(found.heartbeat ?? {}), ...heartbeat } : found.heartbeat,
+    };
+    this.sessions.set(deviceId, next);
+    void this.persistSession(next);
+    return next;
   }
 
   isConnected(deviceId: string): boolean {
@@ -90,28 +96,30 @@ export class InMemoryDeviceRepository implements DeviceRepository {
   }
 
   private async persistMetadata(metadata: DeviceMetadata): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO device_metadata (
-          device_id, name, site, zone, firmware_version, sensor_version, notes, created_at, updated_at
+          device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz)
-        ON CONFLICT (device_id) DO UPDATE SET
-          name = EXCLUDED.name,
-          site = EXCLUDED.site,
-          zone = EXCLUDED.zone,
-          firmware_version = EXCLUDED.firmware_version,
-          sensor_version = EXCLUDED.sensor_version,
-          notes = EXCLUDED.notes,
-          created_at = EXCLUDED.created_at,
-          updated_at = EXCLUDED.updated_at
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          uuid = VALUES(uuid),
+          name = VALUES(name),
+          site = VALUES(site),
+          zone = VALUES(zone),
+          firmware_version = VALUES(firmware_version),
+          sensor_version = VALUES(sensor_version),
+          notes = VALUES(notes),
+          created_at = VALUES(created_at),
+          updated_at = VALUES(updated_at)
       `,
       [
         metadata.deviceId,
+        metadata.uuid ?? null,
         metadata.name ?? null,
         metadata.site ?? null,
         metadata.zone ?? null,
@@ -125,44 +133,59 @@ export class InMemoryDeviceRepository implements DeviceRepository {
   }
 
   private async persistSession(session: DeviceSession): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute(
+    await this.mysql.execute(
       `
         INSERT INTO device_sessions (
-          device_id, socket_id, connected_at, last_heartbeat_at
+          device_id, socket_id, client_ip, connected_at, last_heartbeat_at, socket_connected, sta_connected, signal_strength, uptime_sec
         )
-        VALUES ($1, $2, $3::timestamptz, $4::timestamptz)
-        ON CONFLICT (device_id) DO UPDATE SET
-          socket_id = EXCLUDED.socket_id,
-          connected_at = EXCLUDED.connected_at,
-          last_heartbeat_at = EXCLUDED.last_heartbeat_at
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          socket_id = VALUES(socket_id),
+          client_ip = VALUES(client_ip),
+          connected_at = VALUES(connected_at),
+          last_heartbeat_at = VALUES(last_heartbeat_at),
+          socket_connected = VALUES(socket_connected),
+          sta_connected = VALUES(sta_connected),
+          signal_strength = VALUES(signal_strength),
+          uptime_sec = VALUES(uptime_sec)
       `,
-      [session.deviceId, session.socketId, session.connectedAt, session.connectedAt],
+      [
+        session.deviceId,
+        session.socketId,
+        session.clientIp ?? null,
+        session.connectedAt,
+        session.lastHeartbeatAt,
+        session.heartbeat?.socketConnected ?? null,
+        session.heartbeat?.staConnected ?? null,
+        session.heartbeat?.signal ?? null,
+        session.heartbeat?.uptimeSec ?? null,
+      ],
     );
   }
 
   private async deleteSession(deviceId: string, socketId: string): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    await this.postgres.execute('DELETE FROM device_sessions WHERE device_id = $1 AND socket_id = $2', [
+    await this.mysql.execute('DELETE FROM device_sessions WHERE device_id = ? AND socket_id = ?', [
       deviceId,
       socketId,
     ]);
   }
 
   private async loadFromPersistence(): Promise<void> {
-    if (!this.postgres) {
+    if (!this.mysql) {
       return;
     }
 
-    const metadataRows = await this.postgres.query<DeviceMetadataRow>(
+    const metadataRows = await this.mysql.query<DeviceMetadataRow>(
       `
-        SELECT device_id, name, site, zone, firmware_version, sensor_version, notes, created_at, updated_at
+        SELECT device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, created_at, updated_at
         FROM device_metadata
         ORDER BY device_id ASC
       `,
@@ -170,6 +193,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     for (const row of metadataRows) {
       this.metadata.set(row.device_id, {
         deviceId: row.device_id,
+        uuid: row.uuid ?? undefined,
         name: row.name ?? undefined,
         site: row.site ?? undefined,
         zone: row.zone ?? undefined,
@@ -182,6 +206,6 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     }
 
     // Device sessions are runtime-only. Clearing them on boot avoids stale "online" state after restart.
-    await this.postgres.execute('DELETE FROM device_sessions');
+    await this.mysql.execute('DELETE FROM device_sessions');
   }
 }
