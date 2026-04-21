@@ -8,6 +8,7 @@
     "dev:web": "pnpm -C ../web dev",
     "build": "tsc -p tsconfig.json",
     "build:web": "pnpm -C ../web build",
+    "db:init": "tsx src/tools/bootstrap-db-schema.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test $(find src -name '*.test.ts' -print)",
     "start": "nodemon --watch src --ext ts --exec \"tsx src/index.ts\"",

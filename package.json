@@ -7,6 +7,8 @@
     "dev": "pnpm -r --parallel --stream --filter ./server --filter ./web dev",
     "dev:server": "pnpm --filter ./server dev",
     "dev:web": "pnpm --filter ./web dev",
+    "postinstall": "pnpm db:init",
+    "db:init": "pnpm -C server db:init",
     "build:server": "pnpm -C server build",
     "build:web": "pnpm -C web build",
     "build": "pnpm build:web && pnpm build:server",
