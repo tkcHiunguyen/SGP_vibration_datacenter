@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { TelemetryPayload, TelemetryMessage } from '../../shared/types.js';
 import type {
+  DeviceTelemetrySummary,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
   TelemetryRepository,
@@ -37,6 +38,10 @@ export class TelemetryService {
 
   async listHistory(query: TelemetryHistoryQuery): Promise<TelemetryHistoryResult> {
     return await this.repository.listHistory(query);
+  }
+
+  async summarizeDevice(deviceId: string): Promise<DeviceTelemetrySummary> {
+    return await this.repository.summarizeDevice(deviceId);
   }
 
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {

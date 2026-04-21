@@ -1,4 +1,4 @@
-import type { TelemetryRepository } from './telemetry.repository.js';
+import type { DeviceTelemetrySummary, TelemetryRepository } from './telemetry.repository.js';
 import type { TelemetryMessage } from '../../shared/types.js';
 import { TelemetryAppendOnlyStore } from './telemetry.persistence.js';
 import type { TelemetryHistoryQuery, TelemetryHistoryResult } from './telemetry.repository.js';
@@ -22,6 +22,27 @@ export class InMemoryTelemetryRepository implements TelemetryRepository {
 
   listHistory(query: TelemetryHistoryQuery): TelemetryHistoryResult {
     return this.store.listHistory(query);
+  }
+
+  summarizeDevice(deviceId: string): DeviceTelemetrySummary {
+    const history = this.store.listHistory({
+      deviceId,
+      limit: 1000,
+    });
+    const sampled = history.items;
+    const sampledBytes = sampled.reduce((sum, point) => {
+      return sum + point.receivedAt.length + JSON.stringify(point.payload ?? {}).length;
+    }, 0);
+    const estimatedBytes =
+      sampled.length > 0
+        ? Math.max(0, Math.round((sampledBytes / sampled.length) * history.totalMatched))
+        : 0;
+
+    return {
+      total: history.totalMatched,
+      latestAt: sampled.at(-1)?.receivedAt,
+      estimatedBytes,
+    };
   }
 
   applyRetention(): { removed: number; kept: number; cutoffAt: string } | null {

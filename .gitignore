@@ -15,9 +15,21 @@ pnpm-debug.log*
 # Node
 node_modules/
 
+# Environment files
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+
 # Vite / build outputs
 web/dist/
 web/.vite/
+
+# Graphify generated outputs
+graphify-out/
+server/graphify-out/
 
 # Cache
 .cache/
@@ -36,4 +48,6 @@ playwright.config.ts
 
 # Runtime telemetry data (do not track)
 server/data/telemetry/
+server/storage/
+server/uploads/
 output/

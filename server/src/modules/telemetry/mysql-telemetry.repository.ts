@@ -1,5 +1,6 @@
 import type { TelemetryMessage, TelemetryPayload } from '../../shared/types.js';
 import type {
+  DeviceTelemetrySummary,
   TelemetryHistoryPoint,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
@@ -9,6 +10,7 @@ import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 
 type TelemetryRow = {
+  id: number;
   device_id: string;
   received_at: string | Date;
   temperature: number | null;
@@ -17,15 +19,17 @@ type TelemetryRow = {
   ay: number | null;
   az: number | null;
   sample_count: number | null;
-  sample_rate_hz: number | null;
-  lsb_per_g: number | null;
-  available: number | boolean | null;
-  uuid: string | null;
   telemetry_uuid: string | null;
 };
 
 type CountRow = {
   total: number;
+};
+
+type TelemetrySummaryRow = {
+  total: number;
+  latest_at: string | Date | null;
+  estimated_bytes: number | null;
 };
 
 function toIsoTimestamp(value: string | Date): string {
@@ -47,14 +51,24 @@ function toPayload(row: TelemetryRow): TelemetryPayload {
   if (typeof row.ay === 'number') payload.ay = row.ay;
   if (typeof row.az === 'number') payload.az = row.az;
   if (typeof row.sample_count === 'number') payload.sample_count = row.sample_count;
-  if (typeof row.sample_rate_hz === 'number') payload.sample_rate_hz = row.sample_rate_hz;
-  if (typeof row.lsb_per_g === 'number') payload.lsb_per_g = row.lsb_per_g;
-  if (typeof row.available === 'boolean') payload.available = row.available;
-  if (typeof row.available === 'number') payload.available = row.available === 1;
-  if (typeof row.uuid === 'string') payload.uuid = row.uuid;
-  if (typeof row.telemetry_uuid === 'string') payload.telemetryUuid = row.telemetry_uuid;
+  if (typeof row.telemetry_uuid === 'string' && row.telemetry_uuid.trim()) {
+    payload.telemetry_uuid = row.telemetry_uuid;
+    payload.telemetryUuid = row.telemetry_uuid;
+  }
 
   return payload;
+}
+
+function normalizeTelemetryUuid(payload: TelemetryPayload): string | null {
+  const candidate = payload.telemetry_uuid ?? payload.telemetryUuid;
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+  const normalized = candidate.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, 255);
 }
 
 function parseIsoTimestamp(value?: string): number | null {
@@ -146,24 +160,24 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     const whereSql = where.join(' AND ');
 
     const countRows = await this.mysql.query<CountRow>(
-      `SELECT COUNT(*) AS total FROM telemetry_messages WHERE ${whereSql}`,
+      `SELECT COUNT(*) AS total FROM device_datas WHERE ${whereSql}`,
       params,
     );
     const totalMatched = Number(countRows[0]?.total ?? 0);
 
     const rows = bucketMs
       ? await this.mysql.query<TelemetryRow>(
-          `SELECT device_id, received_at, temperature, vibration, ax, ay, az,
-                  sample_count, sample_rate_hz, lsb_per_g, available, uuid, telemetry_uuid
-             FROM telemetry_messages
+          `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+                  sample_count, telemetry_uuid
+             FROM device_datas
              WHERE ${whereSql}
              ORDER BY received_at ASC`,
           params,
         )
       : await this.mysql.query<TelemetryRow>(
-          `SELECT device_id, received_at, temperature, vibration, ax, ay, az,
-                  sample_count, sample_rate_hz, lsb_per_g, available, uuid, telemetry_uuid
-             FROM telemetry_messages
+          `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+                  sample_count, telemetry_uuid
+             FROM device_datas
              WHERE ${whereSql}
              ORDER BY received_at DESC
              LIMIT ?`,
@@ -189,6 +203,49 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     };
   }
 
+  async summarizeDevice(deviceId: string): Promise<DeviceTelemetrySummary> {
+    const targetDeviceId = deviceId.trim();
+    if (!this.mysql || !targetDeviceId) {
+      return {
+        total: 0,
+        estimatedBytes: 0,
+      };
+    }
+
+    const rows = await this.mysql.query<TelemetrySummaryRow>(
+      `SELECT
+         COUNT(*) AS total,
+         MAX(received_at) AS latest_at,
+         COALESCE(
+           SUM(
+             IFNULL(OCTET_LENGTH(telemetry_uuid), 0) +
+             IFNULL(OCTET_LENGTH(CAST(received_at AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(temperature AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(vibration AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(ax AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(ay AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(az AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(sample_count AS CHAR)), 0)
+           ),
+           0
+         ) AS estimated_bytes
+       FROM device_datas
+      WHERE device_id = ?`,
+      [targetDeviceId],
+    );
+    const row = rows[0];
+    const latestAtRaw = row?.latest_at;
+
+    return {
+      total: Math.max(0, Math.floor(Number(row?.total ?? 0))),
+      latestAt:
+        typeof latestAtRaw === 'string' || latestAtRaw instanceof Date
+          ? new Date(toIsoTimestamp(latestAtRaw)).toISOString()
+          : undefined,
+      estimatedBytes: Math.max(0, Math.floor(Number(row?.estimated_bytes ?? 0))),
+    };
+  }
+
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {
     if (!this.mysql || !Number.isFinite(this.retentionHours) || this.retentionHours <= 0) {
       return null;
@@ -196,12 +253,12 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     const cutoffAt = new Date(Date.now() - this.retentionHours * 60 * 60 * 1000).toISOString();
 
-    const totalBeforeRows = await this.mysql.query<CountRow>('SELECT COUNT(*) AS total FROM telemetry_messages');
+    const totalBeforeRows = await this.mysql.query<CountRow>('SELECT COUNT(*) AS total FROM device_datas');
     const totalBefore = Number(totalBeforeRows[0]?.total ?? 0);
 
-    await this.mysql.execute('DELETE FROM telemetry_messages WHERE received_at < ?', [cutoffAt]);
+    await this.mysql.execute('DELETE FROM device_datas WHERE received_at < ?', [cutoffAt]);
 
-    const totalAfterRows = await this.mysql.query<CountRow>('SELECT COUNT(*) AS total FROM telemetry_messages');
+    const totalAfterRows = await this.mysql.query<CountRow>('SELECT COUNT(*) AS total FROM device_datas');
     const kept = Number(totalAfterRows[0]?.total ?? 0);
 
     return {
@@ -218,9 +275,9 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     }
 
     const rows = await this.mysql.query<TelemetryRow>(
-      `SELECT device_id, received_at, temperature, vibration, ax, ay, az,
-              sample_count, sample_rate_hz, lsb_per_g, available, uuid, telemetry_uuid
-         FROM telemetry_messages
+      `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+              sample_count, telemetry_uuid
+         FROM device_datas
          ORDER BY received_at DESC
          LIMIT 1`,
     );
@@ -244,9 +301,10 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     }
 
     const payload = message.payload;
+    const telemetryUuid = normalizeTelemetryUuid(payload);
 
     await this.mysql.execute(
-      `INSERT INTO telemetry_messages (
+      `INSERT INTO device_datas (
          device_id,
          received_at,
          temperature,
@@ -255,12 +313,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          ay,
          az,
          sample_count,
-         sample_rate_hz,
-         lsb_per_g,
-         available,
-         uuid,
          telemetry_uuid
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         received_at = VALUES(received_at),
+         temperature = VALUES(temperature),
+         vibration = VALUES(vibration),
+         ax = VALUES(ax),
+         ay = VALUES(ay),
+         az = VALUES(az),
+         sample_count = VALUES(sample_count)`,
       [
         message.deviceId,
         message.receivedAt,
@@ -270,15 +332,7 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
         typeof payload.ay === 'number' ? payload.ay : null,
         typeof payload.az === 'number' ? payload.az : null,
         typeof payload.sample_count === 'number' ? payload.sample_count : null,
-        typeof payload.sample_rate_hz === 'number' ? payload.sample_rate_hz : null,
-        typeof payload.lsb_per_g === 'number' ? payload.lsb_per_g : null,
-        typeof payload.available === 'boolean' ? payload.available : null,
-        typeof payload.uuid === 'string' ? payload.uuid : null,
-        typeof payload.telemetryUuid === 'string'
-          ? payload.telemetryUuid
-          : typeof payload.telemetry_uuid === 'string'
-            ? payload.telemetry_uuid
-            : null,
+        telemetryUuid,
       ],
     );
   }

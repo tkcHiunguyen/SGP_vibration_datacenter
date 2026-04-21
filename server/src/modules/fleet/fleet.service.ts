@@ -6,6 +6,7 @@ import type {
   FleetBatchApplyResult,
   FleetBatchItem,
   FleetBatchRun,
+  FleetBatchCommandType,
   FleetCohort,
   FleetCohortFilters,
   FleetPolicyCompatibilityResult,
@@ -46,6 +47,7 @@ function normalizeScope(scope: FleetPolicyScope = {}): FleetPolicyScope {
 function createBaseRun(
   cohortRef: string,
   payload: Record<string, unknown>,
+  commandType: FleetBatchCommandType,
   targetCount: number,
   dryRun: boolean,
 ): FleetBatchRun {
@@ -53,7 +55,7 @@ function createBaseRun(
   return {
     id: createId('fleet-run'),
     cohortRef,
-    commandType: 'set_config',
+    commandType,
     payload: { ...payload },
     dryRun,
     targetCount,
@@ -262,8 +264,13 @@ export class FleetService {
     return this.previewByFilters(devices, cohort.filters);
   }
 
-  runDryRun(devices: DeviceListItem[], payload: Record<string, unknown>, cohortRef = 'adhoc'): FleetBatchRun {
-    const run = createBaseRun(cohortRef, payload, devices.length, true);
+  runDryRun(
+    devices: DeviceListItem[],
+    payload: Record<string, unknown>,
+    commandType: FleetBatchCommandType = 'set_config',
+    cohortRef = 'adhoc',
+  ): FleetBatchRun {
+    const run = createBaseRun(cohortRef, payload, commandType, devices.length, true);
     this.repository.saveBatchRun(run);
     return run;
   }
@@ -272,16 +279,21 @@ export class FleetService {
     devices: DeviceListItem[],
     payload: Record<string, unknown>,
     sender: FleetSender,
+    commandType: FleetBatchCommandType = 'set_config',
     cohortRef = 'adhoc',
   ): Promise<FleetBatchApplyResult> {
-    const run = createBaseRun(cohortRef, payload, devices.length, false);
+    const run = createBaseRun(cohortRef, payload, commandType, devices.length, false);
     const items: FleetBatchItem[] = [];
 
     for (const device of devices) {
       try {
         const result = await sender(device.deviceId, payload);
         if (result.accepted) {
-          items.push({ deviceId: device.deviceId, status: 'accepted' });
+          items.push({
+            deviceId: device.deviceId,
+            status: 'accepted',
+            commandId: result.commandId,
+          });
           continue;
         }
         items.push({

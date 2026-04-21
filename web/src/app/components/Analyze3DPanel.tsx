@@ -3,15 +3,23 @@ import { Box, ChevronDown } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import { DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { Accel3DCanvas, Accel3DPoint } from "./SensorChartModal";
+import { ConsoleEmptyState, ConsolePage, ConsolePageHeader, ConsolePanel } from "./ui";
 
 const GRAVITY_MS2 = 9.80665;
-const TELEMETRY_HISTORY_BUFFER_SIZE = 400;
+const TELEMETRY_HISTORY_BUFFER_SIZE = 200;
+
+type TelemetryHistoryRequestOptions = {
+  limit?: number;
+  from?: string;
+  to?: string;
+  force?: boolean;
+};
 
 interface Analyze3DPanelProps {
   sensors: Sensor[];
   telemetryByDevice: Record<string, DeviceTelemetryPoint[]>;
   telemetryLoadingByDevice: Record<string, boolean>;
-  onRequestTelemetryHistory: (deviceId: string, limit?: number) => Promise<void>;
+  onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
 }
 
 export function Analyze3DPanel({
@@ -44,9 +52,9 @@ export function Analyze3DPanel({
       return;
     }
 
-    void onRequestTelemetryHistory(selectedSensor.id, TELEMETRY_HISTORY_BUFFER_SIZE);
+    void onRequestTelemetryHistory(selectedSensor.id, { limit: TELEMETRY_HISTORY_BUFFER_SIZE });
     const interval = window.setInterval(() => {
-      void onRequestTelemetryHistory(selectedSensor.id, TELEMETRY_HISTORY_BUFFER_SIZE);
+      void onRequestTelemetryHistory(selectedSensor.id, { limit: TELEMETRY_HISTORY_BUFFER_SIZE });
     }, 30_000);
 
     return () => {
@@ -79,27 +87,17 @@ export function Analyze3DPanel({
   const loading = selectedSensor ? Boolean(telemetryLoadingByDevice[selectedSensor.id]) : false;
 
   return (
-    <main
+    <ConsolePage
+      className="flex-1 overflow-auto px-6 py-5"
       style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
         background: C.bg,
-        minWidth: 0,
-        overflow: "auto",
-        padding: "20px 24px 26px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-        <div>
-          <div style={{ color: C.textMuted, fontSize: "0.66rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
-            Analyze
-          </div>
-          <div style={{ color: C.textBright, fontSize: "1rem", fontWeight: 700 }}>
-            Không gian 3D gia tốc (độc lập)
-          </div>
-        </div>
-
+      <ConsolePageHeader
+        icon={<Box size={16} strokeWidth={2.2} />}
+        title="Không gian 3D gia tốc (độc lập)"
+        subtitle="Xem quỹ đạo gia tốc theo từng thiết bị ở chế độ 3D."
+        actions={
         <div style={{ position: "relative", minWidth: 260 }}>
           <select
             value={selectedSensorId}
@@ -130,30 +128,29 @@ export function Analyze3DPanel({
             style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
           />
         </div>
-      </div>
+        }
+      />
 
-      <div
+      <ConsolePanel
         style={{
           background: C.surface,
           border: `1px solid ${C.border}`,
-          borderRadius: 12,
           padding: 12,
         }}
       >
         {loading && accelPoints.length === 0 ? (
-          <div style={{ height: 460, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.8rem" }}>
-            Đang tải dữ liệu 3D...
-          </div>
+          <ConsoleEmptyState title="Đang tải dữ liệu 3D..." className="h-[460px]" />
         ) : accelPoints.length === 0 ? (
-          <div style={{ height: 460, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: C.textMuted }}>
-            <Box size={24} strokeWidth={1.8} />
-            <div style={{ fontSize: "0.8rem" }}>Chưa có đủ dữ liệu gia tốc để dựng quỹ đạo 3D.</div>
-          </div>
+          <ConsoleEmptyState
+            icon={<Box size={24} strokeWidth={1.8} />}
+            title="Chưa có đủ dữ liệu gia tốc."
+            description="Khi thiết bị gửi dữ liệu, quỹ đạo 3D sẽ hiển thị tại đây."
+            className="h-[460px]"
+          />
         ) : (
           <Accel3DCanvas C={C} accelPoints={accelPoints} height={460} />
         )}
-      </div>
-    </main>
+      </ConsolePanel>
+    </ConsolePage>
   );
 }
-

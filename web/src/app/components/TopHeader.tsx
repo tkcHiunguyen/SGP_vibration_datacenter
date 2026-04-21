@@ -1,29 +1,42 @@
 import React from "react";
 import {
   Activity, Bell, ChevronDown, LayoutDashboard,
-  Cpu, BarChart2, Settings, Search, AlertCircle,
+  Cpu, BarChart2, Settings, Search, AlertCircle, UploadCloud, MapPin,
   Menu, Sun, Moon,
 } from "lucide-react";
 import { Sensor } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
 
-const NAV_ITEMS = [
-  { label: "Tổng quan",  icon: <LayoutDashboard size={13} strokeWidth={2} /> },
-  { label: "Cảm biến",   icon: <Cpu             size={13} strokeWidth={2} /> },
-  { label: "Phân tích",  icon: <BarChart2        size={13} strokeWidth={2} /> },
-  { label: "Cài đặt",   icon: <Settings         size={13} strokeWidth={2} /> },
-];
+function navIcon(label: string): React.ReactNode {
+  switch (label) {
+    case "Tổng quan":
+      return <LayoutDashboard size={13} strokeWidth={2} />;
+    case "Update Center":
+      return <UploadCloud size={13} strokeWidth={2} />;
+    case "Quản lý khu vực":
+      return <MapPin size={13} strokeWidth={2} />;
+    case "Cảm biến":
+      return <Cpu size={13} strokeWidth={2} />;
+    case "Phân tích":
+      return <BarChart2 size={13} strokeWidth={2} />;
+    case "Cài đặt":
+      return <Settings size={13} strokeWidth={2} />;
+    default:
+      return <LayoutDashboard size={13} strokeWidth={2} />;
+  }
+}
 
 interface TopHeaderProps {
   activeNav: string;
   onNavChange: (label: string) => void;
+  navItems: string[];
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   sensors: Sensor[];
   alertCount?: number;
 }
 
-export function TopHeader({ activeNav, onNavChange, sidebarOpen, onToggleSidebar, sensors, alertCount }: TopHeaderProps) {
+export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onToggleSidebar, sensors, alertCount }: TopHeaderProps) {
   const { theme, toggleTheme, C } = useTheme();
   const derivedAlertCount = typeof alertCount === "number" ? alertCount : sensors.filter(s => s.status === "abnormal").length;
   const isDark = theme === "dark";
@@ -85,11 +98,11 @@ export function TopHeader({ activeNav, onNavChange, sidebarOpen, onToggleSidebar
         <div style={{ width: 1, height: 22, background: C.border, marginRight: 20, flexShrink: 0 }} />
 
         {/* Nav */}
-        <nav style={{ flex: 1, display: "flex", alignItems: "center", gap: 2 }}>
-          {NAV_ITEMS.map(item => {
-            const isActive = activeNav === item.label;
+        <nav style={{ flex: 1, display: "flex", alignItems: "center", gap: 2, minWidth: 0, overflowX: "auto", scrollbarWidth: "thin", scrollbarColor: `${C.scrollbar} transparent` }}>
+          {navItems.map((label) => {
+            const isActive = activeNav === label;
             return (
-              <button key={item.label} onClick={() => onNavChange(item.label)}
+              <button key={label} onClick={() => onNavChange(label)}
                 style={{
                   height: 30, padding: "0 12px", borderRadius: 8,
                   background: isActive ? C.navActive : "transparent",
@@ -97,13 +110,13 @@ export function TopHeader({ activeNav, onNavChange, sidebarOpen, onToggleSidebar
                   color: isActive ? C.textBright : C.textMuted,
                   fontSize: "0.74rem", fontWeight: isActive ? 600 : 400,
                   cursor: "pointer", transition: "all 0.15s",
-                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0,
                 }}
                 onMouseEnter={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.color = C.textBase; (e.currentTarget as HTMLElement).style.background = C.navActive + "80"; } }}
                 onMouseLeave={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.color = C.textMuted; (e.currentTarget as HTMLElement).style.background = "transparent"; } }}
               >
-                <span style={{ color: isActive ? C.primary : "inherit" }}>{item.icon}</span>
-                {item.label}
+                <span style={{ color: isActive ? C.primary : "inherit" }}>{navIcon(label)}</span>
+                {label}
               </button>
             );
           })}

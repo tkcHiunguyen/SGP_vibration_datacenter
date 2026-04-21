@@ -1,4 +1,5 @@
-import type { DeviceRepository } from './device.repository.js';
+import { randomUUID } from 'node:crypto';
+import type { DeviceRemovalResult, DeviceRepository } from './device.repository.js';
 import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
 
 type RegisterDeviceInput = {
@@ -41,15 +42,22 @@ export type DeviceListFilters = {
   search?: string;
 };
 
+export type ZoneAssignmentClearResult = {
+  updated: number;
+  deviceIds: string[];
+};
+
 export class DeviceService {
   constructor(private readonly repository: DeviceRepository) {}
 
   register(input: RegisterDeviceInput): DeviceMetadata {
     const now = new Date().toISOString();
     const existing = this.repository.getMetadata(input.deviceId);
+    const normalizedUuid = this.normalizeOptionalText(input.uuid);
+    const resolvedUuid = normalizedUuid ?? existing?.uuid ?? randomUUID();
     const metadata: DeviceMetadata = {
       deviceId: input.deviceId,
-      uuid: input.uuid ?? existing?.uuid,
+      uuid: resolvedUuid,
       name: input.name ?? existing?.name,
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
@@ -59,7 +67,28 @@ export class DeviceService {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    this.repository.upsertMetadata(metadata);
+    this.persistMetadataBestEffort(metadata, `register(${input.deviceId})`);
+    return metadata;
+  }
+
+  async registerStrict(input: RegisterDeviceInput): Promise<DeviceMetadata> {
+    const now = new Date().toISOString();
+    const existing = this.repository.getMetadata(input.deviceId);
+    const normalizedUuid = this.normalizeOptionalText(input.uuid);
+    const resolvedUuid = normalizedUuid ?? existing?.uuid ?? randomUUID();
+    const metadata: DeviceMetadata = {
+      deviceId: input.deviceId,
+      uuid: resolvedUuid,
+      name: input.name ?? existing?.name,
+      site: input.site ?? existing?.site,
+      zone: input.zone ?? existing?.zone,
+      firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
+      sensorVersion: input.sensorVersion ?? existing?.sensorVersion,
+      notes: input.notes ?? existing?.notes,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    await this.repository.upsertMetadata(metadata);
     return metadata;
   }
 
@@ -68,34 +97,98 @@ export class DeviceService {
     if (!existing) {
       return null;
     }
+
     const metadata: DeviceMetadata = {
       ...existing,
-      ...input,
       deviceId,
       updatedAt: new Date().toISOString(),
     };
-    this.repository.upsertMetadata(metadata);
+
+    if (Object.prototype.hasOwnProperty.call(input, 'uuid')) {
+      metadata.uuid = this.normalizeOptionalText(input.uuid);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'name')) {
+      metadata.name = this.normalizeOptionalText(input.name);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'site')) {
+      metadata.site = this.normalizeOptionalText(input.site);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'zone')) {
+      metadata.zone = this.normalizeOptionalText(input.zone);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
+      metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'sensorVersion')) {
+      metadata.sensorVersion = this.normalizeOptionalText(input.sensorVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
+      metadata.notes = this.normalizeOptionalText(input.notes);
+    }
+
+    if (!metadata.uuid) {
+      metadata.uuid = existing.uuid ?? randomUUID();
+    }
+
+    this.persistMetadataBestEffort(metadata, `update(${deviceId})`);
     return metadata;
   }
 
-  upsertFromSocket(deviceId: string, input: SocketMetadataInput): { metadata: DeviceMetadata; updated: boolean } {
+  async updateStrict(deviceId: string, input: UpdateDeviceInput): Promise<DeviceMetadata | null> {
+    const existing = this.repository.getMetadata(deviceId);
+    if (!existing) {
+      return null;
+    }
+
+    const metadata: DeviceMetadata = {
+      ...existing,
+      deviceId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (Object.prototype.hasOwnProperty.call(input, 'uuid')) {
+      metadata.uuid = this.normalizeOptionalText(input.uuid);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'name')) {
+      metadata.name = this.normalizeOptionalText(input.name);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'site')) {
+      metadata.site = this.normalizeOptionalText(input.site);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'zone')) {
+      metadata.zone = this.normalizeOptionalText(input.zone);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
+      metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'sensorVersion')) {
+      metadata.sensorVersion = this.normalizeOptionalText(input.sensorVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
+      metadata.notes = this.normalizeOptionalText(input.notes);
+    }
+
+    if (!metadata.uuid) {
+      metadata.uuid = existing.uuid ?? randomUUID();
+    }
+
+    await this.repository.upsertMetadata(metadata);
+    return metadata;
+  }
+
+  upsertFromSocket(deviceId: string, input: SocketMetadataInput): { metadata: DeviceMetadata | null; updated: boolean } {
     const existing = this.repository.getMetadata(deviceId);
     const normalized = this.normalizeSocketMetadata(input);
 
     if (!existing) {
-      return {
-        metadata: this.register({
-          deviceId,
-          ...normalized,
-        }),
-        updated: true,
-      };
+      return { metadata: null, updated: false };
     }
 
     const next: DeviceMetadata = {
       ...existing,
       ...normalized,
       deviceId,
+      uuid: normalized.uuid ?? existing.uuid ?? randomUUID(),
       updatedAt: new Date().toISOString(),
     };
 
@@ -112,7 +205,7 @@ export class DeviceService {
       return { metadata: existing, updated: false };
     }
 
-    this.repository.upsertMetadata(next);
+    this.persistMetadataBestEffort(next, `upsertFromSocket(${deviceId})`);
     return { metadata: next, updated: true };
   }
 
@@ -122,8 +215,12 @@ export class DeviceService {
 
   connect(deviceId: string, socketId: string, clientIp?: string): DeviceSession {
     if (!this.repository.getMetadata(deviceId)) {
-      this.register({ deviceId });
+      this.register({
+        deviceId,
+        name: deviceId,
+      });
     }
+
     const now = new Date().toISOString();
     const session: DeviceSession = {
       deviceId,
@@ -165,20 +262,6 @@ export class DeviceService {
       };
     });
 
-    for (const session of this.repository.listSessions()) {
-      if (!merged.find((item) => item.deviceId === session.deviceId)) {
-        merged.push({
-          deviceId: session.deviceId,
-          online: true,
-          socketId: session.socketId,
-          clientIp: session.clientIp,
-          connectedAt: session.connectedAt,
-          lastHeartbeatAt: session.lastHeartbeatAt,
-          heartbeat: session.heartbeat,
-        });
-      }
-    }
-
     return merged.filter((item) => this.matchesFilters(item, filters));
   }
 
@@ -188,6 +271,67 @@ export class DeviceService {
 
   countConnected(): number {
     return this.repository.countConnected();
+  }
+
+  listDeviceIdsByZone(zoneCode: string): string[] {
+    const normalizedZone = this.normalizeText(zoneCode);
+    if (!normalizedZone) {
+      return [];
+    }
+
+    return this.repository
+      .listMetadata()
+      .filter((item) => this.normalizeText(item.zone) === normalizedZone)
+      .map((item) => item.deviceId);
+  }
+
+  async clearZoneAssignments(zoneCode: string): Promise<ZoneAssignmentClearResult> {
+    const normalizedZone = this.normalizeText(zoneCode);
+    if (!normalizedZone) {
+      return { updated: 0, deviceIds: [] };
+    }
+
+    const targets = this.repository
+      .listMetadata()
+      .filter((item) => this.normalizeText(item.zone) === normalizedZone);
+    if (targets.length === 0) {
+      return { updated: 0, deviceIds: [] };
+    }
+
+    const now = new Date().toISOString();
+    for (const target of targets) {
+      const next: DeviceMetadata = {
+        ...target,
+        zone: undefined,
+        updatedAt: now,
+      };
+      await this.repository.upsertMetadata(next);
+    }
+
+    return {
+      updated: targets.length,
+      deviceIds: targets.map((item) => item.deviceId),
+    };
+  }
+
+  async deleteStrict(deviceId: string): Promise<DeviceRemovalResult | null> {
+    const normalizedDeviceId = this.normalizeOptionalText(deviceId);
+    if (!normalizedDeviceId) {
+      return null;
+    }
+
+    return this.repository.removeMetadata(normalizedDeviceId);
+  }
+
+  async clearTelemetryDataStrict(deviceId: string): Promise<number | null> {
+    const normalizedDeviceId = this.normalizeOptionalText(deviceId);
+    if (!normalizedDeviceId) {
+      return null;
+    }
+    if (!this.repository.getMetadata(normalizedDeviceId)) {
+      return null;
+    }
+    return await this.repository.clearTelemetryData(normalizedDeviceId);
   }
 
   private matchesFilters(item: DeviceListItem, filters: DeviceListFilters): boolean {
@@ -318,5 +462,11 @@ export class DeviceService {
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private persistMetadataBestEffort(metadata: DeviceMetadata, context: string): void {
+    void this.repository.upsertMetadata(metadata).catch((error) => {
+      console.error(`[device-service] ${context} failed`, error);
+    });
   }
 }

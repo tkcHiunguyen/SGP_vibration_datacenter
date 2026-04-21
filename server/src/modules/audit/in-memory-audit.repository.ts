@@ -6,7 +6,7 @@ import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 type AuditRecordRow = {
   audit_id: string;
   action: string;
-  device_id: string;
+  device_id: string | null;
   command_id: string;
   actor: string;
   created_at: string | Date;
@@ -25,6 +25,22 @@ function parseTimestamp(value: string | Date | undefined): number | null {
 
   const timestamp = value instanceof Date ? value.getTime() : Date.parse(value);
   return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function normalizeDeviceId(value: string | null | undefined): string {
+  if (typeof value !== 'string') {
+    return 'n/a';
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : 'n/a';
+}
+
+function normalizeDeviceIdForPersistence(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.toLowerCase() === 'n/a' ? null : normalized;
 }
 
 export class InMemoryAuditRepository implements AuditRepository {
@@ -92,7 +108,10 @@ export class InMemoryAuditRepository implements AuditRepository {
 
   save(record: AuditRecord): void {
     this.records.set(record.auditId, record);
-    void this.persistRecord(record);
+    void this.persistRecord(record).catch((error) => {
+      // Audit persistence failures should never crash the API process.
+      console.error('[audit-repository] persistRecord failed', error);
+    });
   }
 
   get(auditId: string): AuditRecord | null {
@@ -151,7 +170,7 @@ export class InMemoryAuditRepository implements AuditRepository {
       [
         record.auditId,
         record.action,
-        record.deviceId,
+        normalizeDeviceIdForPersistence(record.deviceId),
         record.commandId,
         record.actor,
         record.createdAt,
@@ -178,7 +197,7 @@ export class InMemoryAuditRepository implements AuditRepository {
       this.records.set(row.audit_id, {
         auditId: row.audit_id,
         action: row.action,
-        deviceId: row.device_id,
+        deviceId: normalizeDeviceId(row.device_id),
         commandId: row.command_id,
         actor: row.actor,
         createdAt: toIsoTimestamp(row.created_at),

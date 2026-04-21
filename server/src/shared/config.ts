@@ -7,6 +7,7 @@ export const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
+  OTA_PUBLIC_BASE_URL: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_TIME_WINDOW: z.string().default('1 minute'),
@@ -49,6 +50,9 @@ export const envSchema = z.object({
   TELEMETRY_MAX_PER_DEVICE_PER_MINUTE: z.coerce.number().int().positive().default(600),
   TELEMETRY_MAX_GLOBAL_PER_MINUTE: z.coerce.number().int().positive().default(50000),
   TELEMETRY_RETENTION_HOURS: z.coerce.number().positive().default(168),
+  SPECTRUM_STORAGE_DIR: z.string().default('storage/spectrum'),
+  SPECTRUM_FRAME_FLUSH_MS: z.coerce.number().int().positive().default(700),
+  SPECTRUM_MATCH_WINDOW_MS: z.coerce.number().int().positive().default(500),
 });
 
 export const env = envSchema.parse(process.env);

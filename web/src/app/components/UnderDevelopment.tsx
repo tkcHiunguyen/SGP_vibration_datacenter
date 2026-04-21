@@ -1,6 +1,7 @@
 import React from "react";
 import { Wrench, BarChart3, Cpu, Settings, Clock, CheckCircle2 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
+import { ConsolePage, ConsolePageHeader, ConsolePanel } from "./ui";
 
 interface PageConfig {
   icon: React.ReactNode;
@@ -64,20 +65,26 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
   };
 
   return (
-    <div style={{
-      flex: 1, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      padding: "60px 40px", minHeight: 0,
-    }}>
-      {/* Card */}
-      <div style={{
-        background: C.card, border: `1px solid ${C.cardBorder}`,
-        borderRadius: 18, padding: "44px 52px",
-        maxWidth: 560, width: "100%",
+    <ConsolePage
+      className="flex-1 items-center justify-center px-10 py-[60px]"
+      style={{ minHeight: 0 }}
+    >
+      <ConsolePanel style={{
+        borderRadius: 18,
+        padding: "28px 30px 30px",
+        maxWidth: 620,
+        width: "100%",
         textAlign: "center",
         boxShadow: `0 0 0 1px ${C.border}, 0 24px 60px rgba(0,0,0,0.15)`,
         animation: "fadeInUp 0.4s ease",
       }}>
+        <ConsolePageHeader
+          icon={config.icon}
+          title={config.title}
+          subtitle={config.description}
+          className="mb-4 border-none px-0 py-0"
+        />
+
         {/* Icon ring */}
         <div style={{
           width: 72, height: 72, borderRadius: "50%",
@@ -101,13 +108,6 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
             Đang phát triển
           </span>
         </div>
-
-        <h2 style={{ color: C.textBright, fontSize: "1.25rem", fontWeight: 700, marginBottom: 10 }}>
-          {config.title}
-        </h2>
-        <p style={{ color: C.textBase, fontSize: "0.82rem", lineHeight: 1.65, marginBottom: 28, maxWidth: 400, margin: "0 auto 28px" }}>
-          {config.description}
-        </p>
 
         {/* Feature list */}
         {config.features.length > 0 && (
@@ -141,7 +141,7 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
             Dự kiến hoàn thành: <strong style={{ color: C.primary }}>{config.eta}</strong>
           </span>
         </div>
-      </div>
+      </ConsolePanel>
 
       <style>{`
         @keyframes fadeInUp {
@@ -149,6 +149,6 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
           to   { opacity: 1; transform: translateY(0); }
         }
       `}</style>
-    </div>
+    </ConsolePage>
   );
 }

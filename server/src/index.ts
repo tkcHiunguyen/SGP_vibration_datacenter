@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
+import multipart from '@fastify/multipart';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from './shared/config.js';
 import { InMemoryAlertRepository } from './modules/alert/in-memory-alert.repository.js';
@@ -31,6 +33,8 @@ import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
 import { registerSocketHandlers } from './modules/realtime/socket.handlers.js';
 import { TelemetryIngressGuard } from './modules/reliability/telemetry-ingress-guard.js';
+import { SpectrumStorageService } from './modules/spectrum/spectrum-storage.service.js';
+import { ZoneService } from './modules/zone/zone.service.js';
 
 const serviceName = 'sgp-vibration-datacenter-server';
 const isRunningViaPnpm = (process.env.npm_execpath || '').includes('pnpm');
@@ -52,9 +56,23 @@ await app.register(rateLimit, {
   max: env.RATE_LIMIT_MAX,
   timeWindow: env.RATE_LIMIT_TIME_WINDOW,
 });
+await app.register(multipart, {
+  limits: {
+    fileSize: 64 * 1024 * 1024,
+    files: 1,
+  },
+});
 await app.register(fastifyStatic, {
   root: join(process.cwd(), 'public', 'app'),
   prefix: '/app/',
+});
+const otaUploadRoot = join(process.cwd(), 'uploads', 'ota');
+await mkdir(otaUploadRoot, { recursive: true });
+await app.register(fastifyStatic, {
+  root: otaUploadRoot,
+  prefix: '/ota-bins/',
+  decorateReply: false,
+  index: false,
 });
 
 const mysqlAccess = getSharedMySqlAccess();
@@ -73,9 +91,15 @@ const rolloutRepository = new InMemoryRolloutRepository();
 const authService = createAuthServiceFromEnv(env);
 const deviceService = new DeviceService(deviceRepository);
 const telemetryService = new TelemetryService(telemetryRepository, deviceService);
+const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
+  baseDir: env.SPECTRUM_STORAGE_DIR,
+  frameFlushMs: env.SPECTRUM_FRAME_FLUSH_MS,
+  matchWindowMs: env.SPECTRUM_MATCH_WINDOW_MS,
+});
 const alertService = new AlertService(alertRepository);
 const auditService = new AuditService(auditRepository);
 const incidentService = new IncidentService(incidentRepository);
+const zoneService = new ZoneService(mysqlAccess);
 const fleetService = new FleetService(fleetRepository);
 const governanceService = new GovernanceService(governanceRepository, env.GOVERNANCE_APPROVAL_TTL_MINUTES);
 const rolloutService = new RolloutService(rolloutRepository);
@@ -152,6 +176,8 @@ registerRoutes({
   commandService: commandServiceWithTimeout,
   metrics,
   realtimeGateway,
+  zoneService,
+  spectrumStorageService,
 });
 
 registerSocketHandlers({
@@ -163,6 +189,7 @@ registerSocketHandlers({
   metrics,
   realtimeGateway,
   telemetryIngressGuard,
+  spectrumStorageService,
   deviceAuthToken: env.DEVICE_AUTH_TOKEN,
 });
 

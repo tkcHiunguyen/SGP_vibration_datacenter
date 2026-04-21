@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/
+coverage/
+*.generated.*
+server/public/app/assets/
+*.min.js

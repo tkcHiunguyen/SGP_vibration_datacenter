@@ -21,11 +21,18 @@ export type TelemetryHistoryResult = {
   bucketMs?: number;
 };
 
+export type DeviceTelemetrySummary = {
+  total: number;
+  latestAt?: string;
+  estimatedBytes: number;
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 export interface TelemetryRepository {
   setLast(message: TelemetryMessage): void;
   getLast(): TelemetryMessage | null;
   listHistory(query: TelemetryHistoryQuery): MaybePromise<TelemetryHistoryResult>;
+  summarizeDevice(deviceId: string): MaybePromise<DeviceTelemetrySummary>;
   applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

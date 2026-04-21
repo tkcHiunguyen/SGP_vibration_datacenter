@@ -9,6 +9,7 @@ export interface Sensor {
   id: string;
   name: string;
   zone: string;
+  zoneCode: string;
   site: string;
   uuid: string;
   status: SensorStatus;
@@ -70,42 +71,23 @@ export interface DeviceTelemetryPoint {
   telemetryUuid?: string;
 }
 
-function seededValue(seed: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return Math.abs(hash) / 0xffffffff;
-}
+export type SpectrumAxis = "x" | "y" | "z";
 
-function createSeries(points: number, base: number, jitter: number, seed: string): number[] {
-  const values: number[] = [];
-  let current = base;
-
-  for (let i = 0; i < points; i += 1) {
-    const n1 = seededValue(`${seed}:${i}`) - 0.5;
-    const n2 = seededValue(`${seed}:trend:${i}`) - 0.5;
-    current = Math.max(0.02, current + n2 * 0.05);
-    const value = Math.max(0, current + n1 * jitter);
-    values.push(Number(value.toFixed(3)));
-  }
-
-  return values;
-}
-
-function buildTimeline(points: number, stepMinutes: number): string[] {
-  const now = new Date();
-  return Array.from({ length: points }, (_, i) => {
-    const d = new Date(now.getTime() - (points - 1 - i) * stepMinutes * 60 * 1000);
-    return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
-  });
-}
-
-function generateVibrationPoints(seed: string, base: number, jitter: number, stepMinutes: number): VibrationPoint[] {
-  const values = createSeries(60, base, jitter, seed);
-  const times = buildTimeline(60, stepMinutes);
-  return values.map((value, index) => ({ time: times[index], value }));
+export interface DeviceSpectrumPoint {
+  receivedAt: string;
+  axis: SpectrumAxis;
+  telemetryUuid?: string;
+  uuid?: string;
+  sourceSampleCount?: number;
+  sampleRateHz?: number;
+  binCount: number;
+  binHz?: number;
+  valueScale?: number;
+  magnitudeUnit?: string;
+  amplitudes: number[];
+  peakBinIndex?: number;
+  peakFrequencyHz?: number;
+  peakAmplitude?: number;
 }
 
 function toMinutesAgo(timestamp?: string): number {
@@ -128,10 +110,6 @@ function normalizeFirmware(device: DeviceListItem): string {
     device.metadata?.sensorVersion ||
     "v2.4.1"
   );
-}
-
-function deriveZone(device: DeviceListItem): string {
-  return device.metadata?.zone || device.metadata?.site || "Không rõ";
 }
 
 function formatDateTime(timestamp?: string): string {
@@ -192,19 +170,18 @@ export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
     const online = Boolean(device.online);
     const status = deriveStatus(device);
     const name = device.metadata?.name?.trim() || id;
-    const zone = deriveZone(device);
+    const zoneCode = (device.metadata?.zone || "").trim();
+    const zone = zoneCode || "--";
     const site = device.metadata?.site || "--";
     const uuid = device.metadata?.uuid || "--";
     const sensorVersion = device.metadata?.sensorVersion || "--";
     const firmwareVersion = device.metadata?.firmwareVersion || "--";
 
-    const base = status === "abnormal" ? 1.1 : online ? 0.45 : 0.2;
-    const jitter = status === "abnormal" ? 0.55 : online ? 0.18 : 0.08;
-
     return {
       id,
       name,
       zone,
+      zoneCode,
       site,
       uuid,
       status,
@@ -225,8 +202,8 @@ export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
           ? `${device.heartbeat.signal} dBm`
           : "--",
       uptime: formatUptimeSeconds(device.heartbeat?.uptimeSec),
-      vibration1h: generateVibrationPoints(`${id}:1h`, base, jitter, 1),
-      vibration5h: generateVibrationPoints(`${id}:5h`, base, jitter, 5),
+      vibration1h: [],
+      vibration5h: [],
     };
   });
 }

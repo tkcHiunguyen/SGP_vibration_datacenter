@@ -7,6 +7,7 @@ import type {
   DeviceHeartbeat,
   DeviceMetadata,
   TelemetryMessage,
+  TelemetrySpectrumMessage,
 } from '../../shared/types.js';
 import type { RealtimeGateway } from './realtime.gateway.js';
 
@@ -23,6 +24,10 @@ export class SocketIoGateway implements RealtimeGateway {
 
   broadcastTelemetry(message: TelemetryMessage): void {
     this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('telemetry', message);
+  }
+
+  broadcastTelemetrySpectrum(message: TelemetrySpectrumMessage): void {
+    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('telemetry:spectrum', message);
   }
 
   broadcastAlert(record: AlertRecord): void {
@@ -43,7 +48,26 @@ export class SocketIoGateway implements RealtimeGateway {
   }
 
   sendCommand(deviceId: string, command: DeviceCommand): void {
-    this.io.to(`device:${deviceId}`).emit('device:command', command);
+    const payload =
+      command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
+        ? command.payload
+        : {};
+    const payloadCommand =
+      typeof payload.command === 'string' && payload.command.trim()
+        ? payload.command.trim()
+        : command.type;
+    const payloadType =
+      typeof payload.type === 'string' && payload.type.trim() ? payload.type.trim() : command.type;
+    const payloadDeviceId =
+      typeof payload.deviceId === 'string' && payload.deviceId.trim() ? payload.deviceId.trim() : deviceId;
+    const wirePayload: Record<string, unknown> = {
+      ...payload,
+      commandId: command.commandId,
+      command: payloadCommand,
+      type: payloadType,
+      deviceId: payloadDeviceId,
+    };
+    this.io.to(`device:${deviceId}`).emit('device:command', wirePayload);
   }
 
   onConnection(handler: (socket: Socket) => void): void {

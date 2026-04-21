@@ -4,11 +4,13 @@ import type {
   DeviceHeartbeat,
   DeviceMetadata,
   TelemetryMessage,
+  TelemetrySpectrumMessage,
 } from '../../shared/types.js';
 import type { Socket } from 'socket.io';
 
 export interface RealtimeGateway {
   broadcastTelemetry(message: TelemetryMessage): void;
+  broadcastTelemetrySpectrum(message: TelemetrySpectrumMessage): void;
   broadcastAlert(record: AlertRecord): void;
   broadcastDeviceHeartbeat(payload: {
     deviceId: string;

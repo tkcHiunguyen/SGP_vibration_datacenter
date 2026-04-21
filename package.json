@@ -1,0 +1,17 @@
+{
+  "name": "sgp-vibration-datacenter",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "start": "pnpm dev",
+    "dev": "pnpm -r --parallel --stream --filter ./server --filter ./web dev",
+    "dev:server": "pnpm --filter ./server dev",
+    "dev:web": "pnpm --filter ./web dev",
+    "build:server": "pnpm -C server build",
+    "build:web": "pnpm -C web build",
+    "build": "pnpm build:web && pnpm build:server",
+    "typecheck": "pnpm -C server typecheck",
+    "graphify:update": "python3 scripts/graphify_source_only.py",
+    "graphify:watch": "python3 scripts/graphify_source_only.py --watch --interval 2"
+  }
+}

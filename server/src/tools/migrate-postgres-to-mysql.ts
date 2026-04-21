@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Pool as PgPool } from 'pg';
 import { createPool as createMySqlPool } from 'mysql2/promise';
 import { MYSQL_SCHEMA_SQL } from '../modules/persistence/mysql-schema.js';
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
 
     for (const row of deviceMetadata.rows) {
       await mysql.execute(
-        `INSERT INTO device_metadata (
+        `INSERT INTO devices (
            device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, created_at, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
@@ -167,7 +168,7 @@ async function main(): Promise<void> {
            updated_at = VALUES(updated_at)`,
         [
           row.device_id,
-          row.uuid,
+          row.uuid ?? randomUUID(),
           row.name,
           row.site,
           row.zone,
@@ -179,7 +180,7 @@ async function main(): Promise<void> {
         ],
       );
     }
-    summary.device_metadata = deviceMetadata.rowCount ?? 0;
+    summary.devices = deviceMetadata.rowCount ?? 0;
 
     const alertRules = await pg.query<AlertRuleRow>(
       `SELECT rule_id, name, metric, threshold, severity, debounce_count, cooldown_ms, suppression_window_ms,

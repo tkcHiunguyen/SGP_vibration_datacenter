@@ -2,12 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import type { Socket } from 'socket.io';
 import { inspect } from 'node:util';
 import { z } from 'zod';
+import type { SpectrumAxis, TelemetrySpectrumMessage } from '../../shared/types.js';
 import { AlertService } from '../alert/alert.service.js';
 import { CommandService } from '../command/command.service.js';
 import { DeviceService } from '../device/device.service.js';
 import type { ObservabilityMetricsRegistry } from '../observability/index.js';
 import type { RealtimeGateway } from './realtime.gateway.js';
 import { TelemetryIngressGuard } from '../reliability/telemetry-ingress-guard.js';
+import { SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
 import { TelemetryService } from '../telemetry/telemetry.service.js';
 
 type RegisterSocketHandlersDeps = {
@@ -19,6 +21,7 @@ type RegisterSocketHandlersDeps = {
   metrics: ObservabilityMetricsRegistry;
   realtimeGateway: RealtimeGateway;
   telemetryIngressGuard: TelemetryIngressGuard;
+  spectrumStorageService: SpectrumStorageService;
   deviceAuthToken?: string;
 };
 
@@ -31,6 +34,7 @@ export function registerSocketHandlers({
   metrics,
   realtimeGateway,
   telemetryIngressGuard,
+  spectrumStorageService,
   deviceAuthToken,
 }: RegisterSocketHandlersDeps): void {
   const resolveClientIp = (socket: Socket): string | undefined => {
@@ -43,7 +47,47 @@ export function registerSocketHandlers({
 
   const commandAckSchema = z.object({
     commandId: z.string().min(1),
+    status: z.string().trim().max(64).optional(),
+    detail: z.string().trim().max(256).optional(),
+    deviceId: z.string().trim().max(128).optional(),
+    uuid: z.string().trim().max(256).optional(),
+    version_firmware: z.string().trim().max(128).optional(),
+    firmwareVersion: z.string().trim().max(128).optional(),
   });
+
+  const asRecord = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    return value as Record<string, unknown>;
+  };
+
+  const asFiniteNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    return undefined;
+  };
+
+  const asNonEmptyString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    return undefined;
+  };
+
   const previewValues = (values: number[], count = 8): string =>
     `[${values
       .slice(0, count)
@@ -64,59 +108,220 @@ export function registerSocketHandlers({
   const logPayload = (label: string, payload: unknown): void => {
     console.log(`${label} incoming payload => ${inspect(payload, { depth: null, maxArrayLength: null, compact: false })}`);
   };
-  const logSpectrumOverview = (label: string, payload: unknown): void => {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      console.log(`${label} incoming payload =>`, payload);
-      return;
+
+  const toUint8Array = (value: unknown): Uint8Array | null => {
+    if (Buffer.isBuffer(value)) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     }
 
-    const record = payload as Record<string, unknown>;
-    const spectrumKey = ['x_spectrum', 'y_spectrum', 'z_spectrum'].find((key) => Array.isArray(record[key]));
-    if (!spectrumKey) {
-      logPayload(label, payload);
-      return;
+    if (value instanceof Uint8Array) {
+      return value;
     }
 
-    const rawValues = record[spectrumKey] as unknown[];
-    const values = rawValues.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-    if (values.length === 0) {
-      logPayload(label, payload);
-      return;
+    if (value instanceof ArrayBuffer) {
+      return new Uint8Array(value);
     }
 
-    let peakIndex = 0;
-    let peakValue = values[0] ?? 0;
-    for (let index = 1; index < values.length; index += 1) {
-      if (values[index] > peakValue) {
-        peakValue = values[index];
-        peakIndex = index;
+    if (ArrayBuffer.isView(value)) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+
+    return null;
+  };
+
+  const decodeU16LeValues = (value: unknown): number[] => {
+    const bytes = toUint8Array(value);
+    if (!bytes || bytes.byteLength < 2) {
+      return [];
+    }
+
+    const normalizedByteLength = bytes.byteLength - (bytes.byteLength % 2);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, normalizedByteLength);
+    const values = new Array<number>(Math.floor(normalizedByteLength / 2));
+
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = view.getUint16(index * 2, true);
+    }
+
+    return values;
+  };
+
+  const parseNumberArray = (value: unknown): number[] => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const numbers: number[] = [];
+    for (const item of value) {
+      const parsed = asFiniteNumber(item);
+      if (parsed !== undefined) {
+        numbers.push(parsed);
+      }
+    }
+    return numbers;
+  };
+
+  const DEFAULT_SPECTRUM_VALUE_SCALE = 256;
+  const DEFAULT_SPECTRUM_MAGNITUDE_UNIT = 'm/s2';
+
+  type ResolvedSpectrumValues = {
+    values: number[];
+    source: 'binary_attachment' | 'payload_binary' | 'payload_numeric';
+  };
+
+  const resolveSpectrumValues = (
+    axis: SpectrumAxis,
+    payloadRecord: Record<string, unknown>,
+    rawBinary?: unknown,
+  ): ResolvedSpectrumValues | null => {
+    const decodedBinaryAttachment = decodeU16LeValues(rawBinary);
+    if (decodedBinaryAttachment.length > 0) {
+      return {
+        values: decodedBinaryAttachment,
+        source: 'binary_attachment',
+      };
+    }
+
+    const axisPayloadKey = `${axis}_spectrum` as const;
+    const candidates: unknown[] = [
+      payloadRecord[axisPayloadKey],
+      payloadRecord.spectrum,
+      payloadRecord.values,
+      payloadRecord.data,
+    ];
+
+    for (const candidate of candidates) {
+      const decodedValues = decodeU16LeValues(candidate);
+      if (decodedValues.length > 0) {
+        return {
+          values: decodedValues,
+          source: 'payload_binary',
+        };
+      }
+
+      const numericValues = parseNumberArray(candidate);
+      if (numericValues.length > 0) {
+        return {
+          values: numericValues,
+          source: 'payload_numeric',
+        };
       }
     }
 
-    const binHz = typeof record.bin_hz === 'number' && Number.isFinite(record.bin_hz) ? record.bin_hz : undefined;
-    const valueScale =
-      typeof record.value_scale === 'number' && Number.isFinite(record.value_scale) && record.value_scale > 0
-        ? record.value_scale
-        : undefined;
-    const peakFrequencyHz = binHz !== undefined ? binHz * (peakIndex + 1) : undefined;
-    const peakAmplitude = valueScale !== undefined ? peakValue / valueScale : undefined;
+    return null;
+  };
 
+  const normalizeSpectrumMessage = (
+    axis: SpectrumAxis,
+    defaultDeviceId: string,
+    rawPayload: unknown,
+    rawBinary?: unknown,
+  ): TelemetrySpectrumMessage | null => {
+    const record = asRecord(rawPayload);
+    if (!record) {
+      return null;
+    }
+
+    const payloadEnvelopeRecord = asRecord(record.payload);
+    const spectrumRecord =
+      payloadEnvelopeRecord && Object.keys(payloadEnvelopeRecord).length > 0
+        ? payloadEnvelopeRecord
+        : record;
+
+    const resolvedValues = resolveSpectrumValues(axis, spectrumRecord, rawBinary);
+    if (!resolvedValues || resolvedValues.values.length === 0) {
+      return null;
+    }
+    const values = resolvedValues.values;
+
+    const declaredBinCount = asFiniteNumber(spectrumRecord.bin_count ?? spectrumRecord.binCount);
+    const normalizedBinCount = declaredBinCount
+      ? Math.max(1, Math.min(values.length, Math.floor(declaredBinCount)))
+      : values.length;
+    const normalizedValues = values.slice(0, normalizedBinCount);
+    if (normalizedValues.length === 0) {
+      return null;
+    }
+
+    const valueScaleCandidate = asFiniteNumber(spectrumRecord.value_scale ?? spectrumRecord.valueScale);
+    const defaultValueScale =
+      resolvedValues.source === 'payload_numeric' ? undefined : DEFAULT_SPECTRUM_VALUE_SCALE;
+    const valueScale =
+      valueScaleCandidate !== undefined && valueScaleCandidate > 0 ? valueScaleCandidate : defaultValueScale;
+
+    const sampleRateHz = asFiniteNumber(spectrumRecord.sample_rate_hz ?? spectrumRecord.sampleRateHz);
+    const sourceSampleCountFromPayload = asFiniteNumber(
+      spectrumRecord.source_sample_count ?? spectrumRecord.sourceSampleCount,
+    );
+    const sourceSampleCount =
+      sourceSampleCountFromPayload !== undefined && sourceSampleCountFromPayload > 0
+        ? Math.floor(sourceSampleCountFromPayload)
+        : normalizedValues.length * 2;
+    const binHzFromPayload = asFiniteNumber(spectrumRecord.bin_hz ?? spectrumRecord.binHz);
+    const binHz =
+      binHzFromPayload ??
+      (sampleRateHz !== undefined && sourceSampleCount !== undefined && sourceSampleCount > 0
+        ? sampleRateHz / sourceSampleCount
+        : undefined);
+
+    const amplitudes = normalizedValues.map((value) =>
+      valueScale !== undefined ? Number((value / valueScale).toFixed(6)) : Number(value.toFixed(6)),
+    );
+
+    let peakBinIndex = 0;
+    let peakAmplitude = amplitudes[0] ?? 0;
+    for (let index = 1; index < amplitudes.length; index += 1) {
+      if ((amplitudes[index] ?? 0) > peakAmplitude) {
+        peakAmplitude = amplitudes[index] ?? 0;
+        peakBinIndex = index;
+      }
+    }
+
+    const peakFrequencyHz = binHz !== undefined ? Number((binHz * (peakBinIndex + 1)).toFixed(6)) : undefined;
+    const deviceIdFromPayload = asNonEmptyString(
+      spectrumRecord.deviceId ?? spectrumRecord.device_id ?? record.deviceId ?? record.device_id,
+    );
+
+    return {
+      deviceId: deviceIdFromPayload ?? defaultDeviceId,
+      receivedAt: new Date().toISOString(),
+      axis,
+      telemetryUuid: asNonEmptyString(
+        spectrumRecord.telemetryUuid ?? spectrumRecord.telemetry_uuid ?? record.telemetryUuid ?? record.telemetry_uuid,
+      ),
+      uuid: asNonEmptyString(spectrumRecord.uuid ?? record.uuid),
+      sourceSampleCount,
+      sampleRateHz,
+      binCount: normalizedValues.length,
+      binHz,
+      valueScale,
+      magnitudeUnit:
+        asNonEmptyString(spectrumRecord.magnitude_unit ?? spectrumRecord.magnitudeUnit) ??
+        DEFAULT_SPECTRUM_MAGNITUDE_UNIT,
+      amplitudes,
+      peakBinIndex,
+      peakFrequencyHz,
+      peakAmplitude,
+    };
+  };
+
+  const logSpectrumOverview = (label: string, spectrum: TelemetrySpectrumMessage): void => {
     console.log(
       [
         `${label} overview`,
-        `  frameSeq: ${record.frameSeq ?? '-'}`,
-        `  source_sample_count: ${record.source_sample_count ?? '-'}`,
-        `  sample_rate_hz: ${record.sample_rate_hz ?? '-'}`,
-        `  bin_count: ${record.bin_count ?? values.length}`,
-        `  bin_hz: ${binHz ?? '-'}`,
-        `  value_scale: ${valueScale ?? '-'}`,
-        `  magnitude_unit: ${record.magnitude_unit ?? '-'}`,
-        `  peak_bin_index: ${peakIndex}`,
-        `  peak_freq_hz: ${peakFrequencyHz?.toFixed(3) ?? '-'}`,
-        `  peak_raw: ${peakValue}`,
-        `  peak_amplitude: ${peakAmplitude?.toFixed(4) ?? '-'}`,
-        `  ${spectrumKey}[head]: ${previewValues(values)}`,
-        `  ${spectrumKey}[tail]: ${previewTailValues(values)}`,
+        `  axis: ${spectrum.axis}`,
+        `  telemetry_uuid: ${spectrum.telemetryUuid ?? '-'}`,
+        `  source_sample_count: ${spectrum.sourceSampleCount ?? '-'}`,
+        `  sample_rate_hz: ${spectrum.sampleRateHz ?? '-'}`,
+        `  bin_count: ${spectrum.binCount}`,
+        `  bin_hz: ${spectrum.binHz ?? '-'}`,
+        `  value_scale: ${spectrum.valueScale ?? '-'}`,
+        `  magnitude_unit: ${spectrum.magnitudeUnit ?? '-'}`,
+        `  peak_bin_index: ${spectrum.peakBinIndex ?? '-'}`,
+        `  peak_freq_hz: ${spectrum.peakFrequencyHz?.toFixed(3) ?? '-'}`,
+        `  peak_amplitude: ${spectrum.peakAmplitude?.toFixed(4) ?? '-'}`,
+        `  amplitude[head]: ${previewValues(spectrum.amplitudes)}`,
+        `  amplitude[tail]: ${previewTailValues(spectrum.amplitudes)}`,
       ].join('\n'),
     );
   };
@@ -130,11 +335,13 @@ export function registerSocketHandlers({
     deviceId: z.string().trim().min(1).max(128).optional(),
     uuid: z.string().trim().max(256).optional(),
     firmware: z.string().trim().max(128).optional(),
+    version_firmware: z.string().trim().max(128).optional(),
     name: z.string().trim().max(256).optional(),
     site: z.string().trim().max(128).optional(),
     zone: z.string().trim().max(128).optional(),
     firmwareVersion: z.string().trim().max(128).optional(),
     sensorVersion: z.string().trim().max(128).optional(),
+    sensor_version: z.string().trim().max(128).optional(),
     notes: z.string().trim().max(1024).optional(),
   });
 
@@ -238,8 +445,8 @@ export function registerSocketHandlers({
         name: parsed.data.name,
         site: parsed.data.site,
         zone: parsed.data.zone,
-        firmwareVersion: parsed.data.firmwareVersion ?? parsed.data.firmware,
-        sensorVersion: parsed.data.sensorVersion,
+        firmwareVersion: parsed.data.firmwareVersion ?? parsed.data.version_firmware ?? parsed.data.firmware,
+        sensorVersion: parsed.data.sensorVersion ?? parsed.data.sensor_version,
         notes: parsed.data.notes,
       };
 
@@ -250,21 +457,31 @@ export function registerSocketHandlers({
 
       const result = deviceService.upsertFromSocket(deviceId, normalizedMetadata);
       if (!result.updated) {
+        if (!result.metadata) {
+          app.log.debug(
+            { deviceId, socketId: socket.id },
+            'Skip metadata upsert for unregistered device (db-first inventory mode)',
+          );
+        }
+        return;
+      }
+      const metadata = result.metadata;
+      if (!metadata) {
         return;
       }
 
       metrics.incCounter('device_metadata_updates_total', 1, {}, 'Device metadata updates from socket');
       realtimeGateway.broadcastDeviceMetadata({
         deviceId,
-        metadata: result.metadata,
+        metadata,
       });
       app.log.info(
         {
           deviceId,
           socketId: socket.id,
-          uuid: result.metadata.uuid,
-          site: result.metadata.site,
-          zone: result.metadata.zone,
+          uuid: metadata.uuid,
+          site: metadata.site,
+          zone: metadata.zone,
         },
         'Device metadata updated from socket',
       );
@@ -325,25 +542,61 @@ export function registerSocketHandlers({
       }
     });
 
-    socket.on('device:telemetry:xspectrum', (rawPayload: unknown) => {
+    const handleSpectrumEvent = (
+      axis: SpectrumAxis,
+      label: string,
+      rawPayload: unknown,
+      rawBinary?: unknown,
+    ): void => {
       if (clientType !== 'device' || !deviceId) {
         return;
       }
-      logSpectrumOverview('[device:telemetry:xspectrum]', rawPayload);
+
+      const spectrum = normalizeSpectrumMessage(axis, deviceId, rawPayload, rawBinary);
+      if (!spectrum) {
+        app.log.warn(
+          {
+            deviceId,
+            socketId: socket.id,
+            axis,
+            hasBinaryAttachment: Boolean(rawBinary),
+          },
+          'Unable to normalize incoming spectrum payload',
+        );
+        logPayload(`${label}:invalid`, rawPayload);
+        return;
+      }
+
+      metrics.incCounter(
+        'telemetry_spectrum_ingest_total',
+        1,
+        { axis: spectrum.axis },
+        'Accepted telemetry spectrum frames',
+      );
+      realtimeGateway.broadcastTelemetrySpectrum(spectrum);
+      void spectrumStorageService.ingest(spectrum).catch((error) => {
+        app.log.warn(
+          {
+            deviceId,
+            axis: spectrum.axis,
+            telemetryUuid: spectrum.telemetryUuid,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'Failed to persist spectrum frame',
+        );
+      });
+    };
+
+    socket.on('device:telemetry:xspectrum', (rawPayload: unknown, rawBinary?: unknown) => {
+      handleSpectrumEvent('x', '[device:telemetry:xspectrum]', rawPayload, rawBinary);
     });
 
-    socket.on('device:telemetry:yspectrum', (rawPayload: unknown) => {
-      if (clientType !== 'device' || !deviceId) {
-        return;
-      }
-      logSpectrumOverview('[device:telemetry:yspectrum]', rawPayload);
+    socket.on('device:telemetry:yspectrum', (rawPayload: unknown, rawBinary?: unknown) => {
+      handleSpectrumEvent('y', '[device:telemetry:yspectrum]', rawPayload, rawBinary);
     });
 
-    socket.on('device:telemetry:zspectrum', (rawPayload: unknown) => {
-      if (clientType !== 'device' || !deviceId) {
-        return;
-      }
-      logSpectrumOverview('[device:telemetry:zspectrum]', rawPayload);
+    socket.on('device:telemetry:zspectrum', (rawPayload: unknown, rawBinary?: unknown) => {
+      handleSpectrumEvent('z', '[device:telemetry:zspectrum]', rawPayload, rawBinary);
     });
 
     socket.on('device:command:ack', (payload: unknown) => {
@@ -358,12 +611,38 @@ export function registerSocketHandlers({
         );
         return;
       }
-      const acked = commandService.acknowledge(parsed.data.commandId, deviceId);
+      if (parsed.data.deviceId && parsed.data.deviceId !== deviceId) {
+        app.log.warn(
+          {
+            socketDeviceId: deviceId,
+            payloadDeviceId: parsed.data.deviceId,
+            commandId: parsed.data.commandId,
+            socketId: socket.id,
+          },
+          'Ignoring command ack payload with mismatched deviceId',
+        );
+        return;
+      }
+
+      const acked = commandService.acknowledge(parsed.data.commandId, deviceId, {
+        status: parsed.data.status,
+        detail: parsed.data.detail,
+        uuid: parsed.data.uuid,
+        firmwareVersion: parsed.data.firmwareVersion ?? parsed.data.version_firmware,
+        raw: parsed.data as unknown as Record<string, unknown>,
+      });
       if (acked) {
         metrics.incCounter('device_command_ack_total', 1, {}, 'Acknowledged device commands');
       }
       app.log.info(
-        { deviceId, socketId: socket.id, commandId: parsed.data.commandId, acked },
+        {
+          deviceId,
+          socketId: socket.id,
+          commandId: parsed.data.commandId,
+          status: parsed.data.status,
+          detail: parsed.data.detail,
+          acked,
+        },
         'Device command ack received',
       );
     });
@@ -387,11 +666,28 @@ export function registerSocketHandlers({
       }
       const [last] = commandService.listRecent(1);
       if (last && last.deviceId === deviceId) {
+        const payload =
+          last.payload && typeof last.payload === 'object' && !Array.isArray(last.payload)
+            ? last.payload
+            : {};
+        const payloadCommand =
+          typeof payload.command === 'string' && payload.command.trim()
+            ? payload.command.trim()
+            : last.type;
+        const payloadType =
+          typeof payload.type === 'string' && payload.type.trim()
+            ? payload.type.trim()
+            : last.type;
+        const payloadDeviceId =
+          typeof payload.deviceId === 'string' && payload.deviceId.trim()
+            ? payload.deviceId.trim()
+            : deviceId;
         socket.emit('device:command', {
+          ...payload,
           commandId: last.commandId,
-          type: last.type,
-          payload: last.payload,
-          sentAt: last.sentAt,
+          command: payloadCommand,
+          type: payloadType,
+          deviceId: payloadDeviceId,
         });
       }
     });

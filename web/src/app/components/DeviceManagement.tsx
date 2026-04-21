@@ -2,37 +2,13 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Info, Search, AlertTriangle, CheckCircle2,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight,
-  Activity, Cpu, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink,
+  Activity, Cpu, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink, PencilLine, Trash2,
 } from "lucide-react";
-import { DeviceTelemetryPoint, Sensor } from "../data/sensors";
+import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { DeviceInfoModal } from "./DeviceInfoModal";
 import { SensorChartModal } from "./SensorChartModal";
+import { ConsoleStatCard, type ToastItem } from "./ui";
 import { useTheme } from "../context/ThemeContext";
-
-/* ── summary stat chip ── */
-function StatChip({ label, value, color, bg, border }: {
-  label: string; value: number; color: string; bg: string; border: string;
-}) {
-  const { C } = useTheme();
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 8,
-      padding: "10px 14px", borderRadius: 10,
-      background: bg, border: `1px solid ${border}`,
-      flex: 1, minWidth: 0,
-    }}>
-      <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}88` }} />
-      <div>
-        <div style={{ color: C.textMuted, fontSize: "0.58rem", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, lineHeight: 1, marginBottom: 3 }}>
-          {label}
-        </div>
-        <div style={{ color: color, fontSize: "1.25rem", fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
-          {value}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ── Device Card ── */
 function DeviceCard({
@@ -41,39 +17,76 @@ function DeviceCard({
   onInfo,
   onChart,
   onOpenWeb,
+  onContextMenu,
+  exiting,
 }: {
   sensor: Sensor;
   idx: number;
   onInfo: (s: Sensor) => void;
   onChart: (s: Sensor) => void;
   onOpenWeb: (s: Sensor) => void;
+  onContextMenu: (event: React.MouseEvent<HTMLDivElement>, sensor: Sensor) => void;
+  exiting?: boolean;
 }) {
   const { C } = useTheme();
   const [hovered, setHovered] = useState(false);
   const [infoHovered, setInfoHovered] = useState(false);
   const [webHovered, setWebHovered] = useState(false);
+  const [cardTooltipPosition, setCardTooltipPosition] = useState({ x: 8, y: 8 });
   const isOnline   = sensor.online;
   const isAbnormal = sensor.status === "abnormal";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
+  const cardAnimation = exiting
+    ? "cardOut 260ms cubic-bezier(0.22, 0.78, 0.3, 1) both"
+    : "cardIn 0.3s ease both";
 
   return (
     <div
       style={{
         background: C.card,
         border: `1px solid ${hovered ? accentColor + "55" : C.cardBorder}`,
+        position: "relative",
         borderRadius: 12, overflow: "hidden",
-        transition: "border-color 0.2s, box-shadow 0.2s, transform 0.15s",
-        boxShadow: hovered ? `0 6px 24px ${accentColor}18` : "none",
-        transform: hovered ? "translateY(-1px)" : "translateY(0)",
+        transition: "border-color 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.2s",
+        boxShadow: hovered && !exiting ? `0 6px 24px ${accentColor}18` : "none",
+        transform: hovered && !exiting ? "translateY(-1px)" : "translateY(0)",
         cursor: "pointer",
-        animation: `cardIn 0.3s ease both`,
-        animationDelay: `${Math.min(idx * 0.04, 0.4)}s`,
+        animation: cardAnimation,
+        animationDelay: exiting ? "0s" : `${Math.min(idx * 0.04, 0.4)}s`,
         display: "flex", flexDirection: "column",
+        pointerEvents: exiting ? "none" : "auto",
       }}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => {
+        if (!exiting) {
+          setHovered(true);
+        }
+      }}
       onMouseLeave={() => setHovered(false)}
-      onClick={() => onChart(sensor)}
+      onMouseMove={(event) => {
+        if (exiting) {
+          return;
+        }
+        const cardRect = event.currentTarget.getBoundingClientRect();
+        const tooltipWidth = 104;
+        const tooltipHeight = 24;
+        const offsetX = 12;
+        const offsetY = 14;
+        const localX = event.clientX - cardRect.left + offsetX;
+        const localY = event.clientY - cardRect.top + offsetY;
+        const nextX = Math.max(8, Math.min(localX, cardRect.width - tooltipWidth - 8));
+        const nextY = Math.max(8, Math.min(localY, cardRect.height - tooltipHeight - 8));
+        setCardTooltipPosition({
+          x: nextX,
+          y: nextY,
+        });
+      }}
+      onClick={() => {
+        if (!exiting) {
+          onChart(sensor);
+        }
+      }}
+      onContextMenu={(event) => onContextMenu(event, sensor)}
     >
       {/* Top accent strip */}
       <div style={{
@@ -161,7 +174,7 @@ function DeviceCard({
             flexShrink: 0,
           }}>
             <Cpu size={9} strokeWidth={2} />
-            {sensor.sensorVersion}
+            {sensor.firmwareVersion}
           </div>
         </div>
         <div
@@ -263,6 +276,30 @@ function DeviceCard({
             )}
           </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          left: cardTooltipPosition.x,
+          top: cardTooltipPosition.y,
+          pointerEvents: "none",
+          opacity: hovered && !exiting ? 1 : 0,
+          transform: hovered ? "translateY(0)" : "translateY(2px)",
+          transition: "opacity 0.14s ease, transform 0.14s ease",
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          color: C.textBase,
+          fontSize: "0.62rem",
+          fontWeight: 600,
+          padding: "2px 7px",
+          borderRadius: 6,
+          whiteSpace: "nowrap",
+          zIndex: 20,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+        }}
+      >
+        Xem lịch sử
       </div>
     </div>
   );
@@ -528,17 +565,37 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
 
 /* ── Main Component ── */
 type FilterKey = "all" | "online" | "offline" | "abnormal";
+type DeviceInfoMode = "view" | "edit" | "delete";
+
+type DeviceContextMenuState = {
+  open: boolean;
+  x: number;
+  y: number;
+  sensor: Sensor | null;
+};
+
+type DeviceContextMenuItem = "info" | "edit" | "delete";
+type TelemetryHistoryRequestOptions = {
+  limit?: number;
+  from?: string;
+  to?: string;
+  force?: boolean;
+  replace?: boolean;
+};
 
 interface DeviceManagementProps {
   sensors: Sensor[];
   telemetryByDevice: Record<string, DeviceTelemetryPoint[]>;
   telemetryLoadingByDevice: Record<string, boolean>;
-  onRequestTelemetryHistory: (deviceId: string, limit?: number) => Promise<void>;
+  spectrumByDevice: Record<string, DeviceSpectrumPoint[]>;
+  onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
+  onNotify: (message: Omit<ToastItem, "id">) => void;
+  onDeviceDataCleared: (deviceId: string) => void;
 }
 
 const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
 const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
-const TELEMETRY_HISTORY_BUFFER_SIZE = 400;
+const DEVICE_CARD_EXIT_MS = 260;
 
 function readStoredNumber(key: string, fallback: number): number {
   if (typeof window === "undefined") {
@@ -558,12 +615,25 @@ export function DeviceManagement({
   sensors,
   telemetryByDevice,
   telemetryLoadingByDevice,
+  spectrumByDevice,
   onRequestTelemetryHistory,
+  onNotify,
+  onDeviceDataCleared,
 }: DeviceManagementProps) {
   const { C } = useTheme();
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
+  const [selectedSensorMode, setSelectedSensorMode] = useState<DeviceInfoMode>("view");
   const [chartSensor, setChartSensor] = useState<Sensor | null>(null);
   const [webSensor, setWebSensor] = useState<Sensor | null>(null);
+  const [contextMenu, setContextMenu] = useState<DeviceContextMenuState>({
+    open: false,
+    x: 0,
+    y: 0,
+    sensor: null,
+  });
+  const [contextHoveredItem, setContextHoveredItem] = useState<DeviceContextMenuItem | null>(null);
+  const [exitingDeviceIds, setExitingDeviceIds] = useState<Set<string>>(() => new Set());
+  const [hiddenDeviceIds, setHiddenDeviceIds] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [sort, setSort]     = useState<SortKey>("status");
@@ -575,11 +645,17 @@ export function DeviceManagement({
   });
   const [pageInput, setPageInput] = useState(() => String(readStoredNumber(STORAGE_PAGE_KEY, 1)));
   const didMountRef = useRef(false);
+  const exitTimeoutsRef = useRef<Record<string, number>>({});
 
-  const total    = sensors.length;
-  const online   = sensors.filter(s => s.online).length;
-  const offline  = sensors.filter(s => !s.online).length;
-  const abnormal = sensors.filter(s => s.status === "abnormal").length;
+  const visibleSensors = useMemo(
+    () => sensors.filter((sensor) => !hiddenDeviceIds.has(sensor.id)),
+    [sensors, hiddenDeviceIds],
+  );
+
+  const total    = visibleSensors.length;
+  const online   = visibleSensors.filter(s => s.online).length;
+  const offline  = visibleSensors.filter(s => !s.online).length;
+  const abnormal = visibleSensors.filter(s => s.status === "abnormal").length;
 
   const FILTERS: { key: FilterKey; label: string; count: number }[] = [
     { key: "all",      label: "Tất cả thiết bị", count: total    },
@@ -589,7 +665,7 @@ export function DeviceManagement({
   ];
 
   const displayed = useMemo(() => {
-    let list = sensors.filter(s => {
+    let list = visibleSensors.filter(s => {
       const q = search.toLowerCase();
       const matchSearch = s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.zone.toLowerCase().includes(q);
       const matchFilter =
@@ -622,7 +698,7 @@ export function DeviceManagement({
         break;
     }
     return list;
-  }, [sensors, search, filter, sort]);
+  }, [visibleSensors, search, filter, sort]);
 
   useEffect(() => {
     if (!didMountRef.current) {
@@ -663,19 +739,165 @@ export function DeviceManagement({
   }, [pageSize]);
 
   useEffect(() => {
-    if (!chartSensor) {
+    return () => {
+      Object.values(exitTimeoutsRef.current).forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
+      });
+      exitTimeoutsRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeIds = new Set(sensors.map((sensor) => sensor.id));
+    setHiddenDeviceIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      current.forEach((deviceId) => {
+        if (activeIds.has(deviceId)) {
+          next.add(deviceId);
+          return;
+        }
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+    setExitingDeviceIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      current.forEach((deviceId) => {
+        if (activeIds.has(deviceId)) {
+          next.add(deviceId);
+          return;
+        }
+        const timeoutId = exitTimeoutsRef.current[deviceId];
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+          delete exitTimeoutsRef.current[deviceId];
+        }
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [sensors]);
+
+  function closeContextMenu(): void {
+    setContextHoveredItem(null);
+    setContextMenu((current) => {
+      if (!current.open) {
+        return current;
+      }
+      return { open: false, x: 0, y: 0, sensor: null };
+    });
+  }
+
+  function openDeviceInfo(sensor: Sensor, mode: DeviceInfoMode): void {
+    closeContextMenu();
+    setSelectedSensorMode(mode);
+    setSelectedSensor(sensor);
+  }
+
+  function openDeviceContextMenu(event: React.MouseEvent<HTMLDivElement>, sensor: Sensor): void {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menuWidth = 190;
+    const menuHeight = 136;
+    const margin = 10;
+    const clampedX = Math.max(
+      margin,
+      Math.min(event.clientX, window.innerWidth - menuWidth - margin),
+    );
+    const clampedY = Math.max(
+      margin,
+      Math.min(event.clientY, window.innerHeight - menuHeight - margin),
+    );
+
+    setContextMenu({
+      open: true,
+      x: clampedX,
+      y: clampedY,
+      sensor,
+    });
+    setContextHoveredItem(null);
+  }
+
+  function markDeviceExiting(deviceId: string): void {
+    if (!deviceId) {
       return;
     }
 
-    void onRequestTelemetryHistory(chartSensor.id, TELEMETRY_HISTORY_BUFFER_SIZE);
-    const interval = window.setInterval(() => {
-      void onRequestTelemetryHistory(chartSensor.id, TELEMETRY_HISTORY_BUFFER_SIZE);
-    }, 30_000);
+    setExitingDeviceIds((current) => {
+      if (current.has(deviceId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(deviceId);
+      return next;
+    });
+
+    const existingTimeout = exitTimeoutsRef.current[deviceId];
+    if (existingTimeout) {
+      window.clearTimeout(existingTimeout);
+    }
+
+    exitTimeoutsRef.current[deviceId] = window.setTimeout(() => {
+      setHiddenDeviceIds((current) => {
+        if (current.has(deviceId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.add(deviceId);
+        return next;
+      });
+      setExitingDeviceIds((current) => {
+        if (!current.has(deviceId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(deviceId);
+        return next;
+      });
+      delete exitTimeoutsRef.current[deviceId];
+    }, DEVICE_CARD_EXIT_MS + 30);
+  }
+
+  useEffect(() => {
+    if (!contextMenu.open) {
+      return;
+    }
+
+    const closeIfOutside = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-device-context-menu='true']")) {
+        return;
+      }
+      closeContextMenu();
+    };
+
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        closeContextMenu();
+      }
+    };
+
+    const closeOnScroll = (): void => {
+      closeContextMenu();
+    };
+
+    window.addEventListener("mousedown", closeIfOutside);
+    window.addEventListener("contextmenu", closeIfOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("scroll", closeOnScroll, true);
+    window.addEventListener("resize", closeOnScroll);
 
     return () => {
-      window.clearInterval(interval);
+      window.removeEventListener("mousedown", closeIfOutside);
+      window.removeEventListener("contextmenu", closeIfOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("scroll", closeOnScroll, true);
+      window.removeEventListener("resize", closeOnScroll);
     };
-  }, [chartSensor, onRequestTelemetryHistory]);
+  }, [contextMenu.open]);
 
   function goToPage(rawValue: string): void {
     const parsed = Number(rawValue);
@@ -689,10 +911,30 @@ export function DeviceManagement({
     setPageInput(String(target));
   }
 
+  const contextTarget = contextMenu.sensor;
+  const getContextItemStyle = (item: DeviceContextMenuItem, danger = false): React.CSSProperties => {
+    const hovered = contextHoveredItem === item;
+    return {
+      width: "100%",
+      border: "none",
+      background: hovered ? C.surface : "transparent",
+      color: danger ? C.danger : hovered ? C.textBright : C.textBase,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "10px 11px",
+      fontSize: "0.74rem",
+      transition: "background 140ms ease, color 140ms ease, transform 120ms ease",
+      transform: hovered ? "translateX(1px)" : "translateX(0)",
+    };
+  };
+
   return (
     <>
       <style>{`
         @keyframes cardIn     { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
+        @keyframes cardOut    { from { opacity:1; transform:translateY(0) scale(1) } to { opacity:0; transform:translateY(7px) scale(0.965) } }
         @keyframes dotPulse   { 0%,100%{ opacity:1 } 50%{ opacity:0.5 } }
         @keyframes barPulse   { 0%,100%{ opacity:1 } 50%{ opacity:0.6 } }
         @keyframes stripPulse { 0%,100%{ opacity:1; box-shadow:none } 50%{ opacity:0.7; } }
@@ -715,10 +957,42 @@ export function DeviceManagement({
 
       {/* ── Stat summary row ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <StatChip label="Tổng thiết bị" value={total}    color={C.primary}  bg={C.primaryBg} border={C.primary + "22"} />
-        <StatChip label="Trực tuyến"    value={online}   color={C.success}  bg={C.primaryBg} border={C.success + "22"} />
-        <StatChip label="Ngoại tuyến"   value={offline}  color="#6b7280"    bg={C.card}      border={C.cardBorder} />
-        <StatChip label="Cảnh báo"      value={abnormal} color={C.danger}   bg={C.dangerBg}  border={C.danger  + "22"} />
+        <ConsoleStatCard
+          label="Tổng thiết bị"
+          value={total}
+          color={C.primary}
+          bg={C.primaryBg}
+          border={C.primary + "22"}
+          icon={<Activity size={13} strokeWidth={2.2} />}
+          className="flex-1 min-w-0"
+        />
+        <ConsoleStatCard
+          label="Trực tuyến"
+          value={online}
+          color={C.success}
+          bg={C.primaryBg}
+          border={C.success + "22"}
+          icon={<Wifi size={13} strokeWidth={2.2} />}
+          className="flex-1 min-w-0"
+        />
+        <ConsoleStatCard
+          label="Ngoại tuyến"
+          value={offline}
+          color="#6b7280"
+          bg={C.card}
+          border={C.cardBorder}
+          icon={<WifiOff size={13} strokeWidth={2.2} />}
+          className="flex-1 min-w-0"
+        />
+        <ConsoleStatCard
+          label="Cảnh báo"
+          value={abnormal}
+          color={C.danger}
+          bg={C.dangerBg}
+          border={C.danger + "22"}
+          icon={<AlertTriangle size={13} strokeWidth={2.2} />}
+          className="flex-1 min-w-0"
+        />
       </div>
 
       {/* ── Header row ── */}
@@ -889,12 +1163,17 @@ export function DeviceManagement({
                 key={sensor.id}
                 sensor={sensor}
                 idx={idx}
-                onInfo={setSelectedSensor}
+                exiting={exitingDeviceIds.has(sensor.id)}
+                onInfo={(target) => openDeviceInfo(target, "view")}
                 onChart={(target) => {
+                  closeContextMenu();
                   setChartSensor(target);
-                  void onRequestTelemetryHistory(target.id, TELEMETRY_HISTORY_BUFFER_SIZE);
                 }}
-                onOpenWeb={setWebSensor}
+                onOpenWeb={(target) => {
+                  closeContextMenu();
+                  setWebSensor(target);
+                }}
+                onContextMenu={openDeviceContextMenu}
               />
             ))}
           </div>
@@ -1017,11 +1296,99 @@ export function DeviceManagement({
         </>
       )}
 
-      <DeviceInfoModal sensor={selectedSensor} onClose={() => setSelectedSensor(null)} />
+      {contextMenu.open && contextTarget ? (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 90 }}
+          onClick={closeContextMenu}
+        >
+          <div
+            data-device-context-menu="true"
+            style={{
+              position: "fixed",
+              left: contextMenu.x,
+              top: contextMenu.y,
+              width: 190,
+              borderRadius: 10,
+              border: `1px solid ${C.cardBorder}`,
+              background: C.card,
+              boxShadow: "0 12px 28px rgba(2,6,23,0.38)",
+              overflow: "hidden",
+              animation: "dropIn 0.13s ease both",
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              style={getContextItemStyle("info")}
+              onMouseEnter={() => setContextHoveredItem("info")}
+              onMouseLeave={() => setContextHoveredItem(null)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openDeviceInfo(contextTarget, "view");
+              }}
+            >
+              <Info size={13} strokeWidth={2.1} color={C.primary} />
+              Thông tin
+            </button>
+            <button
+              style={{
+                ...getContextItemStyle("edit"),
+                borderTop: `1px solid ${C.border}`,
+              }}
+              onMouseEnter={() => setContextHoveredItem("edit")}
+              onMouseLeave={() => setContextHoveredItem(null)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openDeviceInfo(contextTarget, "edit");
+              }}
+            >
+              <PencilLine size={13} strokeWidth={2.1} color={C.primary} />
+              Chỉnh sửa
+            </button>
+            <button
+              style={{
+                ...getContextItemStyle("delete", true),
+                borderTop: `1px solid ${C.border}`,
+              }}
+              onMouseEnter={() => setContextHoveredItem("delete")}
+              onMouseLeave={() => setContextHoveredItem(null)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openDeviceInfo(contextTarget, "delete");
+              }}
+            >
+              <Trash2 size={13} strokeWidth={2.1} />
+              Xoá thiết bị
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <DeviceInfoModal
+        sensor={selectedSensor}
+        initialMode={selectedSensorMode}
+        onClose={() => {
+          setSelectedSensor(null);
+          setSelectedSensorMode("view");
+        }}
+        onSensorUpdated={(updated) => setSelectedSensor(updated)}
+        onSensorDeleted={(deviceId) => {
+          markDeviceExiting(deviceId);
+          setSelectedSensor(null);
+          setSelectedSensorMode("view");
+        }}
+        onNotify={onNotify}
+      />
       <SensorChartModal
         sensor={chartSensor}
         telemetryPoints={chartSensor ? telemetryByDevice[chartSensor.id] || [] : []}
         telemetryLoading={chartSensor ? Boolean(telemetryLoadingByDevice[chartSensor.id]) : false}
+        spectrumPoints={chartSensor ? spectrumByDevice[chartSensor.id] || [] : []}
+        onRequestTelemetryHistory={onRequestTelemetryHistory}
+        onNotify={onNotify}
+        onDeviceDataCleared={onDeviceDataCleared}
         onClose={() => setChartSensor(null)}
       />
       <DeviceWebModal sensor={webSensor} onClose={() => setWebSensor(null)} />

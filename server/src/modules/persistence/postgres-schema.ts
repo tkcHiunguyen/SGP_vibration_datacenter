@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS device_metadata (
   firmware_version TEXT,
   sensor_version TEXT,
   notes TEXT,
+  archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS device_sessions (
 );
 
 ALTER TABLE IF EXISTS device_metadata ADD COLUMN IF NOT EXISTS uuid TEXT;
+ALTER TABLE IF EXISTS device_metadata ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS socket_connected BOOLEAN;
 ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS sta_connected BOOLEAN;
 ALTER TABLE IF EXISTS device_sessions ADD COLUMN IF NOT EXISTS signal INTEGER;
@@ -76,13 +78,15 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE TABLE IF NOT EXISTS audit_logs (
   audit_id TEXT PRIMARY KEY,
   action TEXT NOT NULL,
-  device_id TEXT NOT NULL,
+  device_id TEXT,
   command_id TEXT NOT NULL,
   actor TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   result TEXT NOT NULL,
   metadata JSONB
 );
+
+ALTER TABLE IF EXISTS audit_logs ALTER COLUMN device_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
@@ -119,6 +123,7 @@ CREATE TABLE IF NOT EXISTS incident_timeline (
 
 CREATE INDEX IF NOT EXISTS idx_device_metadata_site ON device_metadata (site);
 CREATE INDEX IF NOT EXISTS idx_device_metadata_zone ON device_metadata (zone);
+CREATE INDEX IF NOT EXISTS idx_device_metadata_archived_at ON device_metadata (archived_at);
 CREATE INDEX IF NOT EXISTS idx_device_sessions_connected_at ON device_sessions (connected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_alert_rules_metric_enabled ON alert_rules (metric, enabled);
 CREATE INDEX IF NOT EXISTS idx_alerts_status_updated_at ON alerts (status, updated_at DESC);

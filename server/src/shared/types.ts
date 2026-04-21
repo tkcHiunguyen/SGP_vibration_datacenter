@@ -12,6 +12,26 @@ export type TelemetryMessage = {
   payload: TelemetryPayload;
 };
 
+export type SpectrumAxis = 'x' | 'y' | 'z';
+
+export type TelemetrySpectrumMessage = {
+  deviceId: string;
+  receivedAt: string;
+  axis: SpectrumAxis;
+  telemetryUuid?: string;
+  uuid?: string;
+  sourceSampleCount?: number;
+  sampleRateHz?: number;
+  binCount: number;
+  binHz?: number;
+  valueScale?: number;
+  magnitudeUnit?: string;
+  amplitudes: number[];
+  peakBinIndex?: number;
+  peakFrequencyHz?: number;
+  peakAmplitude?: number;
+};
+
 export type AlertMetric = 'temperature' | 'vibration';
 
 export type AlertSeverity = 'warning' | 'critical';
@@ -142,13 +162,24 @@ export type DeviceMetadata = {
   updatedAt: string;
 };
 
-export type CommandType = 'capture' | 'calibrate' | 'restart' | 'set_config';
+export type CommandType = 'capture' | 'calibrate' | 'restart' | 'set_config' | 'ota' | 'ota_from_url';
 
 export type DeviceCommand = {
   commandId: string;
   type: CommandType;
   payload: Record<string, unknown>;
   sentAt: string;
+};
+
+export type DeviceCommandAck = {
+  commandId: string;
+  deviceId: string;
+  receivedAt: string;
+  status?: string;
+  detail?: string;
+  uuid?: string;
+  firmwareVersion?: string;
+  raw?: Record<string, unknown>;
 };
 
 export type CommandStatus = 'sent' | 'acked' | 'timeout';
@@ -160,4 +191,9 @@ export type CommandRecord = DeviceCommand & {
   statusUpdatedAt: string;
   ackedAt?: string;
   timeoutedAt?: string;
+  ackStatus?: string;
+  ackDetail?: string;
+  ackDeviceUuid?: string;
+  ackFirmwareVersion?: string;
+  ackHistory?: DeviceCommandAck[];
 };

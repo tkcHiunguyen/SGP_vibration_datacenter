@@ -38,7 +38,7 @@ export type FleetPolicyConflictReasonCode =
   | 'POLICY_ZONE_FILTER_REQUIRED'
   | 'POLICY_ZONE_MISMATCH';
 
-export type FleetBatchCommandType = 'set_config';
+export type FleetBatchCommandType = 'set_config' | 'ota' | 'ota_from_url';
 
 export type FleetBatchStatus = 'dry_run' | 'completed' | 'partial' | 'failed';
 
@@ -47,6 +47,7 @@ export type FleetBatchItemStatus = 'accepted' | 'failed';
 export type FleetBatchItem = {
   deviceId: string;
   status: FleetBatchItemStatus;
+  commandId?: string;
   reason?: string;
 };
 
@@ -68,6 +69,7 @@ export type FleetDevice = DeviceListItem;
 
 export type FleetSenderResult = {
   accepted: boolean;
+  commandId?: string;
   reason?: string;
 };
 
