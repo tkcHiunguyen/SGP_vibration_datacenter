@@ -13,7 +13,18 @@
     "build:web": "pnpm -C web build",
     "build": "pnpm build:web && pnpm build:server",
     "typecheck": "pnpm -C server typecheck",
+    "perf:build": "pnpm -C web build && pnpm -C server build",
+    "perf:lighthouse:clean": "rm -rf output/perf/lighthouse",
+    "perf:lighthouse:mobile": "pnpm perf:build && lhci autorun --config=./web/lighthouserc.mobile.json",
+    "perf:lighthouse:desktop": "pnpm perf:build && lhci autorun --config=./web/lighthouserc.desktop.json",
+    "perf:lighthouse": "pnpm perf:lighthouse:clean && pnpm perf:lighthouse:mobile && pnpm perf:lighthouse:desktop && node scripts/perf/lighthouse-summary.mjs",
+    "perf:ux-delay": "pnpm perf:build && node scripts/perf/ux-delay-benchmark.mjs --start-server",
     "graphify:update": "python3 scripts/graphify_source_only.py",
     "graphify:watch": "python3 scripts/graphify_source_only.py --watch --interval 2"
+  },
+  "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "chrome-launcher": "^1.2.1",
+    "puppeteer-core": "^24.42.0"
   }
 }

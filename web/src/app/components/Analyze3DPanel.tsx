@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Box, ChevronDown } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import { DeviceTelemetryPoint, Sensor } from "../data/sensors";
-import { Accel3DCanvas, Accel3DPoint } from "./SensorChartModal";
+import type { Accel3DPoint } from "./Accel3DCanvas";
 import { ConsoleEmptyState, ConsolePage, ConsolePageHeader, ConsolePanel } from "./ui";
+
+const Accel3DCanvas = lazy(() =>
+  import("./Accel3DCanvas").then((module) => ({
+    default: module.Accel3DCanvas,
+  })),
+);
 
 const GRAVITY_MS2 = 9.80665;
 const TELEMETRY_HISTORY_BUFFER_SIZE = 200;
@@ -148,7 +154,9 @@ export function Analyze3DPanel({
             className="h-[460px]"
           />
         ) : (
-          <Accel3DCanvas C={C} accelPoints={accelPoints} height={460} />
+          <Suspense fallback={<ConsoleEmptyState title="Đang tải không gian 3D..." className="h-[460px]" />}>
+            <Accel3DCanvas C={C} accelPoints={accelPoints} height={460} />
+          </Suspense>
         )}
       </ConsolePanel>
     </ConsolePage>

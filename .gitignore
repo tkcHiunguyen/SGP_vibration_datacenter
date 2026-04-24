@@ -51,3 +51,8 @@ server/data/telemetry/
 server/storage/
 server/uploads/
 output/
+
+# Local AI memory/cache data
+.mem0-local/
+.token-savior-local/
+scripts/token-savior-local.sh

@@ -1,0 +1,29 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://127.0.0.1:8080/app/"
+      ],
+      "numberOfRuns": 3,
+      "startServerCommand": "pnpm -C server start:prod",
+      "startServerReadyTimeout": 120000,
+      "settings": {
+        "preset": "desktop",
+        "formFactor": "desktop",
+        "screenEmulation": {
+          "mobile": false,
+          "width": 1440,
+          "height": 900,
+          "deviceScaleFactor": 1,
+          "disabled": false
+        },
+        "throttlingMethod": "simulate",
+        "chromeFlags": "--headless=new --no-sandbox --disable-dev-shm-usage"
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./output/perf/lighthouse/desktop"
+    }
+  }
+}

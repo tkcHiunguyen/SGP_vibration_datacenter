@@ -1,4 +1,9 @@
-import type { DeviceTelemetrySummary, TelemetryRepository } from './telemetry.repository.js';
+import type {
+  DeviceTelemetryAvailabilityDay,
+  DeviceTelemetrySummary,
+  TelemetryAvailabilityQuery,
+  TelemetryRepository,
+} from './telemetry.repository.js';
 import type { TelemetryMessage } from '../../shared/types.js';
 import { TelemetryAppendOnlyStore } from './telemetry.persistence.js';
 import type { TelemetryHistoryQuery, TelemetryHistoryResult } from './telemetry.repository.js';
@@ -22,6 +27,10 @@ export class InMemoryTelemetryRepository implements TelemetryRepository {
 
   listHistory(query: TelemetryHistoryQuery): TelemetryHistoryResult {
     return this.store.listHistory(query);
+  }
+
+  listAvailableDays(query: TelemetryAvailabilityQuery): DeviceTelemetryAvailabilityDay[] {
+    return this.store.listAvailableDays(query);
   }
 
   summarizeDevice(deviceId: string): DeviceTelemetrySummary {

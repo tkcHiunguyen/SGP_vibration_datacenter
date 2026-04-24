@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { TelemetryPayload, TelemetryMessage } from '../../shared/types.js';
 import type {
+  DeviceTelemetryAvailabilityDay,
   DeviceTelemetrySummary,
+  TelemetryAvailabilityQuery,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
   TelemetryRepository,
@@ -38,6 +40,10 @@ export class TelemetryService {
 
   async listHistory(query: TelemetryHistoryQuery): Promise<TelemetryHistoryResult> {
     return await this.repository.listHistory(query);
+  }
+
+  async listAvailableDays(query: TelemetryAvailabilityQuery): Promise<DeviceTelemetryAvailabilityDay[]> {
+    return await this.repository.listAvailableDays(query);
   }
 
   async summarizeDevice(deviceId: string): Promise<DeviceTelemetrySummary> {

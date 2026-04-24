@@ -2,6 +2,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join } from 'node:path';
 import type { TelemetryMessage } from '../../shared/types.js';
 import type {
+  DeviceTelemetryAvailabilityDay,
+  TelemetryAvailabilityQuery,
   TelemetryHistoryPoint,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
@@ -50,6 +52,22 @@ function parseIsoTimestamp(value?: string): number | null {
   }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function clampTimezoneOffsetMinutes(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(-840, Math.min(840, Math.floor(Number(value))));
+}
+
+function toDateKeyWithTimezoneOffset(timestampMs: number, timezoneOffsetMinutes: number): string {
+  const shifted = timestampMs - timezoneOffsetMinutes * 60 * 1000;
+  const date = new Date(shifted);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export class TelemetryAppendOnlyStore {
@@ -136,6 +154,54 @@ export class TelemetryAppendOnlyStore {
       truncated: points.length > sliced.length,
       bucketMs,
     };
+  }
+
+  listAvailableDays(query: TelemetryAvailabilityQuery): DeviceTelemetryAvailabilityDay[] {
+    const fromTimestamp = parseIsoTimestamp(query.from);
+    const toTimestamp = parseIsoTimestamp(query.to);
+    const timezoneOffsetMinutes = clampTimezoneOffsetMinutes(query.timezoneOffsetMinutes);
+    const limitDays = Math.max(1, Math.min(Math.floor(query.limitDays ?? 366), 731));
+    const history = this.messagesByDevice.get(query.deviceId) ?? [];
+
+    const byDate = new Map<string, DeviceTelemetryAvailabilityDay>();
+    for (const message of history) {
+      const timestamp = Date.parse(message.receivedAt);
+      if (Number.isNaN(timestamp)) {
+        continue;
+      }
+      if (fromTimestamp !== null && timestamp < fromTimestamp) {
+        continue;
+      }
+      if (toTimestamp !== null && timestamp > toTimestamp) {
+        continue;
+      }
+
+      const dateKey = toDateKeyWithTimezoneOffset(timestamp, timezoneOffsetMinutes);
+      const existing = byDate.get(dateKey);
+      if (!existing) {
+        byDate.set(dateKey, {
+          date: dateKey,
+          count: 1,
+          firstAt: message.receivedAt,
+          lastAt: message.receivedAt,
+        });
+        continue;
+      }
+
+      existing.count += 1;
+      if (!existing.firstAt || message.receivedAt < existing.firstAt) {
+        existing.firstAt = message.receivedAt;
+      }
+      if (!existing.lastAt || message.receivedAt > existing.lastAt) {
+        existing.lastAt = message.receivedAt;
+      }
+    }
+
+    const rows = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+    if (rows.length <= limitDays) {
+      return rows;
+    }
+    return rows.slice(rows.length - limitDays);
   }
 
   applyRetention(): { removed: number; kept: number; cutoffAt: string } | null {

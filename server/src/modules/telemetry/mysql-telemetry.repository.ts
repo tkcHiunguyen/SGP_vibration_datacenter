@@ -1,6 +1,8 @@
 import type { TelemetryMessage, TelemetryPayload } from '../../shared/types.js';
 import type {
+  DeviceTelemetryAvailabilityDay,
   DeviceTelemetrySummary,
+  TelemetryAvailabilityQuery,
   TelemetryHistoryPoint,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
@@ -30,6 +32,13 @@ type TelemetrySummaryRow = {
   total: number;
   latest_at: string | Date | null;
   estimated_bytes: number | null;
+};
+
+type TelemetryAvailabilityRow = {
+  day_key: string | null;
+  total: number;
+  first_at: string | Date | null;
+  last_at: string | Date | null;
 };
 
 function toIsoTimestamp(value: string | Date): string {
@@ -201,6 +210,74 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       truncated: points.length > sliced.length,
       bucketMs,
     };
+  }
+
+  async listAvailableDays(query: TelemetryAvailabilityQuery): Promise<DeviceTelemetryAvailabilityDay[]> {
+    if (!this.mysql) {
+      return [];
+    }
+
+    const targetDeviceId = query.deviceId.trim();
+    if (!targetDeviceId) {
+      return [];
+    }
+
+    const fromTimestamp = parseIsoTimestamp(query.from);
+    const toTimestamp = parseIsoTimestamp(query.to);
+    const timezoneOffsetMinutes = Number.isFinite(query.timezoneOffsetMinutes)
+      ? Math.max(-840, Math.min(840, Math.floor(Number(query.timezoneOffsetMinutes))))
+      : 0;
+    const shiftMinutes = -timezoneOffsetMinutes;
+    const limitDays = Math.max(1, Math.min(Math.floor(query.limitDays ?? 366), 731));
+
+    const where: string[] = ['device_id = ?'];
+    const whereParams: Array<string | number | boolean | null | Date | Buffer> = [targetDeviceId];
+
+    if (fromTimestamp !== null) {
+      where.push('received_at >= ?');
+      whereParams.push(new Date(fromTimestamp).toISOString());
+    }
+    if (toTimestamp !== null) {
+      where.push('received_at <= ?');
+      whereParams.push(new Date(toTimestamp).toISOString());
+    }
+
+    const rows = await this.mysql.query<TelemetryAvailabilityRow>(
+      `SELECT
+         DATE_FORMAT(DATE_ADD(received_at, INTERVAL ? MINUTE), '%Y-%m-%d') AS day_key,
+         COUNT(*) AS total,
+         MIN(received_at) AS first_at,
+         MAX(received_at) AS last_at
+       FROM device_datas
+       WHERE ${where.join(' AND ')}
+       GROUP BY day_key
+       ORDER BY day_key DESC
+       LIMIT ?`,
+      [shiftMinutes, ...whereParams, limitDays],
+    );
+
+    const days: DeviceTelemetryAvailabilityDay[] = [];
+    for (const row of rows) {
+      const date = typeof row.day_key === 'string' ? row.day_key.trim() : '';
+      if (!date) {
+        continue;
+      }
+      const firstAtRaw = row.first_at;
+      const lastAtRaw = row.last_at;
+      const day: DeviceTelemetryAvailabilityDay = {
+        date,
+        count: Math.max(0, Math.floor(Number(row.total ?? 0))),
+      };
+      if (typeof firstAtRaw === 'string' || firstAtRaw instanceof Date) {
+        day.firstAt = new Date(toIsoTimestamp(firstAtRaw)).toISOString();
+      }
+      if (typeof lastAtRaw === 'string' || lastAtRaw instanceof Date) {
+        day.lastAt = new Date(toIsoTimestamp(lastAtRaw)).toISOString();
+      }
+      days.push(day);
+    }
+
+    return days.sort((left, right) => left.date.localeCompare(right.date));
   }
 
   async summarizeDevice(deviceId: string): Promise<DeviceTelemetrySummary> {

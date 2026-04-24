@@ -21,6 +21,21 @@ export type TelemetryHistoryResult = {
   bucketMs?: number;
 };
 
+export type TelemetryAvailabilityQuery = {
+  deviceId: string;
+  from?: string;
+  to?: string;
+  timezoneOffsetMinutes?: number;
+  limitDays?: number;
+};
+
+export type DeviceTelemetryAvailabilityDay = {
+  date: string;
+  count: number;
+  firstAt?: string;
+  lastAt?: string;
+};
+
 export type DeviceTelemetrySummary = {
   total: number;
   latestAt?: string;
@@ -33,6 +48,7 @@ export interface TelemetryRepository {
   setLast(message: TelemetryMessage): void;
   getLast(): TelemetryMessage | null;
   listHistory(query: TelemetryHistoryQuery): MaybePromise<TelemetryHistoryResult>;
+  listAvailableDays(query: TelemetryAvailabilityQuery): MaybePromise<DeviceTelemetryAvailabilityDay[]>;
   summarizeDevice(deviceId: string): MaybePromise<DeviceTelemetrySummary>;
   applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

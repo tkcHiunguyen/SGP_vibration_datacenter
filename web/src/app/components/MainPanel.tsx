@@ -1,12 +1,27 @@
-import React from "react";
+import { lazy, Suspense } from "react";
 import { useTheme } from "../context/ThemeContext";
 import { DeviceManagement } from "./DeviceManagement";
 import { UnderDevelopment } from "./UnderDevelopment";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
-import { Analyze3DPanel } from "./Analyze3DPanel";
-import { ZoneManagement } from "./ZoneManagement";
-import { OtaManagement } from "./OtaManagement";
 import type { ToastItem } from "./ui";
+
+const Analyze3DPanel = lazy(() =>
+  import("./Analyze3DPanel").then((module) => ({
+    default: module.Analyze3DPanel,
+  })),
+);
+
+const ZoneManagement = lazy(() =>
+  import("./ZoneManagement").then((module) => ({
+    default: module.ZoneManagement,
+  })),
+);
+
+const OtaManagement = lazy(() =>
+  import("./OtaManagement").then((module) => ({
+    default: module.OtaManagement,
+  })),
+);
 
 type TelemetryHistoryRequestOptions = {
   limit?: number;
@@ -39,6 +54,14 @@ export function MainPanel({
   const { C } = useTheme();
 
   const isDashboard = activeNav === "Tổng quan";
+  const panelFallback = (
+    <div
+      style={{
+        flex: 1,
+        background: C.bg,
+      }}
+    />
+  );
 
   return (
     <main style={{
@@ -71,17 +94,23 @@ export function MainPanel({
             scrollbarColor: `${C.scrollbar} transparent`,
           }}
         >
-          <ZoneManagement onNotify={onNotify} />
+          <Suspense fallback={panelFallback}>
+            <ZoneManagement onNotify={onNotify} />
+          </Suspense>
         </div>
       ) : activeNav === "Update Center" ? (
-        <OtaManagement />
+        <Suspense fallback={panelFallback}>
+          <OtaManagement />
+        </Suspense>
       ) : activeNav === "Phân tích" ? (
-        <Analyze3DPanel
-          sensors={sensors}
-          telemetryByDevice={telemetryByDevice}
-          telemetryLoadingByDevice={telemetryLoadingByDevice}
-          onRequestTelemetryHistory={onRequestTelemetryHistory}
-        />
+        <Suspense fallback={panelFallback}>
+          <Analyze3DPanel
+            sensors={sensors}
+            telemetryByDevice={telemetryByDevice}
+            telemetryLoadingByDevice={telemetryLoadingByDevice}
+            onRequestTelemetryHistory={onRequestTelemetryHistory}
+          />
+        </Suspense>
       ) : (
         <UnderDevelopment page={activeNav} />
       )}

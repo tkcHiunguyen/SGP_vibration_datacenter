@@ -1,0 +1,28 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://127.0.0.1:8080/app/"
+      ],
+      "numberOfRuns": 3,
+      "startServerCommand": "pnpm -C server start:prod",
+      "startServerReadyTimeout": 120000,
+      "settings": {
+        "formFactor": "mobile",
+        "screenEmulation": {
+          "mobile": true,
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 3,
+          "disabled": false
+        },
+        "throttlingMethod": "simulate",
+        "chromeFlags": "--headless=new --no-sandbox --disable-dev-shm-usage"
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./output/perf/lighthouse/mobile"
+    }
+  }
+}

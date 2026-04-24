@@ -1,14 +1,25 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import {
   Info, Search, AlertTriangle, CheckCircle2,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight,
   Activity, Cpu, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink, PencilLine, Trash2,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
-import { DeviceInfoModal } from "./DeviceInfoModal";
-import { SensorChartModal } from "./SensorChartModal";
 import { ConsoleStatCard, type ToastItem } from "./ui";
 import { useTheme } from "../context/ThemeContext";
+
+const loadDeviceInfoModal = () =>
+  import("./DeviceInfoModal").then((module) => ({
+    default: module.DeviceInfoModal,
+  }));
+
+const loadSensorChartModal = () =>
+  import("./SensorChartModal").then((module) => ({
+    default: module.SensorChartModal,
+  }));
+
+const DeviceInfoModal = lazy(loadDeviceInfoModal);
+const SensorChartModal = lazy(loadSensorChartModal);
 
 /* ── Device Card ── */
 function DeviceCard({
@@ -18,6 +29,8 @@ function DeviceCard({
   onChart,
   onOpenWeb,
   onContextMenu,
+  onPrepareInfo,
+  onPrepareChart,
   exiting,
 }: {
   sensor: Sensor;
@@ -26,6 +39,8 @@ function DeviceCard({
   onChart: (s: Sensor) => void;
   onOpenWeb: (s: Sensor) => void;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>, sensor: Sensor) => void;
+  onPrepareInfo?: () => void;
+  onPrepareChart?: () => void;
   exiting?: boolean;
 }) {
   const { C } = useTheme();
@@ -43,6 +58,10 @@ function DeviceCard({
 
   return (
     <div
+      data-ux="device-card"
+      data-device-id={sensor.id}
+      data-device-name={sensor.name}
+      data-device-online={sensor.online ? "true" : "false"}
       style={{
         background: C.card,
         border: `1px solid ${hovered ? accentColor + "55" : C.cardBorder}`,
@@ -60,6 +79,7 @@ function DeviceCard({
       onMouseEnter={() => {
         if (!exiting) {
           setHovered(true);
+          onPrepareChart?.();
         }
       }}
       onMouseLeave={() => setHovered(false)}
@@ -107,7 +127,10 @@ function DeviceCard({
             <button
               onClick={(e) => { e.stopPropagation(); onInfo(sensor); }}
               title="Thuộc tính thiết bị"
-              onMouseEnter={() => setInfoHovered(true)}
+              onMouseEnter={() => {
+                setInfoHovered(true);
+                onPrepareInfo?.();
+              }}
               onMouseLeave={() => setInfoHovered(false)}
               style={{
                 width: 22, height: 22, borderRadius: 6,
@@ -596,6 +619,7 @@ interface DeviceManagementProps {
 const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
 const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
 const DEVICE_CARD_EXIT_MS = 260;
+const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
 
 function readStoredNumber(key: string, fallback: number): number {
   if (typeof window === "undefined") {
@@ -646,6 +670,36 @@ export function DeviceManagement({
   const [pageInput, setPageInput] = useState(() => String(readStoredNumber(STORAGE_PAGE_KEY, 1)));
   const didMountRef = useRef(false);
   const exitTimeoutsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    let idleId: number | null = null;
+    let timeoutId: number | null = null;
+
+    const preloadDataView = () => {
+      void loadSensorChartModal();
+    };
+
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      idleId = idleWindow.requestIdleCallback(preloadDataView, {
+        timeout: DATA_VIEW_PREFETCH_TIMEOUT_MS,
+      });
+    } else {
+      timeoutId = window.setTimeout(preloadDataView, 900);
+    }
+
+    return () => {
+      if (idleId !== null && typeof idleWindow.cancelIdleCallback === "function") {
+        idleWindow.cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, []);
 
   const visibleSensors = useMemo(
     () => sensors.filter((sensor) => !hiddenDeviceIds.has(sensor.id)),
@@ -1012,6 +1066,7 @@ export function DeviceManagement({
           }}>
             <Search size={12} color={C.textMuted} strokeWidth={2} />
             <input
+              data-ux="device-search"
               type="text" placeholder="Tìm theo tên, ID, khu vực…"
               value={search} onChange={e => setSearch(e.target.value)}
               style={{ background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.72rem", flex: 1 }}
@@ -1108,7 +1163,7 @@ export function DeviceManagement({
           const isActive = filter === f.key;
           const dotColor = f.key === "online" ? C.success : f.key === "offline" ? "#6b7280" : f.key === "abnormal" ? C.danger : C.primary;
           return (
-            <button key={f.key} onClick={() => setFilter(f.key)}
+            <button key={f.key} data-ux={`filter-${f.key}`} onClick={() => setFilter(f.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 6,
                 height: 32, padding: "0 12px", borderRadius: 8,
@@ -1153,11 +1208,14 @@ export function DeviceManagement({
         </div>
       ) : (
         <>
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-            gap: 10,
-          }}>
+          <div
+            data-ux="device-grid"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+              gap: 10,
+            }}
+          >
             {pagedDevices.map((sensor, idx) => (
               <DeviceCard
                 key={sensor.id}
@@ -1174,6 +1232,8 @@ export function DeviceManagement({
                   setWebSensor(target);
                 }}
                 onContextMenu={openDeviceContextMenu}
+                onPrepareInfo={loadDeviceInfoModal}
+                onPrepareChart={loadSensorChartModal}
               />
             ))}
           </div>
@@ -1194,6 +1254,7 @@ export function DeviceManagement({
               </span>
               <div style={{ position: "relative" }}>
                 <select
+                  data-ux="page-size-select"
                   value={pageSize}
                   onChange={(e) => setPageSize(Number(e.target.value))}
                   style={{
@@ -1246,6 +1307,7 @@ export function DeviceManagement({
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>Trang</span>
                 <input
+                  data-ux="page-input"
                   className="page-input"
                   type="number"
                   min={1}
@@ -1366,31 +1428,39 @@ export function DeviceManagement({
         </div>
       ) : null}
 
-      <DeviceInfoModal
-        sensor={selectedSensor}
-        initialMode={selectedSensorMode}
-        onClose={() => {
-          setSelectedSensor(null);
-          setSelectedSensorMode("view");
-        }}
-        onSensorUpdated={(updated) => setSelectedSensor(updated)}
-        onSensorDeleted={(deviceId) => {
-          markDeviceExiting(deviceId);
-          setSelectedSensor(null);
-          setSelectedSensorMode("view");
-        }}
-        onNotify={onNotify}
-      />
-      <SensorChartModal
-        sensor={chartSensor}
-        telemetryPoints={chartSensor ? telemetryByDevice[chartSensor.id] || [] : []}
-        telemetryLoading={chartSensor ? Boolean(telemetryLoadingByDevice[chartSensor.id]) : false}
-        spectrumPoints={chartSensor ? spectrumByDevice[chartSensor.id] || [] : []}
-        onRequestTelemetryHistory={onRequestTelemetryHistory}
-        onNotify={onNotify}
-        onDeviceDataCleared={onDeviceDataCleared}
-        onClose={() => setChartSensor(null)}
-      />
+      {selectedSensor ? (
+        <Suspense fallback={null}>
+          <DeviceInfoModal
+            sensor={selectedSensor}
+            initialMode={selectedSensorMode}
+            onClose={() => {
+              setSelectedSensor(null);
+              setSelectedSensorMode("view");
+            }}
+            onSensorUpdated={(updated) => setSelectedSensor(updated)}
+            onSensorDeleted={(deviceId) => {
+              markDeviceExiting(deviceId);
+              setSelectedSensor(null);
+              setSelectedSensorMode("view");
+            }}
+            onNotify={onNotify}
+          />
+        </Suspense>
+      ) : null}
+      {chartSensor ? (
+        <Suspense fallback={null}>
+          <SensorChartModal
+            sensor={chartSensor}
+            telemetryPoints={telemetryByDevice[chartSensor.id] || []}
+            telemetryLoading={Boolean(telemetryLoadingByDevice[chartSensor.id])}
+            spectrumPoints={spectrumByDevice[chartSensor.id] || []}
+            onRequestTelemetryHistory={onRequestTelemetryHistory}
+            onNotify={onNotify}
+            onDeviceDataCleared={onDeviceDataCleared}
+            onClose={() => setChartSensor(null)}
+          />
+        </Suspense>
+      ) : null}
       <DeviceWebModal sensor={webSensor} onClose={() => setWebSensor(null)} />
     </>
   );

@@ -104,6 +104,13 @@ export function registerRoutes({
     bucketMs: z.coerce.number().int().positive().max(86_400_000).optional(),
   });
 
+  const telemetryAvailabilityQuerySchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    timezoneOffsetMinutes: z.coerce.number().int().min(-840).max(840).optional(),
+    limitDays: z.coerce.number().int().positive().max(731).optional(),
+  });
+
   const spectrumFrameQuerySchema = z.object({
     at: z.string().optional(),
     telemetryUuid: z.string().optional(),
@@ -2410,6 +2417,30 @@ export function registerRoutes({
         limit: query.limit ?? 200,
         bucketMs: query.bucketMs,
       }),
+    };
+  });
+
+  app.get('/api/devices/:deviceId/telemetry-availability', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+
+    const paramsSchema = z.object({ deviceId: z.string().min(1) });
+    const { deviceId } = paramsSchema.parse(request.params);
+    const query = telemetryAvailabilityQuerySchema.parse(request.query);
+
+    return {
+      ok: true,
+      data: {
+        deviceId,
+        days: await telemetryService.listAvailableDays({
+          deviceId,
+          from: query.from,
+          to: query.to,
+          timezoneOffsetMinutes: query.timezoneOffsetMinutes,
+          limitDays: query.limitDays ?? 366,
+        }),
+      },
     };
   });
 

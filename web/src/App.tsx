@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { ThemeProvider, useTheme } from "./app/context/ThemeContext";
 import { TopHeader } from "./app/components/TopHeader";
@@ -13,7 +13,12 @@ import {
   mapDevicesToSensors,
   Sensor,
 } from "./app/data/sensors";
-import { ThreeDPage } from "./app/components/ThreeDPage";
+
+const ThreeDPage = lazy(() =>
+  import("./app/components/ThreeDPage").then((module) => ({
+    default: module.ThreeDPage,
+  })),
+);
 
 const NAV_TO_PATH: Record<string, string> = {
   "Tổng quan": "/dashboard",
@@ -533,7 +538,7 @@ function DashboardShell({
         height: "100vh",
         overflow: "hidden",
         background: C.bg,
-        fontFamily: "'Inter', 'system-ui', sans-serif",
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         transition: "background 0.25s",
         colorScheme: theme,
       }}
@@ -587,7 +592,11 @@ function DashboardShell({
 export default function App() {
   const pathname = window.location.pathname;
   if (pathname === "/threed" || pathname === "/app/threed") {
-    return <ThreeDPage />;
+    return (
+      <Suspense fallback={<div style={{ width: "100vw", height: "100dvh", background: "#000000" }} />}>
+        <ThreeDPage />
+      </Suspense>
+    );
   }
 
   const [inventoryDevices, setInventoryDevices] = useState<DeviceListItem[]>([]);

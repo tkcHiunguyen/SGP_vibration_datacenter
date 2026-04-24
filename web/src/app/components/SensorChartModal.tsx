@@ -1,68 +1,242 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, ChevronDown } from "lucide-react";
+import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight } from "lucide-react";
 import { AxisBottom, AxisLeft } from "@visx/axis";
 import { Brush } from "@visx/brush";
+import type BaseBrush from "@visx/brush/lib/BaseBrush";
 import { Group } from "@visx/group";
 import { scaleLinear, scaleTime } from "@visx/scale";
 import { LinePath } from "@visx/shape";
-import { init, use as useECharts } from "echarts/core";
-import { BarChart as EChartsBarChart, LineChart as EChartsLineChart } from "echarts/charts";
-import { GridComponent, TooltipComponent, LegendComponent } from "echarts/components";
-import { CanvasRenderer } from "echarts/renderers";
-import type { ECharts, EChartsOption } from "echarts";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { ViewportGizmo } from "three-viewport-gizmo";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
 import type { ToastItem } from "./ui";
 import { ConsoleButton, Modal } from "./ui";
 
-useECharts([EChartsBarChart, EChartsLineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
-
 const GRAVITY_MS2 = 9.80665;
 const ACCEL_LIMIT_MS2 = 8 * GRAVITY_MS2;
-const DEFAULT_VISIBLE_POINTS = 120;
-const MIN_VISIBLE_POINTS = 60;
-const MAX_VISIBLE_POINTS = 5000;
+const ACCEL_LIMIT_MIN_MS2 = 0.1 * GRAVITY_MS2;
+const ACCEL_LIMIT_MAX_MS2 = 16 * GRAVITY_MS2;
+const TEMP_HALF_SPAN_MIN = 0.25;
+const TEMP_HALF_SPAN_MAX = 80;
 const TREND_MIN_RENDER_POINTS = 240;
 const TREND_MAX_RENDER_POINTS = 2200;
 const TREND_TILE_PIXEL_WIDTH = 12;
-const TREND_RELOAD_SPINNER_MIN_MS = 170;
+const TREND_ZOOM_STEP = 1.18;
+const TREND_MIN_VIEW_WINDOW_MS = 60 * 1000;
+const TREND_PAN_CLICK_SUPPRESS_MS = 120;
+const TREND_LATEST_EPSILON_MS = 5_000;
+const TREND_OVERVIEW_MAX_POINTS = 260;
+const TREND_MAX_GAP_STEP_RATIO = 1 / 120;
+const TREND_BUTTON_PAN_CLICK_RATIO = 0.12;
+const TREND_BUTTON_PAN_FRAME_MS = 34;
+const TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND = 0.16;
+const TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND = 1.05;
+const TREND_BUTTON_PAN_ACCELERATION_MS = 2_400;
+const ACCEL_RMS_MIN_WINDOW_MS = 10 * 1000;
+const ACCEL_RMS_TARGET_SAMPLES = 12;
+const ACCEL_RMS_MAX_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_SPECTRUM_SAMPLE_RATE_HZ = 1000;
 const DEFAULT_SPECTRUM_SOURCE_SAMPLES = 1024;
 const SPECTRUM_RENDER_BARS = 512;
 const SPECTRUM_HOVER_FETCH_DEBOUNCE_MS = 500;
 const SPECTRUM_HOVER_FETCH_MIN_DELTA_MS = 500;
 const SPECTRUM_FIXED_Y_MAX_FALLBACK = 1;
+const SPECTRUM_LOADING_LABEL = "Đang tải dữ liệu";
 const EMPTY_SPECTRUM_POINTS: DeviceSpectrumPoint[] = [];
 const DATA_SETTINGS_MODAL_CLOSE_MS = 190;
 const DATA_SETTINGS_SUMMARY_FETCH_DELAY_MS = 220;
 const DATA_SETTINGS_SUMMARY_CACHE_TTL_MS = 12_000;
 const CLEAR_DATA_CONFIRM_MODAL_CLOSE_MS = 170;
+const CHART_MODAL_TRANSITION_MS = 140;
+const TOP_TREND_CHART_HEIGHT = 220;
+const TREND_OVERVIEW_HEIGHT = 108;
+const SPECTRUM_CHART_HEIGHT = 160;
+const CHART_MODAL_EXPANDED_CHART_PX = 50;
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"] as const;
+const VIBRATION_AXIS_LABELS = {
+  ax: "Radial H",
+  ay: "Axial",
+  az: "Radial V",
+} as const;
+
+type ChartModalLayout = {
+  viewportWidth: number;
+  viewportHeight: number;
+  chartHeight: number;
+  overviewHeight: number;
+  spectrumHeight: number;
+  topGridGap: number;
+  sectionGap: number;
+  chartTitleGap: number;
+  chartCardPadding: string;
+  overviewCardPadding: string;
+  fftHeaderGap: number;
+  fftGridGap: number;
+  fftCardPadding: string;
+  fftAxisFooterHeight: number;
+  topGridColumns: string;
+  spectrumGridColumns: string;
+  headerPadding: string;
+  contentPadding: string;
+  modalWidth: string;
+  modalMaxHeight: string;
+};
+
+function getChartModalLayout(): ChartModalLayout {
+  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+  const scaledDesktopHeight = viewportHeight < 1120;
+  const midHeight = viewportHeight < 960;
+  const compactHeight = viewportHeight < 820;
+  const tightHeight = viewportHeight < 720;
+  const narrowWidth = viewportWidth < 1500;
+  const compactWidth = viewportWidth < 1280;
+
+  return {
+    viewportWidth,
+    viewportHeight,
+    chartHeight: tightHeight
+      ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+      : compactHeight
+        ? 132 + CHART_MODAL_EXPANDED_CHART_PX
+        : midHeight
+          ? 154 + CHART_MODAL_EXPANDED_CHART_PX
+          : scaledDesktopHeight
+            ? 172 + CHART_MODAL_EXPANDED_CHART_PX
+            : TOP_TREND_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX,
+    overviewHeight: tightHeight
+      ? 48
+      : compactHeight
+        ? 56
+        : midHeight
+          ? 66
+          : scaledDesktopHeight
+            ? 78
+            : TREND_OVERVIEW_HEIGHT,
+    spectrumHeight: tightHeight
+      ? 78 + CHART_MODAL_EXPANDED_CHART_PX
+      : compactHeight
+        ? 96 + CHART_MODAL_EXPANDED_CHART_PX
+        : midHeight
+          ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+          : scaledDesktopHeight
+            ? 124 + CHART_MODAL_EXPANDED_CHART_PX
+            : SPECTRUM_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX,
+    topGridGap: tightHeight ? 8 : compactHeight ? 9 : 10,
+    sectionGap: tightHeight ? 7 : compactHeight ? 8 : scaledDesktopHeight ? 9 : 12,
+    chartTitleGap: tightHeight ? 4 : scaledDesktopHeight ? 5 : 8,
+    chartCardPadding: tightHeight
+      ? "6px 6px 5px"
+      : compactHeight
+        ? "7px 6px 5px"
+        : scaledDesktopHeight
+          ? "8px 7px 6px"
+          : "12px 8px 8px",
+    overviewCardPadding: tightHeight
+      ? "6px 7px 5px"
+      : compactHeight
+        ? "7px 8px 6px"
+        : scaledDesktopHeight
+          ? "8px 9px 6px"
+          : "10px 10px 8px",
+    fftHeaderGap: tightHeight ? 5 : compactHeight ? 6 : 7,
+    fftGridGap: tightHeight ? 7 : compactHeight ? 8 : 10,
+    fftCardPadding: tightHeight
+      ? "7px 5px 5px"
+      : compactHeight
+        ? "8px 5px 5px"
+        : scaledDesktopHeight
+          ? "8px 6px 5px"
+          : "10px 6px 6px",
+    fftAxisFooterHeight: tightHeight ? 8 : 10,
+    topGridColumns: viewportWidth < 980 ? "1fr" : "repeat(2, minmax(0, 1fr))",
+    spectrumGridColumns:
+      viewportWidth < 900
+        ? "1fr"
+        : compactWidth
+          ? "repeat(2, minmax(0, 1fr))"
+          : "repeat(3, minmax(0, 1fr))",
+    headerPadding: tightHeight
+      ? "8px 11px 7px"
+      : compactHeight
+        ? "9px 12px 8px"
+        : scaledDesktopHeight
+          ? "10px 14px 9px"
+          : "14px 18px 12px",
+    contentPadding: tightHeight
+      ? "8px 10px 10px"
+      : compactHeight
+        ? "10px 12px 12px"
+        : scaledDesktopHeight
+          ? "12px 14px 14px"
+          : "16px 20px",
+    modalWidth: narrowWidth ? "calc(100vw - 24px)" : "min(94vw, 1440px)",
+    modalMaxHeight: tightHeight
+      ? "calc(100dvh - 16px)"
+      : compactHeight
+        ? "calc(100dvh - 24px)"
+        : scaledDesktopHeight
+          ? "min(calc(100dvh - 48px), 900px)"
+          : "min(90dvh, 880px)",
+  };
+}
+
+function stopWheelScroll(event: React.WheelEvent<HTMLElement | SVGElement>) {
+  event.stopPropagation();
+}
+
+function getPrimaryWheelDelta(event: React.WheelEvent<HTMLElement | SVGElement>): number {
+  const { deltaX, deltaY } = event;
+  if (Math.abs(deltaX) > Math.abs(deltaY)) {
+    return deltaX;
+  }
+  return deltaY;
+}
+
+function useNonPassiveWheelBlock(ref: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) {
+      return;
+    }
+
+    const blockWheelDefault = (event: WheelEvent) => {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    };
+
+    node.addEventListener("wheel", blockWheelDefault, { passive: false });
+    return () => {
+      node.removeEventListener("wheel", blockWheelDefault);
+    };
+  }, [ref]);
+}
 
 type HistoryPresetKey = "1h" | "6h" | "12h" | "1d" | "3d" | "1w" | "1m";
-const DEFAULT_HISTORY_PRESET_KEY: HistoryPresetKey = "1h";
-const TEMP_HALF_SPAN_MIN = 1;
-const TEMP_HALF_SPAN_MAX = 20;
-const ACCEL_LIMIT_MIN = 0.5 * GRAVITY_MS2;
-const ACCEL_LIMIT_MAX = 16 * GRAVITY_MS2;
+const DEFAULT_HISTORY_PRESET_KEY: HistoryPresetKey = "12h";
 
 const TELEMETRY_HISTORY_PRESETS: Array<{
   key: HistoryPresetKey;
   label: string;
   windowMs: number;
   limit: number;
-  visiblePoints: number;
 }> = [
-  { key: "1h", label: "1 giờ", windowMs: 60 * 60 * 1000, limit: 800, visiblePoints: 280 },
-  { key: "6h", label: "6 giờ", windowMs: 6 * 60 * 60 * 1000, limit: 1000, visiblePoints: 420 },
-  { key: "12h", label: "12 giờ", windowMs: 12 * 60 * 60 * 1000, limit: 1400, visiblePoints: 520 },
-  { key: "1d", label: "1 ngày", windowMs: 24 * 60 * 60 * 1000, limit: 1800, visiblePoints: 620 },
-  { key: "3d", label: "3 ngày", windowMs: 3 * 24 * 60 * 60 * 1000, limit: 2400, visiblePoints: 720 },
-  { key: "1w", label: "1 tuần", windowMs: 7 * 24 * 60 * 60 * 1000, limit: 3000, visiblePoints: 820 },
-  { key: "1m", label: "1 tháng", windowMs: 30 * 24 * 60 * 60 * 1000, limit: 3600, visiblePoints: 900 },
+  { key: "1h", label: "1 giờ", windowMs: 60 * 60 * 1000, limit: 800 },
+  { key: "6h", label: "6 giờ", windowMs: 6 * 60 * 60 * 1000, limit: 1000 },
+  { key: "12h", label: "12 giờ", windowMs: 12 * 60 * 60 * 1000, limit: 1400 },
+  { key: "1d", label: "1 ngày", windowMs: 24 * 60 * 60 * 1000, limit: 1800 },
+  { key: "3d", label: "3 ngày", windowMs: 3 * 24 * 60 * 60 * 1000, limit: 2400 },
+  { key: "1w", label: "1 tuần", windowMs: 7 * 24 * 60 * 60 * 1000, limit: 3000 },
+  { key: "1m", label: "1 tháng", windowMs: 30 * 24 * 60 * 60 * 1000, limit: 3600 },
 ];
+
+function getDefaultTrendViewWindowMs(
+  _presetKey: HistoryPresetKey | null | undefined,
+  loadedWindowMs: number,
+): number {
+  return Math.max(1, loadedWindowMs);
+}
 
 function asFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -225,6 +399,26 @@ function formatAbsoluteAxisTime(input: number): string {
   return `${hh}:${mm} ${dd}/${mo}`;
 }
 
+function formatTrendAxisTime(input: number, domainStartMs: number, domainEndMs: number): string {
+  if (!Number.isFinite(input)) {
+    return "";
+  }
+  const value = new Date(input);
+  const start = new Date(domainStartMs);
+  const end = new Date(domainEndMs);
+  const hh = String(value.getHours()).padStart(2, "0");
+  const mm = String(value.getMinutes()).padStart(2, "0");
+  const ss = String(value.getSeconds()).padStart(2, "0");
+  const sameDay =
+    start.getFullYear() === end.getFullYear()
+    && start.getMonth() === end.getMonth()
+    && start.getDate() === end.getDate();
+  if (sameDay) {
+    return domainEndMs - domainStartMs <= 2 * 60 * 1000 ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+  }
+  return formatAbsoluteAxisTime(input);
+}
+
 function formatTooltipDateTime(input: unknown): string {
   const ts =
     typeof input === "number"
@@ -296,16 +490,120 @@ function formatByteSize(value: number | undefined): string {
   return `${fixed} ${units[unitIndex]}`;
 }
 
-function clampTrendVisiblePoints(value: number): number {
-  return Math.max(MIN_VISIBLE_POINTS, Math.min(MAX_VISIBLE_POINTS, Math.round(value)));
-}
-
 function clampTempHalfSpan(value: number): number {
-  return Math.max(TEMP_HALF_SPAN_MIN, Math.min(TEMP_HALF_SPAN_MAX, Number(value.toFixed(2))));
+  if (!Number.isFinite(value)) {
+    return 5;
+  }
+  return Math.max(TEMP_HALF_SPAN_MIN, Math.min(TEMP_HALF_SPAN_MAX, Number(value.toFixed(3))));
 }
 
 function clampAccelAmplitudeLimit(value: number): number {
-  return Math.max(ACCEL_LIMIT_MIN, Math.min(ACCEL_LIMIT_MAX, Number(value.toFixed(3))));
+  if (!Number.isFinite(value)) {
+    return ACCEL_LIMIT_MS2;
+  }
+  return Math.max(ACCEL_LIMIT_MIN_MS2, Math.min(ACCEL_LIMIT_MAX_MS2, Number(value.toFixed(4))));
+}
+
+function formatDateInputValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateInputLabel(value: string): string {
+  if (!value) {
+    return "Chọn ngày";
+  }
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (!Number.isFinite(parsed)) {
+    return "Chọn ngày";
+  }
+  return new Date(parsed).toLocaleDateString("vi-VN");
+}
+
+function parseDateInputValue(value: string): Date | null {
+  const parsed = Date.parse(`${value}T00:00:00`);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return new Date(parsed);
+}
+
+function startOfMonthLocal(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), 1, 0, 0, 0, 0);
+}
+
+function addMonthsLocal(value: Date, delta: number): Date {
+  return new Date(value.getFullYear(), value.getMonth() + delta, 1, 0, 0, 0, 0);
+}
+
+function formatMonthKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(value: Date): string {
+  const month = value.toLocaleDateString("vi-VN", { month: "long" });
+  return `${month} ${value.getFullYear()}`;
+}
+
+type CalendarDayCell = {
+  dateValue: string;
+  dayNumber: number;
+  monthOffset: -1 | 0 | 1;
+  isFuture: boolean;
+  isToday: boolean;
+};
+
+function buildCalendarDayCells(monthAnchor: Date, now = new Date()): CalendarDayCell[] {
+  const monthStart = startOfMonthLocal(monthAnchor);
+  const monthIndex = monthStart.getFullYear() * 12 + monthStart.getMonth();
+  const weekdayIndex = (monthStart.getDay() + 6) % 7;
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - weekdayIndex);
+  gridStart.setHours(0, 0, 0, 0);
+
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+  const cells: CalendarDayCell[] = [];
+  for (let index = 0; index < 42; index += 1) {
+    const cellDate = new Date(gridStart);
+    cellDate.setDate(gridStart.getDate() + index);
+    cellDate.setHours(0, 0, 0, 0);
+    const cellMonthIndex = cellDate.getFullYear() * 12 + cellDate.getMonth();
+    const monthOffset = cellMonthIndex === monthIndex ? 0 : cellMonthIndex < monthIndex ? -1 : 1;
+    const cellTimestamp = cellDate.getTime();
+    cells.push({
+      dateValue: formatDateInputValue(cellDate),
+      dayNumber: cellDate.getDate(),
+      monthOffset,
+      isFuture: cellTimestamp > todayStart,
+      isToday: cellTimestamp === todayStart,
+    });
+  }
+  return cells;
+}
+
+type TelemetryAvailabilityDay = {
+  date: string;
+  count: number;
+};
+
+function parseTelemetryAvailabilityPayload(payload: unknown): TelemetryAvailabilityDay[] {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const source = Array.isArray(data.days) ? data.days : Array.isArray(root.days) ? root.days : [];
+  const mapped = source
+    .map((item) => {
+      const row = asRecord(item);
+      const date = asNonEmptyString(row.date) ?? "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return null;
+      }
+      const count = Math.max(0, Math.floor(asFiniteNumber(row.count) ?? 0));
+      return { date, count };
+    })
+    .filter((item): item is TelemetryAvailabilityDay => Boolean(item));
+  return mapped.sort((left, right) => left.date.localeCompare(right.date));
 }
 
 function buildNullGapRanges<T>(
@@ -350,6 +648,25 @@ function buildNullGapRanges<T>(
   }
 
   return ranges;
+}
+
+function clipGapRangesToWindow(
+  ranges: TrendGapSegment[],
+  windowStartTs: number,
+  windowEndTs: number,
+): TrendGapSegment[] {
+  const safeStartTs = Math.min(windowStartTs, windowEndTs);
+  const safeEndTs = Math.max(windowStartTs, windowEndTs);
+  return ranges
+    .map((range) => {
+      const from = Math.max(safeStartTs, range.from);
+      const to = Math.min(safeEndTs, range.to);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+        return null;
+      }
+      return { from, to };
+    })
+    .filter((range): range is TrendGapSegment => Boolean(range));
 }
 
 function spectrumBinHz(point: DeviceSpectrumPoint | null): number | undefined {
@@ -437,11 +754,25 @@ function downsampleSpectrumChartData(
 }
 
 type ChartPanState = {
-  startX: number;
-  startOffset: number;
-  width: number;
-  maxOffset: number;
+  startClientX: number;
+  startDomainStartMs: number;
+  startDomainEndMs: number;
+  plotWidth: number;
+  moved: boolean;
 };
+
+type ButtonPanState = {
+  direction: -1 | 1;
+  startedAt: number;
+  lastTickAt: number;
+};
+
+type TrendViewport = {
+  startMs: number;
+  endMs: number;
+};
+
+type AccelTrendMode = "instant" | "rms";
 
 type HoverTelemetrySnapshot = {
   ts: number;
@@ -483,6 +814,92 @@ type DenseTelemetryRow = {
   ay: number | null;
   az: number | null;
 };
+
+function buildRollingRmsAccelRows(
+  rows: DenseTelemetryRow[],
+  windowMs: number,
+): Array<{ ts: number; telemetryUuid?: string; ax: number | null; ay: number | null; az: number | null }> {
+  const safeWindowMs = Math.max(1, windowMs);
+  const axes = ["ax", "ay", "az"] as const;
+  const state: Record<
+    (typeof axes)[number],
+    { samples: Array<{ ts: number; value: number }>; sumSquares: number }
+  > = {
+    ax: { samples: [], sumSquares: 0 },
+    ay: { samples: [], sumSquares: 0 },
+    az: { samples: [], sumSquares: 0 },
+  };
+
+  return rows.map((row) => {
+    const next: { ts: number; telemetryUuid?: string; ax: number | null; ay: number | null; az: number | null } = {
+      ts: row.ts,
+      telemetryUuid: row.telemetryUuid,
+      ax: null,
+      ay: null,
+      az: null,
+    };
+
+    for (const axis of axes) {
+      const axisState = state[axis];
+      const rawValue = row[axis];
+      if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
+        axisState.samples = [];
+        axisState.sumSquares = 0;
+        next[axis] = null;
+        continue;
+      }
+
+      axisState.samples.push({ ts: row.ts, value: rawValue });
+      axisState.sumSquares += rawValue * rawValue;
+
+      const cutoffTs = row.ts - safeWindowMs;
+      while (axisState.samples.length > 0 && (axisState.samples[0]?.ts ?? row.ts) < cutoffTs) {
+        const removed = axisState.samples.shift();
+        if (removed) {
+          axisState.sumSquares -= removed.value * removed.value;
+        }
+      }
+
+      const sampleCount = axisState.samples.length;
+      next[axis] = sampleCount > 0
+        ? Number(Math.sqrt(Math.max(0, axisState.sumSquares) / sampleCount).toFixed(4))
+        : null;
+    }
+
+    return next;
+  });
+}
+
+function clampTrendViewport(
+  requestedViewport: TrendViewport,
+  boundsStartMs: number,
+  boundsEndMs: number,
+  minDurationMs: number,
+): TrendViewport {
+  const safeBoundsEndMs = boundsEndMs > boundsStartMs ? boundsEndMs : boundsStartMs + 1;
+  const boundsDurationMs = safeBoundsEndMs - boundsStartMs;
+  const safeMinDurationMs = Math.max(1, Math.min(boundsDurationMs, minDurationMs));
+  const requestedStartMs = Math.min(requestedViewport.startMs, requestedViewport.endMs);
+  const requestedEndMs = Math.max(requestedViewport.startMs, requestedViewport.endMs);
+  let durationMs = Math.max(safeMinDurationMs, requestedEndMs - requestedStartMs);
+  durationMs = Math.min(boundsDurationMs, durationMs);
+
+  let startMs = requestedStartMs;
+  let endMs = startMs + durationMs;
+  if (endMs > safeBoundsEndMs) {
+    endMs = safeBoundsEndMs;
+    startMs = endMs - durationMs;
+  }
+  if (startMs < boundsStartMs) {
+    startMs = boundsStartMs;
+    endMs = startMs + durationMs;
+  }
+
+  return {
+    startMs: Math.round(startMs),
+    endMs: Math.round(endMs),
+  };
+}
 
 function thinSampleIndices(sortedIndices: number[], maxCount: number): number[] {
   if (sortedIndices.length <= maxCount) {
@@ -596,6 +1013,21 @@ function buildTiledTrendRows(
     .filter((row): row is TrendRow => Boolean(row));
 }
 
+function buildOverviewTelemetryRows(rows: DenseTelemetryRow[], maxPoints = TREND_OVERVIEW_MAX_POINTS): DenseTelemetryRow[] {
+  if (rows.length <= maxPoints) {
+    return rows;
+  }
+  return buildTiledTrendRows(rows, ["temp", "ax", "ay", "az"], maxPoints, Math.max(24, Math.round(maxPoints / 3)))
+    .map((row) => ({
+      ts: row.ts,
+      telemetryUuid: typeof row.telemetryUuid === "string" ? row.telemetryUuid : undefined,
+      temp: typeof row.temp === "number" ? row.temp : null,
+      ax: typeof row.ax === "number" ? row.ax : null,
+      ay: typeof row.ay === "number" ? row.ay : null,
+      az: typeof row.az === "number" ? row.az : null,
+    }));
+}
+
 type DeviceDataSummary = {
   updatedAt?: string;
   totalRecords: number;
@@ -663,19 +1095,22 @@ function parseSpectrumHoverTarget(state: unknown): SpectrumHoverTarget | null {
   return { timestampMs, telemetryUuid };
 }
 
-function TimeWindowBrush({
+function TrendOverviewBrush({
   rows,
+  gapSegments,
   selectedStartTs,
   selectedEndTs,
-  onRangeCommit,
   resetKey,
   axisLabelColor,
   C,
+  height = TREND_OVERVIEW_HEIGHT,
+  minWindowMs = TREND_MIN_VIEW_WINDOW_MS,
+  onRangeCommit,
 }: {
   rows: DenseTelemetryRow[];
-  selectedStartTs?: number;
-  selectedEndTs?: number;
-  onRangeCommit?: (startTs: number, endTs: number) => void;
+  gapSegments: TrendGapSegment[];
+  selectedStartTs: number;
+  selectedEndTs: number;
   resetKey: string;
   axisLabelColor: string;
   C: {
@@ -685,20 +1120,48 @@ function TimeWindowBrush({
     textMuted: string;
     primary: string;
   };
+  height?: number;
+  minWindowMs?: number;
+  onRangeCommit?: (startTs: number, endTs: number) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  useNonPassiveWheelBlock(wrapperRef);
+  const brushRef = useRef<BaseBrush | null>(null);
+  const brushFrameRef = useRef<number | null>(null);
+  const pendingBrushRangeRef = useRef<{ startTs: number; endTs: number } | null>(null);
   const lastBrushRangeRef = useRef<{ startTs: number; endTs: number } | null>(null);
+  const suppressBrushChangeRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
-  const height = 96;
-  const margin = useMemo(() => ({ top: 8, right: 10, bottom: 22, left: 10 }), []);
+  const margin = useMemo(() => ({ top: 10, right: 12, bottom: 24, left: 12 }), []);
+  const handleOverviewContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  }, []);
+  const handleOverviewMouseDownCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (brushFrameRef.current !== null) {
+        window.cancelAnimationFrame(brushFrameRef.current);
+        brushFrameRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) {
       return;
     }
+
     const updateWidth = () => {
-      const next = Math.max(0, Math.round(wrapper.getBoundingClientRect().width));
+      const measuredWidth = wrapper.clientWidth || wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
+      const next = Math.max(0, Math.round(measuredWidth));
       setChartWidth(next);
     };
     updateWidth();
@@ -716,13 +1179,10 @@ function TimeWindowBrush({
   const firstTs = rows[0]?.ts ?? Date.now() - 1000;
   const lastTsRaw = rows[rows.length - 1]?.ts ?? Date.now();
   const lastTs = lastTsRaw > firstTs ? lastTsRaw : firstTs + 1000;
-  const safeStartTs = typeof selectedStartTs === "number" ? selectedStartTs : firstTs;
-  const safeEndTs = typeof selectedEndTs === "number" ? selectedEndTs : lastTs;
-  const normalizedSelectedStartTs = Math.min(safeStartTs, safeEndTs);
-  const normalizedSelectedEndTs = Math.max(safeStartTs, safeEndTs);
-
   const xMax = Math.max(1, chartWidth - margin.left - margin.right);
   const yMax = Math.max(1, height - margin.top - margin.bottom);
+  const overviewTickCount = Math.max(2, Math.min(6, Math.floor(xMax / 150)));
+  const overviewRows = useMemo(() => buildOverviewTelemetryRows(rows), [rows]);
 
   const xScale = useMemo(
     () =>
@@ -735,7 +1195,7 @@ function TimeWindowBrush({
 
   const lineData = useMemo(
     () =>
-      rows
+      overviewRows
         .map((row) => {
           const values = [row.temp, row.ax, row.ay, row.az].filter(
             (value): value is number => typeof value === "number" && Number.isFinite(value),
@@ -747,7 +1207,7 @@ function TimeWindowBrush({
           return { ts: row.ts, value: magnitude };
         })
         .filter((item): item is { ts: number; value: number } => Boolean(item)),
-    [rows],
+    [overviewRows],
   );
 
   const [yMin, yMaxValue] = useMemo(() => {
@@ -759,9 +1219,11 @@ function TimeWindowBrush({
     if (max <= min) {
       return [Math.max(0, min - 0.5), max + 0.5] as const;
     }
-    const padding = (max - min) * 0.12;
+    const padding = (max - min) * 0.14;
     return [Math.max(0, min - padding), max + padding] as const;
   }, [lineData]);
+  const hasOverviewLineData = lineData.length > 1;
+  const canRenderOverviewBrush = rows.length > 0;
 
   const yScale = useMemo(
     () =>
@@ -773,42 +1235,207 @@ function TimeWindowBrush({
   );
 
   const initialBrushPosition = useMemo(() => {
-    const startX = Math.max(0, Math.min(xMax, xScale(new Date(normalizedSelectedStartTs))));
-    const endX = Math.max(0, Math.min(xMax, xScale(new Date(normalizedSelectedEndTs))));
+    const startX = Math.max(0, Math.min(xMax, xScale(new Date(selectedStartTs))));
+    const endX = Math.max(0, Math.min(xMax, xScale(new Date(selectedEndTs))));
     return {
       start: { x: Math.min(startX, endX), y: 0 },
       end: { x: Math.max(startX, endX), y: yMax },
     };
-  }, [normalizedSelectedEndTs, normalizedSelectedStartTs, xMax, xScale, yMax]);
+  }, [selectedEndTs, selectedStartTs, xMax, xScale, yMax]);
 
-  const handleBrushChange = useCallback(
-    (bounds: unknown) => {
-      const domain = asRecord(bounds);
-      const x0 = asTimestampMs(domain.x0);
-      const x1 = asTimestampMs(domain.x1);
-      if (typeof x0 !== "number" || typeof x1 !== "number") {
-        return;
-      }
-
-      const nextStartTs = Math.max(firstTs, Math.min(lastTs, Math.min(x0, x1)));
-      const nextEndTs = Math.max(firstTs, Math.min(lastTs, Math.max(x0, x1)));
-      const previous = lastBrushRangeRef.current;
+  const emitRange = useCallback(
+    (nextStartTs: number, nextEndTs: number, immediate = false) => {
+      const normalizedRange = {
+        startTs: Math.round(Math.min(nextStartTs, nextEndTs)),
+        endTs: Math.round(Math.max(nextStartTs, nextEndTs)),
+      };
+      const lastRange = lastBrushRangeRef.current;
       if (
-        previous
-        && Math.abs(nextStartTs - previous.startTs) <= 1
-        && Math.abs(nextEndTs - previous.endTs) <= 1
+        lastRange
+        && Math.abs(lastRange.startTs - normalizedRange.startTs) <= 1
+        && Math.abs(lastRange.endTs - normalizedRange.endTs) <= 1
       ) {
         return;
       }
 
-      lastBrushRangeRef.current = { startTs: nextStartTs, endTs: nextEndTs };
-      onRangeCommit?.(nextStartTs, nextEndTs);
+      pendingBrushRangeRef.current = normalizedRange;
+      const flush = () => {
+        brushFrameRef.current = null;
+        const range = pendingBrushRangeRef.current;
+        if (!range) {
+          return;
+        }
+        pendingBrushRangeRef.current = null;
+        lastBrushRangeRef.current = range;
+        onRangeCommit?.(range.startTs, range.endTs);
+      };
+
+      if (immediate) {
+        if (brushFrameRef.current !== null) {
+          window.cancelAnimationFrame(brushFrameRef.current);
+          brushFrameRef.current = null;
+        }
+        flush();
+        return;
+      }
+
+      if (brushFrameRef.current === null) {
+        brushFrameRef.current = window.requestAnimationFrame(flush);
+      }
     },
-    [firstTs, lastTs, onRangeCommit],
+    [onRangeCommit],
   );
 
+  const toBrushRange = useCallback(
+    (bounds: unknown) => {
+      const record = asRecord(bounds);
+      const x0 = asTimestampMs(record.x0);
+      const x1 = asTimestampMs(record.x1);
+      if (typeof x0 !== "number" || typeof x1 !== "number") {
+        return null;
+      }
+      const nextStartTs = Math.max(firstTs, Math.min(lastTs, Math.min(x0, x1)));
+      const nextEndTs = Math.max(firstTs, Math.min(lastTs, Math.max(x0, x1)));
+      if (Math.abs(nextEndTs - nextStartTs) < 1) {
+        return null;
+      }
+      return { startTs: nextStartTs, endTs: nextEndTs };
+    },
+    [firstTs, lastTs],
+  );
+
+  const handleBrushChange = useCallback(
+    (bounds: unknown) => {
+      if (suppressBrushChangeRef.current) {
+        suppressBrushChangeRef.current = false;
+        return;
+      }
+      const nextRange = toBrushRange(bounds);
+      if (!nextRange) {
+        return;
+      }
+      emitRange(nextRange.startTs, nextRange.endTs);
+    },
+    [emitRange, toBrushRange],
+  );
+
+  const handleBrushEnd = useCallback(
+    (bounds: unknown) => {
+      if (suppressBrushChangeRef.current) {
+        suppressBrushChangeRef.current = false;
+        return;
+      }
+      const nextRange = toBrushRange(bounds);
+      if (!nextRange) {
+        return;
+      }
+      emitRange(nextRange.startTs, nextRange.endTs, true);
+    },
+    [emitRange, toBrushRange],
+  );
+
+  const handleOverviewWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (!onRangeCommit) {
+        stopWheelScroll(event);
+        return;
+      }
+      stopWheelScroll(event);
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const localX = event.clientX - rect.left - margin.left;
+      const chartX = Math.max(0, Math.min(xMax, localX));
+      const pointerTs = xScale.invert(chartX).getTime();
+      const currentStartTs = Math.min(selectedStartTs, selectedEndTs);
+      const currentEndTs = Math.max(selectedStartTs, selectedEndTs);
+      const currentDurationMs = Math.max(1, currentEndTs - currentStartTs);
+      const boundsDurationMs = Math.max(1, lastTs - firstTs);
+      const zoomOut = event.deltaY > 0;
+      const nextDurationMs = Math.max(
+        Math.min(boundsDurationMs, Math.max(1, minWindowMs)),
+        Math.min(boundsDurationMs, currentDurationMs * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)),
+      );
+
+      if (Math.abs(nextDurationMs - currentDurationMs) < 1) {
+        return;
+      }
+
+      const anchorTs = Math.max(currentStartTs, Math.min(currentEndTs, pointerTs));
+      const anchorRatio = currentDurationMs > 0 ? (anchorTs - currentStartTs) / currentDurationMs : 0.5;
+      const proposedStartTs = anchorTs - anchorRatio * nextDurationMs;
+      const nextViewport = clampTrendViewport(
+        {
+          startMs: proposedStartTs,
+          endMs: proposedStartTs + nextDurationMs,
+        },
+        firstTs,
+        lastTs,
+        minWindowMs,
+      );
+      emitRange(nextViewport.startMs, nextViewport.endMs, true);
+    },
+    [
+      emitRange,
+      firstTs,
+      lastTs,
+      margin.left,
+      minWindowMs,
+      onRangeCommit,
+      selectedEndTs,
+      selectedStartTs,
+      xMax,
+      xScale,
+    ],
+  );
+
+  useEffect(() => {
+    const brush = brushRef.current;
+    if (!brush || xMax <= 0 || yMax <= 0 || brush.state.isBrushing) {
+      return;
+    }
+
+    const startX = Math.max(0, Math.min(xMax, xScale(new Date(selectedStartTs))));
+    const endX = Math.max(0, Math.min(xMax, xScale(new Date(selectedEndTs))));
+    const nextStartX = Math.min(startX, endX);
+    const nextEndX = Math.max(startX, endX);
+    const currentExtent = brush.state.extent;
+    if (
+      Math.abs((currentExtent.x0 ?? 0) - nextStartX) <= 0.75
+      && Math.abs((currentExtent.x1 ?? 0) - nextEndX) <= 0.75
+    ) {
+      return;
+    }
+
+    const nextExtent = brush.getExtent({ x: nextStartX, y: 0 }, { x: nextEndX, y: yMax });
+    suppressBrushChangeRef.current = true;
+    brush.updateBrush((prevBrush) => ({
+      ...prevBrush,
+      start: { x: nextStartX, y: 0 },
+      end: { x: nextEndX, y: yMax },
+      extent: nextExtent,
+      bounds: {
+        x0: 0,
+        x1: xMax,
+        y0: 0,
+        y1: yMax,
+      },
+    }));
+  }, [selectedEndTs, selectedStartTs, xMax, xScale, yMax]);
+
   return (
-    <div ref={wrapperRef} style={{ width: "100%", height }}>
+    <div
+      ref={wrapperRef}
+      onContextMenu={handleOverviewContextMenu}
+      onMouseDownCapture={handleOverviewMouseDownCapture}
+      onWheel={handleOverviewWheel}
+      style={{
+        width: "100%",
+        height,
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        overscrollBehavior: "contain",
+      }}
+    >
       {chartWidth > 0 ? (
         <svg width={chartWidth} height={height}>
           <Group left={margin.left} top={margin.top}>
@@ -817,77 +1444,115 @@ function TimeWindowBrush({
               y={0}
               width={xMax}
               height={yMax}
-              rx={6}
+              rx={8}
               fill={C.surface}
               stroke={C.border}
             />
 
-            {lineData.length > 1 ? (
-              <LinePath
-                data={lineData}
-                x={(point) => xScale(new Date(point.ts))}
-                y={(point) => yScale(point.value)}
-                stroke={C.primary}
-                strokeWidth={1.6}
-                strokeOpacity={0.8}
+            {gapSegments.map((segment, index) => {
+              const rawX1 = xScale(new Date(segment.from));
+              const rawX2 = xScale(new Date(segment.to));
+              const x1 = Math.max(0, Math.min(xMax, rawX1));
+              const x2 = Math.max(0, Math.min(xMax, rawX2));
+              if (Math.abs(x2 - x1) < 0.5) {
+                return null;
+              }
+              return (
+                <rect
+                  key={`overview-gap-${index}`}
+                  x={Math.min(x1, x2)}
+                  y={0}
+                  width={Math.max(1, Math.abs(x2 - x1))}
+                  height={yMax}
+                  fill="rgba(254, 240, 138, 0.42)"
+                  stroke="rgba(245, 158, 11, 0.22)"
+                  strokeWidth={0.6}
+                />
+              );
+            })}
+
+            {hasOverviewLineData ? (
+              <>
+                <LinePath
+                  data={lineData}
+                  x={(point) => xScale(new Date(point.ts))}
+                  y={(point) => yScale(point.value)}
+                  stroke={C.primary}
+                  strokeWidth={4.2}
+                  strokeOpacity={0.12}
+                />
+                <LinePath
+                  data={lineData}
+                  x={(point) => xScale(new Date(point.ts))}
+                  y={(point) => yScale(point.value)}
+                  stroke={C.primary}
+                  strokeWidth={1.7}
+                  strokeOpacity={0.88}
+                />
+              </>
+            ) : null}
+
+            {canRenderOverviewBrush ? (
+              <Brush
+                key={resetKey}
+                innerRef={brushRef}
+                xScale={xScale}
+                yScale={yScale}
+                width={xMax}
+                height={yMax}
+                initialBrushPosition={initialBrushPosition}
+                handleSize={10}
+                brushDirection="horizontal"
+                resizeTriggerAreas={["left", "right"]}
+                useWindowMoveEvents
+                selectedBoxStyle={{
+                  fill: "rgba(59, 130, 246, 0.16)",
+                  stroke: "transparent",
+                  strokeWidth: 0,
+                }}
+                onChange={handleBrushChange}
+                onBrushEnd={handleBrushEnd}
+                renderBrushHandle={({ x, y, width, height: handleHeight, isBrushActive, className }) => {
+                  const visualY = Math.max(0, y + 1);
+                  const visualHeight = Math.max(14, Math.min(yMax - visualY, handleHeight - 2));
+                  const hitWidth = Math.max(22, width + 12);
+                  const hitX = x - (hitWidth - width) / 2;
+                  return (
+                    <g className={className} data-ux="overview-brush-handle" style={{ cursor: "ew-resize" }}>
+                      <rect
+                        x={hitX}
+                        y={0}
+                        width={hitWidth}
+                        height={yMax}
+                        fill="transparent"
+                        pointerEvents="all"
+                        style={{ cursor: "ew-resize" }}
+                      />
+                      <rect
+                        x={x}
+                        y={visualY}
+                        width={width}
+                        height={visualHeight}
+                        rx={Math.min(5, width / 2)}
+                        fill={isBrushActive ? "#93c5fd" : "#60a5fae0"}
+                        stroke="rgba(191, 219, 254, 0.96)"
+                        strokeWidth={0.9}
+                        pointerEvents="none"
+                      />
+                    </g>
+                  );
+                }}
               />
             ) : null}
 
-            <Brush
-              key={resetKey}
-              xScale={xScale}
-              yScale={yScale}
-              width={xMax}
-              height={yMax}
-              initialBrushPosition={initialBrushPosition}
-              handleSize={10}
-              brushDirection="horizontal"
-              resizeTriggerAreas={["left", "right"]}
-              disableDraggingSelection={false}
-              disableDraggingOverlay
-              useWindowMoveEvents
-              onClick={() => {
-                lastBrushRangeRef.current = { startTs: firstTs, endTs: lastTs };
-                onRangeCommit?.(firstTs, lastTs);
-              }}
-              selectedBoxStyle={{
-                fill: "rgba(250, 204, 21, 0.22)",
-                stroke: "#facc15",
-                strokeWidth: 1.4,
-                strokeOpacity: 0.95,
-              }}
-              onChange={handleBrushChange}
-              renderBrushHandle={({ x, y, width, height: handleHeight, isBrushActive, className }) => (
-                <g className={className}>
-                  <rect
-                    x={x}
-                    y={y}
-                    width={width}
-                    height={handleHeight}
-                    rx={3}
-                    fill={isBrushActive ? "#facc15" : "#facc15cc"}
-                    stroke={C.surface}
-                    strokeWidth={1}
-                  />
-                  <line
-                    x1={x + width / 2}
-                    x2={x + width / 2}
-                    y1={y + 4}
-                    y2={y + handleHeight - 4}
-                    stroke={C.surface}
-                    strokeWidth={1}
-                  />
-                </g>
-              )}
-            />
           </Group>
 
           <AxisBottom
             scale={xScale}
             left={margin.left}
             top={margin.top + yMax}
-            numTicks={5}
-            tickFormat={(value) => formatAbsoluteAxisTime(Number(value))}
+            numTicks={overviewTickCount}
+            tickFormat={(value) => formatTrendAxisTime(Number(value), firstTs, lastTs)}
             tickLabelProps={() => ({
               fill: axisLabelColor,
               fontSize: 9,
@@ -907,21 +1572,32 @@ function TelemetryTrendChart({
   hoverPoints,
   series,
   gapSegmentsBySeries,
+  timeDomain,
   yDomain,
+  pinnedTarget,
   showLegend = false,
   gridColor,
   axisLabelColor,
   C,
   height = 150,
+  panActive = false,
+  canPanOlder = false,
+  canPanNewer = false,
   onHoverTarget,
   onPinTarget,
+  onViewportZoom,
+  onYAxisZoom,
+  onViewportPanChange,
+  onViewportPanStateChange,
   onLeave,
 }: {
   data: TrendRow[];
   hoverPoints: Array<{ ts: number; telemetryUuid?: string }>;
   series: TrendSeriesConfig[];
   gapSegmentsBySeries?: Record<string, TrendGapSegment[]>;
+  timeDomain?: [number, number];
   yDomain: [number, number];
+  pinnedTarget?: SpectrumHoverTarget | null;
   showLegend?: boolean;
   gridColor: string;
   axisLabelColor: string;
@@ -932,11 +1608,30 @@ function TelemetryTrendChart({
     textMuted: string;
   };
   height?: number;
+  panActive?: boolean;
+  canPanOlder?: boolean;
+  canPanNewer?: boolean;
   onHoverTarget?: (target: SpectrumHoverTarget) => void;
   onPinTarget?: (target: SpectrumHoverTarget) => void;
+  onViewportZoom?: (next: { anchorTs: number; deltaY: number }) => void;
+  onYAxisZoom?: (next: { deltaY: number }) => void;
+  onViewportPanChange?: (next: TrendViewport) => void;
+  onViewportPanStateChange?: (active: boolean) => void;
   onLeave?: () => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  useNonPassiveWheelBlock(wrapperRef);
+  const rawPlotClipId = useId();
+  const plotClipId = useMemo(
+    () => `trend-plot-${rawPlotClipId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
+    [rawPlotClipId],
+  );
+  const panStateRef = useRef<ChartPanState | null>(null);
+  const buttonPanStateRef = useRef<ButtonPanState | null>(null);
+  const buttonPanTimerRef = useRef<number | null>(null);
+  const buttonPanDomainRef = useRef<TrendViewport>({ startMs: 0, endMs: 1 });
+  const buttonPanAvailabilityRef = useRef({ older: false, newer: false });
+  const suppressNextClickRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
   const [hoverTarget, setHoverTarget] = useState<SpectrumHoverTarget | null>(null);
 
@@ -964,7 +1659,8 @@ function TelemetryTrendChart({
     }
 
     const updateWidth = () => {
-      const next = Math.max(0, Math.round(wrapper.getBoundingClientRect().width));
+      const measuredWidth = wrapper.clientWidth || wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
+      const next = Math.max(0, Math.round(measuredWidth));
       setChartWidth(next);
     };
     updateWidth();
@@ -978,6 +1674,49 @@ function TelemetryTrendChart({
       observer.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      const panState = panStateRef.current;
+      if (!panState || !onViewportPanChange) {
+        return;
+      }
+      const deltaX = event.clientX - panState.startClientX;
+      if (!panState.moved && Math.abs(deltaX) >= 2) {
+        panState.moved = true;
+      }
+      const msPerPixel =
+        (panState.startDomainEndMs - panState.startDomainStartMs) / Math.max(1, panState.plotWidth);
+      const deltaMs = -deltaX * msPerPixel;
+      onViewportPanChange({
+        startMs: panState.startDomainStartMs + deltaMs,
+        endMs: panState.startDomainEndMs + deltaMs,
+      });
+    };
+
+    const handleUp = () => {
+      const panState = panStateRef.current;
+      if (!panState) {
+        return;
+      }
+      panStateRef.current = null;
+      onViewportPanStateChange?.(false);
+      if (panState.moved) {
+        suppressNextClickRef.current = true;
+        window.setTimeout(() => {
+          suppressNextClickRef.current = false;
+        }, TREND_PAN_CLICK_SUPPRESS_MS);
+      }
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [onViewportPanChange, onViewportPanStateChange]);
 
   const resolveNearestTarget = useCallback(
     (targetTs: number): SpectrumHoverTarget | null => {
@@ -1076,10 +1815,22 @@ function TelemetryTrendChart({
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
+  const timeAxisTickCount = Math.max(2, Math.min(6, Math.floor(innerWidth / 150)));
+  const legendItemWidth = showLegend && series.length > 0
+    ? Math.max(96, Math.min(176, Math.floor((innerWidth - 12) / series.length)))
+    : 78;
 
-  const domainMin = data.length > 0 ? data[0]?.ts ?? Date.now() : Date.now() - 1000;
-  const domainMaxRaw = data.length > 0 ? data[data.length - 1]?.ts ?? Date.now() : Date.now();
+  const domainMin = timeDomain?.[0] ?? (data.length > 0 ? data[0]?.ts ?? Date.now() : Date.now() - 1000);
+  const domainMaxRaw = timeDomain?.[1] ?? (data.length > 0 ? data[data.length - 1]?.ts ?? Date.now() : Date.now());
   const domainMax = domainMaxRaw > domainMin ? domainMaxRaw : domainMin + 1000;
+
+  useEffect(() => {
+    buttonPanDomainRef.current = { startMs: domainMin, endMs: domainMax };
+  }, [domainMax, domainMin]);
+
+  useEffect(() => {
+    buttonPanAvailabilityRef.current = { older: canPanOlder, newer: canPanNewer };
+  }, [canPanNewer, canPanOlder]);
 
   const xScale = useMemo(
     () =>
@@ -1168,22 +1919,191 @@ function TelemetryTrendChart({
     [data.length, innerWidth, margin.left, onHoverTarget, resolveNearestTarget, xScale],
   );
 
+  const handleViewportWheel = useCallback(
+    (event: React.WheelEvent<SVGRectElement>) => {
+      if (event.shiftKey) {
+        stopWheelScroll(event);
+        const scaleDelta = getPrimaryWheelDelta(event);
+        if (scaleDelta !== 0) {
+          onYAxisZoom?.({ deltaY: scaleDelta });
+        }
+        return;
+      }
+
+      if (!onViewportZoom) {
+        return;
+      }
+      stopWheelScroll(event);
+      const rect = event.currentTarget.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const chartX = Math.max(margin.left, Math.min(margin.left + innerWidth, margin.left + localX));
+      const anchorTs = xScale.invert(chartX).getTime();
+      onViewportZoom({ anchorTs, deltaY: event.deltaY });
+    },
+    [innerWidth, margin.left, onViewportZoom, onYAxisZoom, xScale],
+  );
+
+  const handleViewportMouseDown = useCallback(
+    (event: React.MouseEvent<SVGRectElement>) => {
+      if (event.button !== 0 || !onViewportPanChange) {
+        return;
+      }
+      event.preventDefault();
+      panStateRef.current = {
+        startClientX: event.clientX,
+        startDomainStartMs: domainMin,
+        startDomainEndMs: domainMax,
+        plotWidth: innerWidth,
+        moved: false,
+      };
+      onViewportPanStateChange?.(true);
+    },
+    [domainMax, domainMin, innerWidth, onViewportPanChange, onViewportPanStateChange],
+  );
+
   const handlePointerLeave = useCallback(() => {
     setHoverTarget(null);
     onLeave?.();
   }, [onLeave]);
 
   const handlePointerClick = useCallback(() => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     if (!hoverTarget || !onPinTarget) {
       return;
     }
     onPinTarget(hoverTarget);
   }, [hoverTarget, onPinTarget]);
 
+  const stopButtonPan = useCallback(() => {
+    if (buttonPanTimerRef.current !== null) {
+      window.clearTimeout(buttonPanTimerRef.current);
+      buttonPanTimerRef.current = null;
+    }
+    if (buttonPanStateRef.current) {
+      buttonPanStateRef.current = null;
+      onViewportPanStateChange?.(false);
+    }
+  }, [onViewportPanStateChange]);
+
+  const panButtonViewportBy = useCallback(
+    (deltaMs: number) => {
+      if (!onViewportPanChange || !Number.isFinite(deltaMs) || Math.abs(deltaMs) < 1) {
+        return;
+      }
+      const current = buttonPanDomainRef.current;
+      const nextWindow = {
+        startMs: current.startMs + deltaMs,
+        endMs: current.endMs + deltaMs,
+      };
+      buttonPanDomainRef.current = nextWindow;
+      onViewportPanChange(nextWindow);
+    },
+    [onViewportPanChange],
+  );
+
+  const runButtonPanTick = useCallback(() => {
+    const state = buttonPanStateRef.current;
+    if (!state) {
+      return;
+    }
+    const availability = buttonPanAvailabilityRef.current;
+    if ((state.direction < 0 && !availability.older) || (state.direction > 0 && !availability.newer)) {
+      stopButtonPan();
+      return;
+    }
+
+    const now = performance.now();
+    const elapsedMs = Math.max(0, now - state.startedAt);
+    const deltaTimeMs = Math.min(140, Math.max(0, now - state.lastTickAt));
+    state.lastTickAt = now;
+
+    const accelerationRatio = Math.min(1, elapsedMs / TREND_BUTTON_PAN_ACCELERATION_MS);
+    const windowsPerSecond =
+      TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND
+      + (TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND - TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND) * accelerationRatio;
+    const currentWindowMs = Math.max(
+      1,
+      buttonPanDomainRef.current.endMs - buttonPanDomainRef.current.startMs,
+    );
+    panButtonViewportBy(state.direction * currentWindowMs * windowsPerSecond * (deltaTimeMs / 1000));
+
+    buttonPanTimerRef.current = window.setTimeout(runButtonPanTick, TREND_BUTTON_PAN_FRAME_MS);
+  }, [panButtonViewportBy, stopButtonPan]);
+
+  const startButtonPan = useCallback(
+    (direction: -1 | 1, event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!onViewportPanChange) {
+        return;
+      }
+      const availability = buttonPanAvailabilityRef.current;
+      if ((direction < 0 && !availability.older) || (direction > 0 && !availability.newer)) {
+        return;
+      }
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is best-effort; the window-level timer still stops on blur/unmount.
+      }
+
+      if (buttonPanTimerRef.current !== null) {
+        window.clearTimeout(buttonPanTimerRef.current);
+        buttonPanTimerRef.current = null;
+      }
+
+      const now = performance.now();
+      buttonPanDomainRef.current = { startMs: domainMin, endMs: domainMax };
+      buttonPanStateRef.current = { direction, startedAt: now, lastTickAt: now };
+      onViewportPanStateChange?.(true);
+
+      const currentWindowMs = Math.max(1, domainMax - domainMin);
+      panButtonViewportBy(direction * currentWindowMs * TREND_BUTTON_PAN_CLICK_RATIO);
+      buttonPanTimerRef.current = window.setTimeout(runButtonPanTick, TREND_BUTTON_PAN_FRAME_MS);
+    },
+    [
+      domainMax,
+      domainMin,
+      onViewportPanChange,
+      onViewportPanStateChange,
+      panButtonViewportBy,
+      runButtonPanTick,
+    ],
+  );
+
+  useEffect(() => {
+    window.addEventListener("blur", stopButtonPan);
+    return () => {
+      window.removeEventListener("blur", stopButtonPan);
+      stopButtonPan();
+    };
+  }, [stopButtonPan]);
+
   return (
-    <div ref={wrapperRef} style={{ width: "100%", height, position: "relative" }}>
+    <div
+      ref={wrapperRef}
+      onWheel={stopWheelScroll}
+      style={{
+        width: "100%",
+        height,
+        position: "relative",
+        cursor: onViewportPanChange ? (panActive ? "grabbing" : "grab") : "default",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        overscrollBehavior: "contain",
+      }}
+    >
       {chartWidth > 0 ? (
         <svg width={chartWidth} height={height}>
+          <defs>
+            <clipPath id={plotClipId}>
+              <rect x={margin.left} y={margin.top} width={innerWidth} height={innerHeight} />
+            </clipPath>
+          </defs>
           <Group>
             {yScale.ticks(4).map((tick) => {
               const y = yScale(tick);
@@ -1200,70 +2120,96 @@ function TelemetryTrendChart({
               );
             })}
 
-            {gapBands.map((segment, index) => {
-              const x1 = xScale(new Date(segment.from));
-              const x2 = xScale(new Date(segment.to));
-              return (
-                <rect
-                  key={`gap-${index}`}
-                  x={Math.min(x1, x2)}
-                  y={margin.top}
-                  width={Math.max(1, Math.abs(x2 - x1))}
-                  height={innerHeight}
-                  fill="rgba(148, 163, 184, 0.08)"
-                />
-              );
-            })}
+            <g clipPath={`url(#${plotClipId})`}>
+              {gapBands.map((segment, index) => {
+                const x1 = xScale(new Date(segment.from));
+                const x2 = xScale(new Date(segment.to));
+                return (
+                  <rect
+                    key={`gap-${index}`}
+                    x={Math.min(x1, x2)}
+                    y={margin.top}
+                    width={Math.max(1, Math.abs(x2 - x1))}
+                    height={innerHeight}
+                    fill="rgba(254, 240, 138, 0.36)"
+                    stroke="rgba(245, 158, 11, 0.18)"
+                    strokeWidth={0.8}
+                  />
+                );
+              })}
 
-            {plottedSeries.map(({ config, segments }) =>
-              segments.map((segment, index) => (
-                <LinePath
-                  key={`${config.key}-${index}`}
-                  data={segment}
-                  x={(point) => xScale(new Date(point.ts))}
-                  y={(point) => yScale(point.value)}
-                  stroke={config.color}
-                  strokeWidth={config.strokeWidth ?? 1.8}
-                />
-              )),
-            )}
+              {plottedSeries.map(({ config, segments }) =>
+                segments.map((segment, index) => (
+                  <LinePath
+                    key={`${config.key}-${index}`}
+                    data={segment}
+                    x={(point) => xScale(new Date(point.ts))}
+                    y={(point) => yScale(point.value)}
+                    stroke={config.color}
+                    strokeWidth={config.strokeWidth ?? 1.8}
+                  />
+                )),
+              )}
 
-            {plottedSeries.map(({ config, latest }) => {
-              if (!latest) {
-                return null;
-              }
-              const cx = xScale(new Date(latest.ts));
-              const cy = yScale(latest.value);
-              const latestLabel = config.latestLabelFormatter?.(latest.value);
-              return (
-                <g key={`latest-${config.key}`}>
-                  <circle cx={cx} cy={cy} r={5} fill={config.color} stroke={C.surface} strokeWidth={2} />
-                  {latestLabel ? (
-                    <text
-                      x={cx}
-                      y={cy - 10}
-                      textAnchor="middle"
-                      fill={C.textBright}
-                      fontSize={10}
-                      fontWeight={700}
-                    >
-                      {latestLabel}
-                    </text>
-                  ) : null}
+              {plottedSeries.map(({ config, latest }) => {
+                if (!latest) {
+                  return null;
+                }
+                const cx = xScale(new Date(latest.ts));
+                const cy = yScale(latest.value);
+                const latestLabel = config.latestLabelFormatter?.(latest.value);
+                return (
+                  <g key={`latest-${config.key}`}>
+                    <circle cx={cx} cy={cy} r={5} fill={config.color} stroke={C.surface} strokeWidth={2} />
+                    {latestLabel ? (
+                      <text
+                        x={cx}
+                        y={cy - 10}
+                        textAnchor="middle"
+                        fill={C.textBright}
+                        fontSize={10}
+                        fontWeight={700}
+                      >
+                        {latestLabel}
+                      </text>
+                    ) : null}
+                  </g>
+                );
+              })}
+
+              {pinnedTarget ? (
+                <g>
+                  <line
+                    x1={xScale(new Date(pinnedTarget.timestampMs))}
+                    x2={xScale(new Date(pinnedTarget.timestampMs))}
+                    y1={margin.top}
+                    y2={margin.top + innerHeight}
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                  />
+                  <circle
+                    cx={xScale(new Date(pinnedTarget.timestampMs))}
+                    cy={margin.top + 7}
+                    r={4}
+                    fill="#f59e0b"
+                    stroke={C.surface}
+                    strokeWidth={1.5}
+                  />
                 </g>
-              );
-            })}
+              ) : null}
 
-            {hoverTarget ? (
-              <line
-                x1={xScale(new Date(hoverTarget.timestampMs))}
-                x2={xScale(new Date(hoverTarget.timestampMs))}
-                y1={margin.top}
-                y2={margin.top + innerHeight}
-                stroke="#94a3b8"
-                strokeDasharray="4 4"
-              />
-            ) : null}
+              {hoverTarget ? (
+                <line
+                  x1={xScale(new Date(hoverTarget.timestampMs))}
+                  x2={xScale(new Date(hoverTarget.timestampMs))}
+                  y1={margin.top}
+                  y2={margin.top + innerHeight}
+                  stroke="#94a3b8"
+                  strokeDasharray="4 4"
+                />
+              ) : null}
+            </g>
           </Group>
 
           <AxisLeft
@@ -1281,8 +2227,8 @@ function TelemetryTrendChart({
           <AxisBottom
             scale={xScale}
             top={margin.top + innerHeight}
-            numTicks={6}
-            tickFormat={(value) => formatAbsoluteAxisTime(Number(value))}
+            numTicks={timeAxisTickCount}
+            tickFormat={(value) => formatTrendAxisTime(Number(value), domainMin, domainMax)}
             tickLabelProps={() => ({
               fill: axisLabelColor,
               fontSize: 9,
@@ -1295,7 +2241,7 @@ function TelemetryTrendChart({
           {showLegend ? (
             <Group top={6} left={margin.left + 6}>
               {series.map((seriesConfig, index) => (
-                <g key={`legend-${seriesConfig.key}`} transform={`translate(${index * 74}, 0)`}>
+                <g key={`legend-${seriesConfig.key}`} transform={`translate(${index * legendItemWidth}, 0)`}>
                   <rect x={0} y={0} width={10} height={3} rx={2} fill={seriesConfig.color} />
                   <text x={14} y={4} fill={C.textMuted} fontSize={11} fontWeight={600}>
                     {seriesConfig.name}
@@ -1311,11 +2257,101 @@ function TelemetryTrendChart({
             width={innerWidth}
             height={innerHeight}
             fill="transparent"
+            onWheel={handleViewportWheel}
+            onMouseDown={handleViewportMouseDown}
             onMouseMove={handlePointerMove}
             onMouseLeave={handlePointerLeave}
             onClick={handlePointerClick}
           />
         </svg>
+      ) : null}
+
+      {onViewportPanChange && canPanOlder ? (
+        <button
+          type="button"
+          data-ux="trend-pan-older"
+          aria-label="Dịch vùng thời gian về trước"
+          title="Dịch vùng thời gian về trước"
+          onPointerDown={(event) => startButtonPan(-1, event)}
+          onPointerUp={stopButtonPan}
+          onPointerCancel={stopButtonPan}
+          onLostPointerCapture={stopButtonPan}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          style={{
+            position: "absolute",
+            left: margin.left + 10,
+            top: margin.top + innerHeight / 2 - 15,
+            width: 30,
+            height: 30,
+            padding: 0,
+            appearance: "none",
+            borderRadius: 999,
+            border: `1px solid ${C.border}cc`,
+            background: `${C.surface}f0`,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
+            color: C.textBright,
+            opacity: 0.96,
+            transform: panActive ? "translateX(-2px)" : "translateX(0)",
+            transition: "opacity 0.14s ease, transform 0.14s ease, color 0.14s ease, border-color 0.14s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "auto",
+            cursor: "ew-resize",
+            zIndex: 3,
+            touchAction: "none",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <ArrowLeft size={15} strokeWidth={2.4} />
+        </button>
+      ) : null}
+
+      {onViewportPanChange && canPanNewer ? (
+        <button
+          type="button"
+          data-ux="trend-pan-newer"
+          aria-label="Dịch vùng thời gian về sau"
+          title="Dịch vùng thời gian về sau"
+          onPointerDown={(event) => startButtonPan(1, event)}
+          onPointerUp={stopButtonPan}
+          onPointerCancel={stopButtonPan}
+          onLostPointerCapture={stopButtonPan}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          style={{
+            position: "absolute",
+            left: chartWidth - margin.right - 40,
+            top: margin.top + innerHeight / 2 - 15,
+            width: 30,
+            height: 30,
+            padding: 0,
+            appearance: "none",
+            borderRadius: 999,
+            border: `1px solid ${C.border}cc`,
+            background: `${C.surface}f0`,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
+            color: C.textBright,
+            opacity: 0.96,
+            transform: panActive ? "translateX(2px)" : "translateX(0)",
+            transition: "opacity 0.14s ease, transform 0.14s ease, color 0.14s ease, border-color 0.14s ease",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "auto",
+            cursor: "ew-resize",
+            zIndex: 3,
+            touchAction: "none",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <ArrowRight size={15} strokeWidth={2.4} />
+        </button>
       ) : null}
 
       {hoverTarget ? (
@@ -1365,6 +2401,7 @@ function SpectrumZoomChart({
   maxHz,
   yMax,
   C,
+  height = SPECTRUM_CHART_HEIGHT,
 }: {
   data: SpectrumChartDataPoint[];
   color: string;
@@ -1378,754 +2415,494 @@ function SpectrumZoomChart({
     textBright: string;
     textMuted: string;
   };
+  height?: number;
 }) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<ECharts | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  useNonPassiveWheelBlock(wrapperRef);
+  const [chartWidth, setChartWidth] = useState(0);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  const margin = useMemo(
+    () => ({
+      left: 6,
+      right: 8,
+      top: 24,
+      bottom: 24,
+    }),
+    [],
+  );
 
   useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
       return;
     }
 
-    const chart = init(mount, undefined, { renderer: "canvas", useDirtyRect: true });
-    chartRef.current = chart;
-
-    const resize = () => {
-      chart.resize();
+    const updateWidth = () => {
+      const measuredWidth = wrapper.clientWidth || wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
+      const next = Math.max(0, Math.round(measuredWidth));
+      setChartWidth(next);
     };
-    const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(mount);
-    window.addEventListener("resize", resize);
+    updateWidth();
+
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(wrapper);
+    window.addEventListener("resize", updateWidth);
 
     return () => {
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", updateWidth);
       resizeObserver.disconnect();
-      chart.dispose();
-      chartRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) {
-      return;
+    if (!data[hoverIndex ?? -1]) {
+      setHoverIndex(null);
     }
+  }, [data, hoverIndex]);
 
+  const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
+  const innerHeight = Math.max(1, height - margin.top - margin.bottom);
+  const safeYMax = yMax > 0 ? yMax : 1;
+  const barCount = Math.max(1, data.length);
+  const barSlotWidth = innerWidth / barCount;
+  const barWidth = Math.max(1, barSlotWidth - 1);
+
+  const yScale = useMemo(
+    () =>
+      scaleLinear<number>({
+        domain: [0, safeYMax],
+        range: [margin.top + innerHeight, margin.top],
+      }),
+    [innerHeight, margin.top, safeYMax],
+  );
+
+  const xScale = useMemo(
+    () =>
+      scaleLinear<number>({
+        domain: [0, Math.max(1, barCount - 1)],
+        range: [margin.left + barSlotWidth / 2, margin.left + innerWidth - barSlotWidth / 2],
+      }),
+    [barCount, barSlotWidth, innerWidth, margin.left],
+  );
+
+  const peakIndex = useMemo(() => {
     if (data.length === 0) {
-      chart.clear();
-      return;
+      return -1;
     }
-
-    const firstBin = data[0]?.bin ?? 0;
-    const hzLabelByBin = new Map<number, string>();
-    hzLabelByBin.set(firstBin, "0");
-    if (maxHz >= 200) {
-      const maxMarkedHz = Math.floor(maxHz / 200) * 200;
-      for (let targetHz = 200; targetHz <= maxMarkedHz; targetHz += 200) {
-        let nearest = data[0];
-        let nearestDiff = Math.abs(data[0].freq - targetHz);
-        for (let index = 1; index < data.length; index += 1) {
-          const point = data[index];
-          const diff = Math.abs(point.freq - targetHz);
-          if (diff < nearestDiff) {
-            nearest = point;
-            nearestDiff = diff;
-          }
-        }
-        hzLabelByBin.set(nearest.bin, `${targetHz}`);
+    let bestIndex = 0;
+    for (let index = 1; index < data.length; index += 1) {
+      if (data[index].amp > data[bestIndex].amp) {
+        bestIndex = index;
       }
     }
-    const peakPoint = data.reduce((best, point) => (point.amp > best.amp ? point : best), data[0]);
-    const peakIndex = Math.max(0, data.findIndex((point) => point.bin === peakPoint.bin));
+    return bestIndex;
+  }, [data]);
 
-    const peakLabel = `Peak ${peakPoint.freq.toFixed(1)} Hz\n${peakPoint.amp.toFixed(3)} ${peakPoint.unit}`;
-    const barData = data.map((point, index) => {
-      const isPeak = index === peakIndex;
-      return {
-        value: point.amp,
-        itemStyle: {
-          color: isPeak ? "#f59e0b" : color,
-        },
-        label: isPeak
-          ? {
-              show: true,
-              position: "top",
-              distance: 8,
-              color: C.textBright,
-              backgroundColor: C.surface,
-              borderColor: C.border,
-              borderWidth: 1,
-              borderRadius: 4,
-              padding: [3, 5],
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: peakLabel,
-            }
-          : { show: false },
-      };
-    });
+  const peakPoint = peakIndex >= 0 ? data[peakIndex] : null;
+  const peakX = peakIndex >= 0 ? xScale(peakIndex) : margin.left;
+  const peakY = peakPoint ? yScale(Math.max(0, Math.min(safeYMax, peakPoint.amp))) : margin.top + innerHeight;
 
-    const option: EChartsOption = {
-      animation: false,
-      grid: {
-        left: 6,
-        right: 8,
-        top: 24,
-        bottom: 24,
-      },
-      tooltip: {
-        trigger: "axis",
-        axisPointer: {
-          type: "shadow",
-        },
-        backgroundColor: C.surface,
-        borderColor: C.border,
-        textStyle: {
-          color: C.textBright,
-          fontSize: 11,
-        },
-        formatter: (params) => {
-          const list = Array.isArray(params) ? params : [params];
-          const first = list[0] as { dataIndex?: number } | undefined;
-          const index = typeof first?.dataIndex === "number" ? first.dataIndex : -1;
-          const point = index >= 0 && index < data.length ? data[index] : null;
-          if (!point) {
-            return "Không có dữ liệu";
-          }
-
-          return [
-            `<div style="font-weight:700;margin-bottom:2px;">Bin ${point.bin}</div>`,
-            `<div style="color:${C.textMuted};margin-bottom:3px;">f = ${formatFrequencyHz(point.freq)}</div>`,
-            `<div style="color:${color};font-weight:700;">Biên độ: ${point.amp.toFixed(6)} ${point.unit}</div>`,
-          ].join("");
-        },
-      },
-      xAxis: {
-        type: "category",
-        data: data.map((point) => point.bin),
-        axisLine: {
-          lineStyle: {
-            color: gridColor,
-          },
-        },
-        axisTick: {
-          show: false,
-        },
-        axisLabel: {
-          color: axisLabelColor,
-          fontSize: 9,
-          interval: 0,
-          formatter: (value: string | number) => {
-            const parsed = typeof value === "number" ? value : Number(value);
-            if (!Number.isFinite(parsed)) {
-              return "";
-            }
-            return hzLabelByBin.get(parsed) ?? "";
-          },
-        },
-      },
-      yAxis: {
-        type: "value",
-        show: false,
-        min: 0,
-        max: yMax,
-      },
-      series: [
-        {
-          type: "bar",
-          data: barData,
-          barCategoryGap: "0%",
-          animation: false,
-          barMinHeight: 1,
-          markPoint: {
-            symbol: "circle",
-            symbolSize: 14,
-            z: 30,
-            silent: true,
-            itemStyle: {
-              color: "#fde047",
-              borderColor: "#1f2937",
-              borderWidth: 2,
-            },
-            label: {
-              show: true,
-              position: "top",
-              distance: 8,
-              color: C.textBright,
-              backgroundColor: C.surface,
-              borderColor: C.border,
-              borderWidth: 1,
-              borderRadius: 4,
-              padding: [3, 5],
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: peakLabel,
-            },
-            data: [
-              {
-                xAxis: peakPoint.bin,
-                value: peakPoint.amp,
-                yAxis: peakPoint.amp,
-              },
-            ],
-          },
-          markLine: {
-            symbol: "none",
-            silent: true,
-            z: 25,
-            lineStyle: {
-              color,
-              width: 1.2,
-              type: "dashed",
-              opacity: 0.85,
-            },
-            data: [
-              {
-                xAxis: peakPoint.bin,
-              },
-            ],
-          },
-        },
-      ],
-    };
-
-    chart.setOption(option, { notMerge: false, lazyUpdate: true });
-  }, [C.border, C.surface, C.textBright, C.textMuted, axisLabelColor, color, data, gridColor, maxHz, yMax]);
-
-  return <div ref={mountRef} style={{ width: "100%", height: 160 }} />;
-}
-
-/* ── 3D Canvas placeholder (Three.js) ── */
-export type Accel3DPoint = {
-  ts: number;
-  ax: number;
-  ay: number;
-  az: number;
-};
-
-export function Accel3DCanvas({ C, accelPoints, height = 150 }: { C: any; accelPoints: Accel3DPoint[]; height?: number }) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const resetViewRef = useRef<(() => void) | null>(null);
-  const trajectoryLineRef = useRef<THREE.Line | null>(null);
-  const latestPointRef = useRef<THREE.Mesh | null>(null);
-  const cubeRef = useRef<THREE.Mesh | null>(null);
-  const cubeEdgesRef = useRef<THREE.LineSegments | null>(null);
-  const [timeWindowSec, setTimeWindowSec] = useState(20);
-
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#0b1e42");
-
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
-    camera.position.set(6, 4.8, 6);
-    camera.lookAt(0, 0, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.domElement.style.display = "block";
-    renderer.domElement.style.width = "100%";
-    renderer.domElement.style.height = "100%";
-    mount.appendChild(renderer.domElement);
-
-    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
-    scene.add(ambient);
-
-    const directional = new THREE.DirectionalLight(0xb7d1ff, 0.95);
-    directional.position.set(5, 8, 4);
-    scene.add(directional);
-
-    const world = new THREE.Group();
-    scene.add(world);
-
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(12, 12),
-      new THREE.MeshStandardMaterial({
-        color: 0x163a78,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.42,
-        roughness: 0.95,
-        metalness: 0.05,
-      }),
-    );
-    plane.rotation.x = -Math.PI / 2;
-    plane.position.y = -0.01;
-    world.add(plane);
-
-    const grid = new THREE.GridHelper(12, 12, 0x66a3ff, 0x2f5eae);
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.95;
-    world.add(grid);
-
-    const axes = new THREE.AxesHelper(9.6);
-    const axesMaterials = Array.isArray(axes.material) ? axes.material : [axes.material];
-    for (const material of axesMaterials) {
-      material.depthTest = false;
-      material.depthWrite = false;
-      material.transparent = false;
-      material.toneMapped = false;
-    }
-    axes.renderOrder = 999;
-    axes.position.set(0, 0.03, 0);
-    world.add(axes);
-
-    const axisOverlay = new THREE.Group();
-    axisOverlay.renderOrder = 1000;
-    axisOverlay.position.set(0, 0.03, 0);
-    world.add(axisOverlay);
-
-    const axisLength = 3.4;
-    const headLength = 0.55;
-    const headWidth = 0.24;
-    const xArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), axisLength, 0xef4444, headLength, headWidth);
-    const yArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), axisLength, 0x22c55e, headLength, headWidth);
-    const zArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), axisLength, 0x3b82f6, headLength, headWidth);
-    const arrows = [xArrow, yArrow, zArrow];
-    for (const arrow of arrows) {
-      const lineMat = arrow.line.material as THREE.LineBasicMaterial;
-      lineMat.depthTest = false;
-      lineMat.depthWrite = false;
-      lineMat.toneMapped = false;
-      const coneMat = arrow.cone.material as THREE.MeshBasicMaterial;
-      coneMat.depthTest = false;
-      coneMat.depthWrite = false;
-      coneMat.toneMapped = false;
-      arrow.renderOrder = 1000;
-      axisOverlay.add(arrow);
+  const peakAnnotation = useMemo(() => {
+    if (!peakPoint || peakIndex < 0) {
+      return null;
     }
 
-    const makeAxisLabel = (text: "X" | "Y" | "Z", color: string) => {
-      const size = 128;
+    const titleText = "Peak";
+    const freqText = `${peakPoint.freq.toFixed(1)} Hz`;
+    const ampText = `${peakPoint.amp.toFixed(3)} ${peakPoint.unit}`;
+
+    const measureText = (text: string, font: string, fallbackWidth = 7) => {
+      if (typeof document === "undefined") {
+        return text.length * fallbackWidth;
+      }
       const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return new THREE.Object3D();
-      ctx.clearRect(0, 0, size, size);
-      ctx.fillStyle = "rgba(2,6,23,0.72)";
-      ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size * 0.26, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = color;
-      ctx.stroke();
-      ctx.fillStyle = color;
-      ctx.font = "700 64px Inter, Arial, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, size / 2, size / 2 + 2);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      const material = new THREE.SpriteMaterial({
-        map: texture,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-      });
-      material.toneMapped = false;
-      const sprite = new THREE.Sprite(material);
-      sprite.scale.set(0.58, 0.58, 0.58);
-      sprite.renderOrder = 1001;
-      return sprite;
-    };
-
-    const xLabel = makeAxisLabel("X", "#ef4444");
-    const yLabel = makeAxisLabel("Y", "#22c55e");
-    const zLabel = makeAxisLabel("Z", "#3b82f6");
-    xLabel.position.set(axisLength + 0.42, 0, 0);
-    yLabel.position.set(0, axisLength + 0.42, 0);
-    zLabel.position.set(0, 0, axisLength + 0.42);
-    axisOverlay.add(xLabel);
-    axisOverlay.add(yLabel);
-    axisOverlay.add(zLabel);
-
-    const origin = new THREE.Mesh(
-      new THREE.SphereGeometry(0.12, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0xffffff }),
-    );
-    origin.position.set(0, 0.06, 0);
-    world.add(origin);
-
-    // Debug reference cube: centered exactly at world origin (0, 0, 0)
-    const originCube = new THREE.Mesh(
-      new THREE.BoxGeometry(1.05, 1.05, 1.05),
-      new THREE.MeshStandardMaterial({
-        color: 0xf59e0b,
-        transparent: true,
-        opacity: 0.35,
-        roughness: 0.45,
-        metalness: 0.12,
-      }),
-    );
-    originCube.position.set(0, 0, 0);
-    world.add(originCube);
-    cubeRef.current = originCube;
-
-    const originCubeEdges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.05, 1.05, 1.05)),
-      new THREE.LineBasicMaterial({ color: 0xfbbf24 }),
-    );
-    originCubeEdges.position.set(0, 0, 0);
-    world.add(originCubeEdges);
-    cubeEdgesRef.current = originCubeEdges;
-
-    const trajectoryGeometry = new THREE.BufferGeometry();
-    trajectoryGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-    trajectoryGeometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
-    const trajectoryLine = new THREE.Line(
-      trajectoryGeometry,
-      new THREE.LineBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.95,
-      }),
-    );
-    world.add(trajectoryLine);
-    trajectoryLineRef.current = trajectoryLine;
-
-    const latestPoint = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 20, 20),
-      new THREE.MeshBasicMaterial({ color: 0xfde047 }),
-    );
-    latestPoint.position.set(0, 0, 0);
-    world.add(latestPoint);
-    latestPointRef.current = latestPoint;
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = false;
-    controls.enablePan = true;
-    controls.enableRotate = true;
-    controls.minDistance = 4;
-    controls.maxDistance = 22;
-    controls.minPolarAngle = 0;
-    controls.maxPolarAngle = Math.PI;
-    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
-    controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
-    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
-    controls.screenSpacePanning = true;
-
-    const gizmo = new ViewportGizmo(camera, renderer, {
-      container: mount.parentElement ?? mount,
-      type: "rounded-cube",
-      size: 72,
-      placement: "bottom-right",
-      offset: { right: 10, bottom: 8 },
-      animated: true,
-      speed: 1.2,
-      background: {
-        color: 0xffffff,
-        opacity: 1,
-        hover: { color: 0xf8fafc, opacity: 1 },
-      },
-      corners: {
-        color: 0xffffff,
-        opacity: 1,
-      },
-      edges: {
-        color: 0xf1f5f9,
-        opacity: 1,
-      },
-      x: { color: 0xef4444, label: "X", labelColor: 0x111827 },
-      y: { color: 0x22c55e, label: "Y", labelColor: 0x111827 },
-      z: { color: 0x3b82f6, label: "Z", labelColor: 0x111827 },
-      nx: { color: 0xfca5a5, label: "-X", labelColor: 0x111827 },
-      ny: { color: 0x86efac, label: "-Y", labelColor: 0x111827 },
-      nz: { color: 0x93c5fd, label: "-Z", labelColor: 0x111827 },
-    });
-    gizmo.attachControls(controls);
-    const centerSceneView = () => {
-      controls.target.set(0, 0, 0);
-      camera.position.set(6, 4.8, 6);
-      camera.lookAt(0, 0, 0);
-      controls.update();
-    };
-    resetViewRef.current = centerSceneView;
-    centerSceneView();
-
-    const resize = () => {
-      const width = mount.clientWidth || 1;
-      const height = mount.clientHeight || 1;
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height);
-      centerSceneView();
-      gizmo.update();
-    };
-    resize();
-    // Ensure stable centering after modal/layout transitions settle.
-    const settleFrame1 = window.requestAnimationFrame(() => resize());
-    const settleFrame2 = window.setTimeout(() => resize(), 80);
-    const settleFrame3 = window.setTimeout(() => resize(), 240);
-
-    const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(mount);
-
-    let raf = 0;
-    const animate = () => {
-      raf = window.requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-      gizmo.render();
-    };
-    animate();
-
-    return () => {
-      window.cancelAnimationFrame(raf);
-      window.cancelAnimationFrame(settleFrame1);
-      window.clearTimeout(settleFrame2);
-      window.clearTimeout(settleFrame3);
-      resizeObserver.disconnect();
-      gizmo.detachControls();
-      gizmo.dispose();
-      controls.dispose();
-      scene.clear();
-      renderer.dispose();
-      if (renderer.domElement.parentElement === mount) {
-        mount.removeChild(renderer.domElement);
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return text.length * fallbackWidth;
       }
-      resetViewRef.current = null;
-      trajectoryLineRef.current = null;
-      latestPointRef.current = null;
-      cubeRef.current = null;
-      cubeEdgesRef.current = null;
+      context.font = font;
+      return context.measureText(text).width;
     };
-  }, []);
 
-  useEffect(() => {
-    const line = trajectoryLineRef.current;
-    const latestPoint = latestPointRef.current;
-    const cube = cubeRef.current;
-    const cubeEdges = cubeEdgesRef.current;
-    if (!line || !latestPoint || !cube || !cubeEdges) {
-      return;
+    const titleFontSize = 11;
+    const metaFontSize = 9;
+    const titleLineHeight = 14;
+    const metaLineHeight = 12;
+    const padX = 8;
+    const padTop = 7;
+    const padBottom = 6;
+
+    const contentWidth = Math.max(
+      measureText(titleText, `800 ${titleFontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`, 7.2),
+      measureText(freqText, `600 ${metaFontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`, 6.2),
+      measureText(ampText, `600 ${metaFontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`, 6.2),
+    );
+    const boxWidth = Math.ceil(contentWidth + padX * 2);
+    const boxHeight = padTop + titleLineHeight + metaLineHeight * 2 + padBottom;
+    const minX = margin.left + 6;
+    const maxX = Math.max(minX, margin.left + innerWidth - boxWidth - 6);
+    const prefersLeft = peakX > margin.left + innerWidth * 0.55;
+    const preferredX = prefersLeft ? peakX - boxWidth - 28 : peakX + 28;
+    const boxX = Math.max(minX, Math.min(maxX, preferredX));
+
+    const minY = margin.top + 4;
+    const maxY = Math.max(minY, margin.top + innerHeight - boxHeight - 4);
+    const preferredY = peakY - boxHeight - 12;
+    const boxY = Math.max(minY, Math.min(maxY, preferredY));
+
+    const startsFromRight = boxX + boxWidth / 2 < peakX;
+    const lineStartX = startsFromRight ? boxX + boxWidth : boxX;
+    const lineStartY = boxY + boxHeight * 0.58;
+    const elbowX = lineStartX + (startsFromRight ? 12 : -12);
+    const elbowY = lineStartY;
+    const circleRadius = 11;
+    const titleY = boxY + padTop + titleFontSize;
+    const freqY = titleY + metaLineHeight;
+    const ampY = freqY + metaLineHeight;
+    const textX = boxX + padX;
+
+    return {
+      boxX,
+      boxY,
+      boxWidth,
+      boxHeight,
+      lineStartX,
+      lineStartY,
+      elbowX,
+      elbowY,
+      circleRadius,
+      titleText,
+      freqText,
+      ampText,
+      titleY,
+      freqY,
+      ampY,
+      textX,
+    };
+  }, [innerHeight, innerWidth, margin.left, margin.top, peakIndex, peakPoint, peakX, peakY]);
+
+  const axisLabelMap = useMemo(() => {
+    const labels = new Map<number, string>();
+    if (data.length === 0) {
+      return labels;
+    }
+    labels.set(0, "0");
+    if (maxHz < 200) {
+      return labels;
     }
 
-    const sortedPoints = accelPoints
-      .filter((item) =>
-        Number.isFinite(item.ts) &&
-        Number.isFinite(item.ax) &&
-        Number.isFinite(item.ay) &&
-        Number.isFinite(item.az),
-      )
-      .sort((a, b) => a.ts - b.ts);
-
-    if (sortedPoints.length === 0) {
-      const geometry = line.geometry as THREE.BufferGeometry;
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-      geometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
-      geometry.computeBoundingSphere();
-      latestPoint.visible = false;
-      cube.position.set(0, 0, 0);
-      cubeEdges.position.set(0, 0, 0);
-      return;
-    }
-
-    const latestTs = sortedPoints[sortedPoints.length - 1].ts;
-    const windowStart = latestTs - timeWindowSec * 1000;
-
-    let points = sortedPoints.filter((item) => item.ts >= windowStart);
-    if (points.length < 2) {
-      points = sortedPoints.slice(-Math.min(20, sortedPoints.length));
-    }
-
-    const MAX_POINTS = 140;
-    if (points.length > MAX_POINTS) {
-      const sampled: Accel3DPoint[] = [];
-      for (let i = 0; i < MAX_POINTS; i += 1) {
-        const idx = Math.round((i / (MAX_POINTS - 1)) * (points.length - 1));
-        sampled.push(points[idx]);
-      }
-      points = sampled;
-    }
-
-    if (points.length === 0) {
-      const geometry = line.geometry as THREE.BufferGeometry;
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-      geometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
-      geometry.computeBoundingSphere();
-      latestPoint.visible = false;
-      cube.position.set(0, 0, 0);
-      cubeEdges.position.set(0, 0, 0);
-      return;
-    }
-
-    const smooth = points.map((item, index) => {
-      const prev = points[Math.max(0, index - 1)];
-      const next = points[Math.min(points.length - 1, index + 1)];
-      return {
-        ...item,
-        ax: (prev.ax + item.ax + next.ax) / 3,
-        ay: (prev.ay + item.ay + next.ay) / 3,
-        az: (prev.az + item.az + next.az) / 3,
-      };
-    });
-
-    const meanX = smooth.reduce((sum, item) => sum + item.ax, 0) / smooth.length;
-    const meanY = smooth.reduce((sum, item) => sum + item.ay, 0) / smooth.length;
-    const meanZ = smooth.reduce((sum, item) => sum + item.az, 0) / smooth.length;
-
-    let maxAbs = 0;
-    for (const item of smooth) {
-      maxAbs = Math.max(
-        maxAbs,
-        Math.abs(item.ax - meanX),
-        Math.abs(item.ay - meanY),
-        Math.abs(item.az - meanZ),
-      );
-    }
-    const scale = maxAbs > 0 ? 2.8 / maxAbs : 1;
-
-    const positions = new Float32Array(points.length * 3);
-    const colors = new Float32Array(points.length * 3);
-
-    const mapPoint = (item: Accel3DPoint) => ({
-      x: (item.ax - meanX) * scale,
-      y: (item.az - meanZ) * scale,
-      z: (item.ay - meanY) * scale,
-    });
-
-    smooth.forEach((item, index) => {
-      const p = mapPoint(item);
-      const offset = index * 3;
-      positions[offset] = p.x;
-      positions[offset + 1] = p.y;
-      positions[offset + 2] = p.z;
-
-      const t = smooth.length <= 1 ? 1 : index / (smooth.length - 1);
-      const start = new THREE.Color("#22d3ee");
-      const end = new THREE.Color("#facc15");
-      const color = start.lerp(end, t);
-      colors[offset] = color.r;
-      colors[offset + 1] = color.g;
-      colors[offset + 2] = color.b;
-    });
-
-    // Highlight missing-data intervals in trajectory by painting those segments red.
-    const diffsMs: number[] = [];
-    for (let index = 1; index < smooth.length; index += 1) {
-      const diff = smooth[index].ts - smooth[index - 1].ts;
-      if (Number.isFinite(diff) && diff > 0) {
-        diffsMs.push(diff);
-      }
-    }
-    if (diffsMs.length > 0) {
-      const sortedDiffs = [...diffsMs].sort((a, b) => a - b);
-      const medianDiff = sortedDiffs[Math.floor(sortedDiffs.length / 2)];
-      const gapThresholdMs = Math.max(2000, medianDiff * 2.5);
-      const gapColor = new THREE.Color("#fb7185");
-
-      for (let index = 1; index < smooth.length; index += 1) {
-        const diff = smooth[index].ts - smooth[index - 1].ts;
-        if (diff > gapThresholdMs) {
-          const currentOffset = index * 3;
-          const previousOffset = (index - 1) * 3;
-          colors[currentOffset] = gapColor.r;
-          colors[currentOffset + 1] = gapColor.g;
-          colors[currentOffset + 2] = gapColor.b;
-          colors[previousOffset] = gapColor.r;
-          colors[previousOffset + 1] = gapColor.g;
-          colors[previousOffset + 2] = gapColor.b;
+    const maxMarkedHz = Math.floor(maxHz / 200) * 200;
+    for (let targetHz = 200; targetHz <= maxMarkedHz; targetHz += 200) {
+      let nearestIndex = 0;
+      let nearestDiff = Math.abs(data[0].freq - targetHz);
+      for (let index = 1; index < data.length; index += 1) {
+        const diff = Math.abs(data[index].freq - targetHz);
+        if (diff < nearestDiff) {
+          nearestIndex = index;
+          nearestDiff = diff;
         }
       }
+      labels.set(nearestIndex, `${targetHz}`);
     }
+    return labels;
+  }, [data, maxHz]);
 
-    const geometry = line.geometry as THREE.BufferGeometry;
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.computeBoundingSphere();
+  const axisTicks = useMemo(
+    () => [...axisLabelMap.keys()].sort((left, right) => left - right),
+    [axisLabelMap],
+  );
 
-    const latest = mapPoint(smooth[smooth.length - 1]);
-    latestPoint.visible = true;
-    latestPoint.position.set(latest.x, latest.y, latest.z);
-    cube.position.copy(latestPoint.position);
-    cubeEdges.position.copy(latestPoint.position);
-  }, [accelPoints, timeWindowSec]);
+  const hoverPoint = hoverIndex !== null ? data[hoverIndex] : null;
+  const hoverX = hoverIndex !== null ? xScale(hoverIndex) : 0;
+
+  const resolveHoverIndex = useCallback(
+    (clientX: number, rectLeft: number) => {
+      if (data.length === 0) {
+        return null;
+      }
+      const localX = clientX - rectLeft;
+      const clampedX = Math.max(0, Math.min(innerWidth, localX));
+      const ratio = innerWidth > 0 ? clampedX / innerWidth : 0;
+      const index = Math.round(ratio * (data.length - 1));
+      return Math.max(0, Math.min(data.length - 1, index));
+    },
+    [data.length, innerWidth],
+  );
 
   return (
     <div
+      ref={wrapperRef}
+      onWheel={stopWheelScroll}
       style={{
-        position: "relative",
         width: "100%",
         height,
-        borderRadius: 10,
-        border: `1px solid ${C.cardBorder}`,
-        overflow: "hidden",
+        position: "relative",
+        overscrollBehavior: "contain",
       }}
     >
-      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
-      <button
-        type="button"
-        onClick={() => resetViewRef.current?.()}
-        style={{
-          position: "absolute",
-          right: 10,
-          top: 8,
-          borderRadius: 6,
-          border: `1px solid ${C.border}`,
-          background: "rgba(2, 6, 23, 0.42)",
-          color: C.textMuted,
-          fontSize: "0.62rem",
-          fontWeight: 600,
-          padding: "2px 8px",
-          cursor: "pointer",
-        }}
-      >
-        Reset View
-      </button>
-      <div
-        style={{
-          position: "absolute",
-          left: 8,
-          top: 8,
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-        }}
-      >
-        {[10, 20, 40].map((sec) => {
-          const active = sec === timeWindowSec;
-          return (
-            <button
-              key={sec}
-              type="button"
-              onClick={() => setTimeWindowSec(sec)}
-              style={{
-                borderRadius: 999,
-                border: `1px solid ${active ? C.primary : C.border}`,
-                background: active ? "rgba(59,130,246,0.18)" : "rgba(2, 6, 23, 0.42)",
-                color: active ? C.textBright : C.textMuted,
-                fontSize: "0.62rem",
-                fontWeight: 700,
-                padding: "2px 8px",
-                cursor: "pointer",
-              }}
-            >
-              {sec}s
-            </button>
-          );
-        })}
-      </div>
+      {chartWidth > 0 ? (
+        <svg width={chartWidth} height={height}>
+          <Group>
+            {yScale.ticks(4).map((tick) => {
+              const y = yScale(tick);
+              return (
+                <line
+                  key={`fft-grid-${tick}`}
+                  x1={margin.left}
+                  x2={margin.left + innerWidth}
+                  y1={y}
+                  y2={y}
+                  stroke={gridColor}
+                  strokeDasharray="4 4"
+                />
+              );
+            })}
+
+            {data.map((point, index) => {
+              const barX = margin.left + index * barSlotWidth + (barSlotWidth - barWidth) / 2;
+              const topY = yScale(Math.max(0, Math.min(safeYMax, point.amp)));
+              const height = Math.max(1, margin.top + innerHeight - topY);
+              const isPeak = index === peakIndex;
+              return (
+                <rect
+                  key={`fft-bar-${point.bin}-${index}`}
+                  x={barX}
+                  y={topY}
+                  width={barWidth}
+                  height={height}
+                  rx={Math.min(2, barWidth / 2)}
+                  fill={isPeak ? "#f59e0b" : color}
+                />
+              );
+            })}
+
+            {peakAnnotation ? (
+              <>
+                <circle
+                  cx={peakX}
+                  cy={peakY}
+                  r={peakAnnotation.circleRadius}
+                  fill="none"
+                  stroke="#f77f6a"
+                  strokeWidth={1.8}
+                />
+                <polyline
+                  points={`${peakAnnotation.lineStartX},${peakAnnotation.lineStartY} ${peakAnnotation.elbowX},${peakAnnotation.elbowY} ${peakX},${peakY}`}
+                  fill="none"
+                  stroke="#f77f6a"
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <rect
+                  x={peakAnnotation.boxX}
+                  y={peakAnnotation.boxY}
+                  width={peakAnnotation.boxWidth}
+                  height={peakAnnotation.boxHeight}
+                  rx={0}
+                  fill={C.surface}
+                  stroke={color}
+                  strokeWidth={1.2}
+                />
+                <text
+                  x={peakAnnotation.textX}
+                  y={peakAnnotation.titleY}
+                  fill={C.textBright}
+                  fontSize={11}
+                  fontWeight={800}
+                >
+                  {peakAnnotation.titleText}
+                </text>
+                <text
+                  x={peakAnnotation.textX}
+                  y={peakAnnotation.freqY}
+                  fill={axisLabelColor}
+                  fontSize={9}
+                  fontWeight={600}
+                >
+                  {peakAnnotation.freqText}
+                </text>
+                <text
+                  x={peakAnnotation.textX}
+                  y={peakAnnotation.ampY}
+                  fill={axisLabelColor}
+                  fontSize={9}
+                  fontWeight={600}
+                >
+                  {peakAnnotation.ampText}
+                </text>
+              </>
+            ) : null}
+
+            {hoverPoint ? (
+              <line
+                x1={hoverX}
+                x2={hoverX}
+                y1={margin.top}
+                y2={margin.top + innerHeight}
+                stroke="#94a3b8"
+                strokeDasharray="3 3"
+              />
+            ) : null}
+          </Group>
+
+          <AxisBottom
+            scale={xScale}
+            top={margin.top + innerHeight}
+            tickValues={axisTicks}
+            tickFormat={(value) => {
+              const index = typeof value === "number" ? Math.round(value) : Number(value);
+              if (!Number.isFinite(index)) {
+                return "";
+              }
+              return axisLabelMap.get(index) ?? "";
+            }}
+            tickLabelProps={() => ({
+              fill: axisLabelColor,
+              fontSize: 9,
+              textAnchor: "middle",
+            })}
+            stroke={gridColor}
+            tickStroke={gridColor}
+          />
+
+          <rect
+            x={margin.left}
+            y={margin.top}
+            width={innerWidth}
+            height={innerHeight}
+            fill="transparent"
+            onMouseMove={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const nextIndex = resolveHoverIndex(event.clientX, rect.left);
+              setHoverIndex(nextIndex);
+            }}
+            onMouseLeave={() => setHoverIndex(null)}
+          />
+        </svg>
+      ) : null}
+
+      {hoverPoint ? (
+        <div
+          style={{
+            position: "absolute",
+            left: Math.min(Math.max(8, hoverX + 10), Math.max(8, chartWidth - 190)),
+            top: 34,
+            pointerEvents: "none",
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            padding: "7px 9px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            color: C.textBright,
+            fontSize: "0.68rem",
+            lineHeight: 1.35,
+            minWidth: 150,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>Bin {hoverPoint.bin}</div>
+          <div style={{ color: C.textMuted, marginBottom: 3 }}>f = {formatFrequencyHz(hoverPoint.freq)}</div>
+          <div style={{ color, fontWeight: 700 }}>
+            Biên độ: {hoverPoint.amp.toFixed(6)} {hoverPoint.unit}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /* ── Section wrapper ── */
-function ChartSection({ title, icon, children, C }: { title: string; icon: React.ReactNode; children: React.ReactNode; C: any }) {
+function ChartSection({
+  title,
+  icon,
+  children,
+  C,
+  headerAction,
+  titleGap = 8,
+  cardPadding = "12px 8px 8px",
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  C: any;
+  headerAction?: React.ReactNode;
+  titleGap?: number;
+  cardPadding?: string;
+}) {
   return (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <span style={{ color: C.primary }}>{icon}</span>
-        <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>{title}</span>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: titleGap, flexWrap: "wrap" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <span style={{ color: C.primary, display: "inline-flex", flexShrink: 0 }}>{icon}</span>
+          <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700, minWidth: 0 }}>{title}</span>
+        </div>
+        {headerAction ? <div style={{ flexShrink: 0 }}>{headerAction}</div> : null}
       </div>
       <div style={{
         background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-        padding: "12px 8px 8px",
+        padding: cardPadding,
       }}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function SpectrumLoadingState({
+  C,
+  accentColor,
+  overlay = false,
+}: {
+  C: {
+    surface: string;
+    border: string;
+    textBright: string;
+    textMuted: string;
+  };
+  accentColor: string;
+  overlay?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        height: overlay ? "100%" : 160,
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 10px",
+        borderRadius: overlay ? 8 : 0,
+        background: overlay ? "rgba(255, 255, 255, 0.88)" : "transparent",
+        backdropFilter: overlay ? "blur(1px)" : "none",
+      }}
+    >
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "7px 12px",
+          borderRadius: 999,
+          border: overlay ? "1px solid rgba(15, 23, 42, 0.16)" : `1px solid ${C.border}`,
+          background: overlay ? "rgba(255, 255, 255, 0.96)" : `${C.surface}EE`,
+          color: overlay ? "#0f172a" : C.textBright,
+          fontSize: "0.68rem",
+          fontWeight: 700,
+          boxShadow: overlay ? "0 8px 20px rgba(15, 23, 42, 0.12)" : "0 10px 22px rgba(15, 23, 42, 0.14)",
+        }}
+      >
+        <span
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: "50%",
+            border: overlay ? "2px solid rgba(15, 23, 42, 0.18)" : `2px solid ${C.border}`,
+            borderTopColor: accentColor,
+            animation: "chartSpin 0.8s linear infinite",
+          }}
+        />
+        {SPECTRUM_LOADING_LABEL}
       </div>
     </div>
   );
@@ -2165,14 +2942,21 @@ export function SensorChartModal({
   const [visible, setVisible] = useState(false);
   const [tempHalfSpan, setTempHalfSpan] = useState(5);
   const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_LIMIT_MS2);
-  const [trendWindowOffset, setTrendWindowOffset] = useState(0);
-  const [trendVisiblePoints, setTrendVisiblePoints] = useState(DEFAULT_VISIBLE_POINTS);
+  const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>("instant");
+  const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
+  const [trendPanning, setTrendPanning] = useState(false);
   const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(DEFAULT_HISTORY_PRESET_KEY);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState("");
+  const [calendarPopoverOpen, setCalendarPopoverOpen] = useState(false);
+  const [calendarHoverDate, setCalendarHoverDate] = useState<string | null>(null);
+  const [calendarMonthCursor, setCalendarMonthCursor] = useState<Date>(() => startOfMonthLocal(new Date()));
+  const [calendarAvailabilityByMonth, setCalendarAvailabilityByMonth] = useState<Record<string, Record<string, number>>>({});
+  const [calendarAvailabilityLoadingKey, setCalendarAvailabilityLoadingKey] = useState<string | null>(null);
+  const [calendarAvailabilityError, setCalendarAvailabilityError] = useState("");
   const [timePresetMenuOpen, setTimePresetMenuOpen] = useState(false);
   const [telemetryWindowAnchorMs, setTelemetryWindowAnchorMs] = useState<number>(() => Date.now());
   const [historyPresetLoading, setHistoryPresetLoading] = useState<HistoryPresetKey | null>(null);
-  const [trendRenderReloading, setTrendRenderReloading] = useState(false);
-  const [panningChart, setPanningChart] = useState<"temp" | "accel" | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
   const [hoverSpectrumPoints, setHoverSpectrumPoints] = useState<DeviceSpectrumPoint[] | null>(null);
   const [hoverSpectrumLoading, setHoverSpectrumLoading] = useState(false);
   const [hoverSpectrumDebouncing, setHoverSpectrumDebouncing] = useState(false);
@@ -2188,7 +2972,7 @@ export function SensorChartModal({
   const [clearDataConfirmMounted, setClearDataConfirmMounted] = useState(false);
   const [clearDataConfirmClosing, setClearDataConfirmClosing] = useState(false);
   const [clearingDeviceData, setClearingDeviceData] = useState(false);
-  const panStateRef = useRef<ChartPanState | null>(null);
+  const [modalLayout, setModalLayout] = useState<ChartModalLayout>(() => getChartModalLayout());
   const closeTimerRef = useRef<number | null>(null);
   const spectrumHoverTimerRef = useRef<number | null>(null);
   const lastSpectrumHoverTsRef = useRef<number | null>(null);
@@ -2199,7 +2983,32 @@ export function SensorChartModal({
   const clearDataConfirmCloseTimerRef = useRef<number | null>(null);
   const autoPresetLoadedSensorIdRef = useRef<string | null>(null);
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
-  const trendReloadTimerRef = useRef<number | null>(null);
+  const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
+  const controlsBusy = Boolean(historyPresetLoading) || calendarLoading;
+  const selectedCalendarDateLabel = useMemo(
+    () => formatDateInputLabel(selectedCalendarDate),
+    [selectedCalendarDate],
+  );
+  const calendarMonthKey = useMemo(() => formatMonthKey(calendarMonthCursor), [calendarMonthCursor]);
+  const calendarMonthLabel = useMemo(() => formatMonthLabel(calendarMonthCursor), [calendarMonthCursor]);
+  const calendarMonthAvailability = calendarAvailabilityByMonth[calendarMonthKey] ?? {};
+  const calendarMonthLoading = calendarAvailabilityLoadingKey === calendarMonthKey;
+  const calendarDayCells = useMemo(() => buildCalendarDayCells(calendarMonthCursor), [calendarMonthCursor]);
+  const calendarDaysWithDataCount = useMemo(
+    () => Object.values(calendarMonthAvailability).filter((count) => count > 0).length,
+    [calendarMonthAvailability],
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setModalLayout(getChartModalLayout());
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
   useEffect(() => {
     if (sensor) { const t = setTimeout(() => setVisible(true), 10); return () => clearTimeout(t); }
@@ -2217,40 +3026,8 @@ export function SensorChartModal({
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       onClose();
-    }, 220);
+    }, CHART_MODAL_TRANSITION_MS);
   }, [clearingDeviceData, onClose]);
-
-  const showTrendReloadSpinner = useCallback(() => {
-    if (trendReloadTimerRef.current !== null) {
-      window.clearTimeout(trendReloadTimerRef.current);
-      trendReloadTimerRef.current = null;
-    }
-    setTrendRenderReloading(true);
-  }, []);
-
-  const hideTrendReloadSpinner = useCallback((delayMs = TREND_RELOAD_SPINNER_MIN_MS) => {
-    if (trendReloadTimerRef.current !== null) {
-      window.clearTimeout(trendReloadTimerRef.current);
-    }
-    trendReloadTimerRef.current = window.setTimeout(() => {
-      trendReloadTimerRef.current = null;
-      setTrendRenderReloading(false);
-    }, delayMs);
-  }, []);
-
-  const pulseTrendReloadSpinner = useCallback((delayMs = TREND_RELOAD_SPINNER_MIN_MS) => {
-    showTrendReloadSpinner();
-    hideTrendReloadSpinner(delayMs);
-  }, [hideTrendReloadSpinner, showTrendReloadSpinner]);
-
-  useEffect(() => {
-    return () => {
-      if (trendReloadTimerRef.current !== null) {
-        window.clearTimeout(trendReloadTimerRef.current);
-        trendReloadTimerRef.current = null;
-      }
-    };
-  }, []);
 
   const openDataSettings = useCallback(() => {
     if (clearingDeviceData) {
@@ -2533,26 +3310,40 @@ export function SensorChartModal({
       clearDataConfirmCloseTimerRef.current = null;
     }
     setTimePresetMenuOpen(false);
+    setCalendarPopoverOpen(false);
+    setCalendarMonthCursor(startOfMonthLocal(new Date()));
+    setCalendarAvailabilityByMonth({});
+    setCalendarAvailabilityLoadingKey(null);
+    setCalendarAvailabilityError("");
   }, [sensor?.id]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!timePresetMenuOpen) {
-        return;
-      }
       const targetNode = event.target as Node | null;
-      const menuNode = timePresetMenuRef.current;
-      if (!menuNode || !targetNode || menuNode.contains(targetNode)) {
+      if (!targetNode) {
         return;
       }
-      setTimePresetMenuOpen(false);
+
+      if (timePresetMenuOpen) {
+        const menuNode = timePresetMenuRef.current;
+        if (menuNode && !menuNode.contains(targetNode)) {
+          setTimePresetMenuOpen(false);
+        }
+      }
+
+      if (calendarPopoverOpen) {
+        const calendarNode = calendarPopoverRef.current;
+        if (calendarNode && !calendarNode.contains(targetNode)) {
+          setCalendarPopoverOpen(false);
+        }
+      }
     };
 
     window.addEventListener("mousedown", handlePointerDown);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [timePresetMenuOpen]);
+  }, [calendarPopoverOpen, timePresetMenuOpen]);
 
   const telemetryTimeline = useMemo<HoverTelemetrySnapshot[]>(() => {
     const points = telemetryPoints
@@ -2705,6 +3496,9 @@ export function SensorChartModal({
       if (spectrumHoverTimerRef.current !== null) {
         window.clearTimeout(spectrumHoverTimerRef.current);
       }
+      spectrumRequestSeqRef.current += 1;
+      setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
+      setHoverSpectrumLoading(false);
       setHoverSpectrumDebouncing(true);
       spectrumHoverTimerRef.current = window.setTimeout(() => {
         spectrumHoverTimerRef.current = null;
@@ -2726,10 +3520,12 @@ export function SensorChartModal({
         window.clearTimeout(spectrumHoverTimerRef.current);
         spectrumHoverTimerRef.current = null;
       }
+      spectrumRequestSeqRef.current += 1;
       setHoverSpectrumDebouncing(false);
       setSpectrumPinnedTarget(target);
       setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
       setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
+      setHoverSpectrumLoading(false);
       void requestSpectrumFrameAt(target.timestampMs, target.telemetryUuid, { force: true });
     },
     [findNearestTelemetrySnapshot, requestSpectrumFrameAt],
@@ -2743,6 +3539,7 @@ export function SensorChartModal({
       window.clearTimeout(spectrumHoverTimerRef.current);
       spectrumHoverTimerRef.current = null;
     }
+    spectrumRequestSeqRef.current += 1;
     setHoverSpectrumDebouncing(false);
     setHoverSpectrumLoading(false);
     setHoverSpectrumPoints(null);
@@ -2759,7 +3556,10 @@ export function SensorChartModal({
       window.clearTimeout(spectrumHoverTimerRef.current);
       spectrumHoverTimerRef.current = null;
     }
+    spectrumRequestSeqRef.current += 1;
     setHoverSpectrumDebouncing(false);
+    setHoverSpectrumLoading(false);
+    setHoverSpectrumPoints(null);
     setSpectrumPinnedTarget(null);
     lastSpectrumHoverTsRef.current = null;
   }, [spectrumPinnedTarget]);
@@ -2785,21 +3585,152 @@ export function SensorChartModal({
         replace: true,
       };
 
-      showTrendReloadSpinner();
       setHistoryPresetLoading(preset);
       try {
         await onRequestTelemetryHistory(sensor.id, options);
         setActiveHistoryPreset(preset);
-        // With long presets, default to showing all fetched points instead of a reduced viewport.
-        setTrendVisiblePoints(clampTrendVisiblePoints(Math.max(DEFAULT_VISIBLE_POINTS, matchedPreset.limit)));
-        setTrendWindowOffset(0);
+        setSelectedCalendarDate("");
+        setCalendarPopoverOpen(false);
+        const initialViewWindowMs = getDefaultTrendViewWindowMs(preset, matchedPreset.windowMs);
+        setTrendViewWindow({
+          startMs: now - initialViewWindowMs,
+          endMs: now,
+        });
       } finally {
-        hideTrendReloadSpinner(220);
         setHistoryPresetLoading((current) => (current === preset ? null : current));
       }
     },
-    [hideTrendReloadSpinner, onRequestTelemetryHistory, sensor, showTrendReloadSpinner],
+    [onRequestTelemetryHistory, sensor],
   );
+
+  const loadCalendarMonthAvailability = useCallback(
+    async (targetMonth: Date) => {
+      if (!sensor) {
+        return;
+      }
+      const monthStart = startOfMonthLocal(targetMonth);
+      const monthKey = formatMonthKey(monthStart);
+      if (calendarAvailabilityByMonth[monthKey]) {
+        return;
+      }
+
+      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
+      const timezoneOffsetMinutes = new Date().getTimezoneOffset();
+      setCalendarAvailabilityLoadingKey(monthKey);
+      setCalendarAvailabilityError("");
+      try {
+        const query = new URLSearchParams({
+          from: monthStart.toISOString(),
+          to: monthEnd.toISOString(),
+          timezoneOffsetMinutes: String(timezoneOffsetMinutes),
+          limitDays: "62",
+        });
+        const response = await fetch(
+          `/api/devices/${encodeURIComponent(sensor.id)}/telemetry-availability?${query.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(safeString(asRecord(body).error || "telemetry_availability_failed"));
+        }
+        const days = parseTelemetryAvailabilityPayload(body);
+        const nextAvailability: Record<string, number> = {};
+        for (const day of days) {
+          nextAvailability[day.date] = day.count;
+        }
+        setCalendarAvailabilityByMonth((current) => ({
+          ...current,
+          [monthKey]: nextAvailability,
+        }));
+      } catch (error) {
+        setCalendarAvailabilityError(safeString(error));
+      } finally {
+        setCalendarAvailabilityLoadingKey((current) => (current === monthKey ? null : current));
+      }
+    },
+    [calendarAvailabilityByMonth, sensor],
+  );
+
+  const handleCalendarDaySelect = useCallback(
+    async (dateValue: string) => {
+      if (!dateValue || !sensor || !onRequestTelemetryHistory || controlsBusy) {
+        return;
+      }
+      const localDay = parseDateInputValue(dateValue);
+      if (!localDay) {
+        return;
+      }
+
+      const dayStartMs = localDay.getTime();
+      const dayEndExclusiveMs = dayStartMs + DAY_IN_MS;
+      const dayEndRequestMs = dayEndExclusiveMs - 1;
+      const oneDayPreset = TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === "1d");
+      const defaultPreset = TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === DEFAULT_HISTORY_PRESET_KEY);
+
+      setTimePresetMenuOpen(false);
+      setCalendarLoading(true);
+      try {
+        await onRequestTelemetryHistory(sensor.id, {
+          from: new Date(dayStartMs).toISOString(),
+          to: new Date(dayEndRequestMs).toISOString(),
+          limit: oneDayPreset?.limit ?? defaultPreset?.limit ?? 1000,
+          force: true,
+          replace: true,
+        });
+        setActiveHistoryPreset("1d");
+        setSelectedCalendarDate(dateValue);
+        setCalendarMonthCursor(startOfMonthLocal(localDay));
+        setCalendarPopoverOpen(false);
+        setTelemetryWindowAnchorMs(dayEndExclusiveMs);
+        setTrendViewWindow({
+          startMs: dayStartMs,
+          endMs: dayEndExclusiveMs,
+        });
+      } finally {
+        setCalendarLoading(false);
+      }
+    },
+    [controlsBusy, onRequestTelemetryHistory, sensor],
+  );
+
+  const handleToggleCalendarPopover = useCallback(() => {
+    if (!onRequestTelemetryHistory || controlsBusy) {
+      return;
+    }
+    setTimePresetMenuOpen(false);
+    setCalendarAvailabilityError("");
+    setCalendarPopoverOpen((open) => {
+      const next = !open;
+      if (next) {
+        const anchor = parseDateInputValue(selectedCalendarDate) ?? new Date(telemetryWindowAnchorMs);
+        setCalendarMonthCursor(startOfMonthLocal(anchor));
+      }
+      return next;
+    });
+  }, [controlsBusy, onRequestTelemetryHistory, selectedCalendarDate, telemetryWindowAnchorMs]);
+
+  const handleCalendarMonthShift = useCallback((delta: -1 | 1) => {
+    setCalendarMonthCursor((current) => addMonthsLocal(current, delta));
+    setCalendarAvailabilityError("");
+  }, []);
+
+  useEffect(() => {
+    if (!calendarPopoverOpen || !sensor) {
+      return;
+    }
+    void loadCalendarMonthAvailability(calendarMonthCursor);
+  }, [calendarMonthCursor, calendarPopoverOpen, loadCalendarMonthAvailability, sensor]);
+
+  useEffect(() => {
+    if (!calendarPopoverOpen) {
+      setCalendarHoverDate(null);
+    }
+  }, [calendarPopoverOpen]);
 
   const activePresetConfig = useMemo(
     () =>
@@ -2884,10 +3815,7 @@ export function SensorChartModal({
         diffs.push(diff);
       }
     }
-    const fallbackStepMs = Math.max(
-      1000,
-      Math.round((endMs - startMs) / Math.max(30, activePresetConfig.visiblePoints)),
-    );
+    const fallbackStepMs = Math.max(1000, Math.round((endMs - startMs) / 240));
     const typicalStepMs = diffs.length > 0
       ? (() => {
           const sortedDiffs = [...diffs].sort((left, right) => left - right);
@@ -2944,23 +3872,34 @@ export function SensorChartModal({
     telemetryWindowStartMs,
   ]);
   const telemetryGapStepMs = useMemo(() => {
-    if (timelineTelemetryData.length < 2) {
-      return 1000;
+    const loadedWindowMs = Math.max(1, telemetryWindowAnchorMs - telemetryWindowStartMs);
+    const maxAllowedStepMs = Math.max(1000, Math.round(loadedWindowMs * TREND_MAX_GAP_STEP_RATIO));
+    const valuedRows = timelineTelemetryData.filter(
+      (row) =>
+        (typeof row.temp === "number" && Number.isFinite(row.temp))
+        || (typeof row.ax === "number" && Number.isFinite(row.ax))
+        || (typeof row.ay === "number" && Number.isFinite(row.ay))
+        || (typeof row.az === "number" && Number.isFinite(row.az)),
+    );
+
+    if (valuedRows.length < 2) {
+      return maxAllowedStepMs;
     }
+
     const diffs: number[] = [];
-    for (let index = 1; index < timelineTelemetryData.length; index += 1) {
-      const diff = timelineTelemetryData[index].ts - timelineTelemetryData[index - 1].ts;
+    for (let index = 1; index < valuedRows.length; index += 1) {
+      const diff = valuedRows[index].ts - valuedRows[index - 1].ts;
       if (Number.isFinite(diff) && diff > 0) {
         diffs.push(diff);
       }
     }
     if (diffs.length === 0) {
-      return 1000;
+      return maxAllowedStepMs;
     }
     const sortedDiffs = [...diffs].sort((left, right) => left - right);
     const median = sortedDiffs[Math.floor(sortedDiffs.length / 2)];
-    return Math.max(1000, Math.round(median));
-  }, [timelineTelemetryData]);
+    return Math.max(1000, Math.min(maxAllowedStepMs, Math.round(median)));
+  }, [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData]);
 
   const tempData = useMemo(
     () =>
@@ -2986,17 +3925,48 @@ export function SensorChartModal({
   }, [tempData, tempHalfSpan]);
 
   const accelData = useMemo(
-    () =>
-      timelineTelemetryData.map((row) => ({
+    () => {
+      const rawRows = timelineTelemetryData.map((row) => ({
         ts: row.ts,
         ax: row.ax,
         ay: row.ay,
         az: row.az,
         telemetryUuid: row.telemetryUuid,
-      })),
-    [timelineTelemetryData],
+      }));
+      if (accelTrendMode === "instant") {
+        return rawRows;
+      }
+      const rmsWindowMs = Math.min(
+        ACCEL_RMS_MAX_WINDOW_MS,
+        Math.max(ACCEL_RMS_MIN_WINDOW_MS, telemetryGapStepMs * ACCEL_RMS_TARGET_SAMPLES),
+      );
+      return buildRollingRmsAccelRows(timelineTelemetryData, rmsWindowMs);
+    },
+    [accelTrendMode, telemetryGapStepMs, timelineTelemetryData],
   );
-  const activeSpectrumPoints = hoverSpectrumPoints ?? spectrumPoints;
+  const hoverSpectrumBusy = hoverSpectrumDebouncing || hoverSpectrumLoading;
+  const hoverTelemetrySummaryLabel = useMemo(() => {
+    if (!hoverTelemetrySnapshot) {
+      return "";
+    }
+    return `Mốc: ${formatTooltipDateTime(hoverTelemetrySnapshot.ts)} · Temp ${formatOptionalValue(
+      hoverTelemetrySnapshot.temp,
+      2,
+      "°C",
+    )} · ${VIBRATION_AXIS_LABELS.ax} ${formatOptionalValue(
+      hoverTelemetrySnapshot.ax,
+      2,
+    )} · ${VIBRATION_AXIS_LABELS.ay} ${formatOptionalValue(
+      hoverTelemetrySnapshot.ay,
+      2,
+    )} · ${VIBRATION_AXIS_LABELS.az} ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`;
+  }, [hoverTelemetrySnapshot]);
+  const spectrumPinned = spectrumPinnedTarget !== null;
+  const shouldUseHoverSpectrumState =
+    hoverSpectrumBusy || spectrumPinned || hoverTelemetrySnapshot !== null || hoverSpectrumPoints !== null;
+  const activeSpectrumPoints = shouldUseHoverSpectrumState
+    ? (hoverSpectrumPoints ?? EMPTY_SPECTRUM_POINTS)
+    : spectrumPoints;
 
   const latestSpectrumByAxis = useMemo<Record<SpectrumAxis, DeviceSpectrumPoint | null>>(() => {
     const next: Record<SpectrumAxis, DeviceSpectrumPoint | null> = {
@@ -3016,8 +3986,6 @@ export function SensorChartModal({
   const missingSpectrumAxes = (["x", "y", "z"] as SpectrumAxis[]).filter((axis) => !latestSpectrumByAxis[axis]);
   const hasAnySpectrum = missingSpectrumAxes.length < 3;
   const showingHoveredSpectrum = hoverSpectrumPoints !== null;
-  const hoverSpectrumBusy = hoverSpectrumDebouncing || hoverSpectrumLoading;
-  const spectrumPinned = spectrumPinnedTarget !== null;
 
   const fftX = useMemo(() => {
     return toSpectrumChartData(latestSpectrumByAxis.x);
@@ -3106,45 +4074,185 @@ export function SensorChartModal({
     }),
     [fftX, fftY, fftZ],
   );
-  const timelinePointCount = timelineTelemetryData.length;
-  const trendMaxOffset = Math.max(0, timelinePointCount - trendVisiblePoints);
-  const trendEffectiveOffset = Math.min(trendWindowOffset, trendMaxOffset);
-  const visibleWindow = useMemo(() => {
-    if (timelinePointCount <= 0) {
-      return {
-        startIndex: 0,
-        endExclusive: 0,
-        visiblePoints: 0,
-      };
-    }
-
-    const effectiveVisiblePoints = Math.max(1, Math.min(timelinePointCount, trendVisiblePoints));
-    const endExclusive = Math.max(0, timelinePointCount - trendEffectiveOffset);
-    const startIndex = Math.max(0, endExclusive - effectiveVisiblePoints);
-    return {
-      startIndex,
-      endExclusive,
-      visiblePoints: Math.max(0, endExclusive - startIndex),
+  const loadedTrendWindowMs = useMemo(
+    () => Math.max(1, telemetryWindowAnchorMs - telemetryWindowStartMs),
+    [telemetryWindowAnchorMs, telemetryWindowStartMs],
+  );
+  const trendMinViewWindowMs = useMemo(
+    () => Math.min(loadedTrendWindowMs, Math.max(TREND_MIN_VIEW_WINDOW_MS, telemetryGapStepMs * 8)),
+    [loadedTrendWindowMs, telemetryGapStepMs],
+  );
+  const trendVisibleWindow = useMemo(() => {
+    const fallbackViewWindowMs = getDefaultTrendViewWindowMs(
+      activePresetConfig?.key ?? DEFAULT_HISTORY_PRESET_KEY,
+      loadedTrendWindowMs,
+    );
+    const requestedWindow = trendViewWindow ?? {
+      startMs: telemetryWindowAnchorMs - fallbackViewWindowMs,
+      endMs: telemetryWindowAnchorMs,
     };
-  }, [timelinePointCount, trendEffectiveOffset, trendVisiblePoints]);
-  const tempVisible = useMemo(() => {
-    return tempData.slice(visibleWindow.startIndex, visibleWindow.endExclusive);
-  }, [tempData, visibleWindow.endExclusive, visibleWindow.startIndex]);
-  const tempGapRanges = useMemo(() => {
+    return clampTrendViewport(
+      requestedWindow,
+      telemetryWindowStartMs,
+      telemetryWindowAnchorMs,
+      trendMinViewWindowMs,
+    );
+  }, [
+    activePresetConfig?.key,
+    loadedTrendWindowMs,
+    telemetryWindowAnchorMs,
+    telemetryWindowStartMs,
+    trendMinViewWindowMs,
+    trendViewWindow,
+  ]);
+  const trendAtLatest = Math.abs(telemetryWindowAnchorMs - trendVisibleWindow.endMs) <= Math.max(
+    TREND_LATEST_EPSILON_MS,
+    telemetryGapStepMs * 2,
+  );
+  const trendCanPanOlder = trendVisibleWindow.startMs > telemetryWindowStartMs + Math.max(1_000, telemetryGapStepMs);
+  const trendCanPanNewer = trendVisibleWindow.endMs < telemetryWindowAnchorMs - Math.max(1_000, telemetryGapStepMs);
+
+  const handleResetTrendViewToLatest = useCallback(() => {
+    const nextDurationMs = Math.max(
+      trendMinViewWindowMs,
+      Math.min(loadedTrendWindowMs, trendVisibleWindow.endMs - trendVisibleWindow.startMs),
+    );
+    setTrendViewWindow({
+      startMs: telemetryWindowAnchorMs - nextDurationMs,
+      endMs: telemetryWindowAnchorMs,
+    });
+  }, [
+    loadedTrendWindowMs,
+    telemetryWindowAnchorMs,
+    trendMinViewWindowMs,
+    trendVisibleWindow.endMs,
+    trendVisibleWindow.startMs,
+  ]);
+
+  const handleTrendViewportZoom = useCallback(
+    ({ anchorTs, deltaY }: { anchorTs: number; deltaY: number }) => {
+      const currentDurationMs = Math.max(1, trendVisibleWindow.endMs - trendVisibleWindow.startMs);
+      const zoomOut = deltaY > 0;
+      const nextDurationMs = Math.max(
+        trendMinViewWindowMs,
+        Math.min(
+          loadedTrendWindowMs,
+          currentDurationMs * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP),
+        ),
+      );
+      if (Math.abs(nextDurationMs - currentDurationMs) < 1) {
+        return;
+      }
+
+      const safeAnchorTs = Math.max(
+        trendVisibleWindow.startMs,
+        Math.min(trendVisibleWindow.endMs, anchorTs),
+      );
+      const anchorRatio =
+        currentDurationMs > 0
+          ? (safeAnchorTs - trendVisibleWindow.startMs) / currentDurationMs
+          : 0.5;
+      const proposedStartMs = safeAnchorTs - anchorRatio * nextDurationMs;
+      const nextWindow = clampTrendViewport(
+        {
+          startMs: proposedStartMs,
+          endMs: proposedStartMs + nextDurationMs,
+        },
+        telemetryWindowStartMs,
+        telemetryWindowAnchorMs,
+        trendMinViewWindowMs,
+      );
+      if (
+        nextWindow.startMs === trendVisibleWindow.startMs
+        && nextWindow.endMs === trendVisibleWindow.endMs
+      ) {
+        return;
+      }
+      startTransition(() => {
+        setTrendViewWindow(nextWindow);
+      });
+    },
+    [
+      loadedTrendWindowMs,
+      telemetryWindowAnchorMs,
+      telemetryWindowStartMs,
+      trendMinViewWindowMs,
+      trendVisibleWindow.endMs,
+      trendVisibleWindow.startMs,
+    ],
+  );
+
+  const handleTempYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
+    const zoomOut = deltaY > 0;
+    setTempHalfSpan((current) => clampTempHalfSpan(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
+  }, []);
+
+  const handleAccelYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
+    const zoomOut = deltaY > 0;
+    setAccelAmplitudeLimit((current) => clampAccelAmplitudeLimit(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
+  }, []);
+
+  const handleTrendViewportPanChange = useCallback(
+    (nextWindow: TrendViewport) => {
+      const clampedWindow = clampTrendViewport(
+        nextWindow,
+        telemetryWindowStartMs,
+        telemetryWindowAnchorMs,
+        trendMinViewWindowMs,
+      );
+      if (
+        clampedWindow.startMs === trendVisibleWindow.startMs
+        && clampedWindow.endMs === trendVisibleWindow.endMs
+      ) {
+        return;
+      }
+      startTransition(() => {
+        setTrendViewWindow(clampedWindow);
+      });
+    },
+    [
+      telemetryWindowAnchorMs,
+      telemetryWindowStartMs,
+      trendMinViewWindowMs,
+      trendVisibleWindow.endMs,
+      trendVisibleWindow.startMs,
+    ],
+  );
+
+  const handleTrendPanStateChange = useCallback((active: boolean) => {
+    setTrendPanning(active);
+  }, []);
+
+  const tempVisible = useMemo(
+    () =>
+      tempData.filter(
+        (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
+      ),
+    [tempData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const tempGapRangesAll = useMemo(() => {
     return buildNullGapRanges(
-      tempVisible,
+      tempData,
       (row) => typeof row.temp === "number" && Number.isFinite(row.temp),
       (row) => row.ts,
       telemetryGapStepMs,
     );
-  }, [telemetryGapStepMs, tempVisible]);
+  }, [telemetryGapStepMs, tempData]);
+  const tempGapRanges = useMemo(
+    () => clipGapRangesToWindow(tempGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
+    [tempGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
   const tempDisplayData = tempVisible;
-  const accelVisible = useMemo(() => {
-    return accelData.slice(visibleWindow.startIndex, visibleWindow.endExclusive);
-  }, [accelData, visibleWindow.endExclusive, visibleWindow.startIndex]);
-  const accelGapRanges = useMemo(() => {
+  const accelVisible = useMemo(
+    () =>
+      accelData.filter(
+        (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
+      ),
+    [accelData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const accelGapRangesAll = useMemo(() => {
     return buildNullGapRanges(
-      accelVisible,
+      accelData,
       (row) =>
         (typeof row.ax === "number" && Number.isFinite(row.ax))
         || (typeof row.ay === "number" && Number.isFinite(row.ay))
@@ -3152,101 +4260,73 @@ export function SensorChartModal({
       (row) => row.ts,
       telemetryGapStepMs,
     );
-  }, [accelVisible, telemetryGapStepMs]);
+  }, [accelData, telemetryGapStepMs]);
+  const accelGapRanges = useMemo(
+    () => clipGapRangesToWindow(accelGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
+    [accelGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
   const accelDisplayData = accelVisible;
+  const accelTrendYDomain = useMemo<[number, number]>(() => {
+    if (accelTrendMode !== "rms") {
+      return [-accelAmplitudeLimit, accelAmplitudeLimit];
+    }
+
+    const values = accelVisible
+      .flatMap((row) => [row.ax, row.ay, row.az])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+    if (values.length === 0) {
+      return [0, Math.min(accelAmplitudeLimit, 1)];
+    }
+
+    const maxValue = Math.max(...values);
+    if (!Number.isFinite(maxValue) || maxValue <= 0) {
+      return [0, Math.min(accelAmplitudeLimit, 1)];
+    }
+
+    const padded = maxValue * 1.25;
+    const rounded = padded < 1
+      ? Math.ceil(padded * 100) / 100
+      : padded < 10
+        ? Math.ceil(padded * 10) / 10
+        : Math.ceil(padded);
+    return [0, Math.min(accelAmplitudeLimit, Math.max(0.1, rounded))];
+  }, [accelAmplitudeLimit, accelTrendMode, accelVisible]);
   const showInitialLoading = telemetryLoading && telemetryPoints.length === 0;
-  const latestAccel = accelVisible.at(-1);
-  const activePresetLabel =
-    TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === activeHistoryPreset)?.label ?? DEFAULT_HISTORY_PRESET_KEY;
-  const brushWindow = useMemo(() => {
-    if (visibleWindow.visiblePoints <= 0) {
-      return {
-        startTs: undefined as number | undefined,
-        endTs: undefined as number | undefined,
-        visiblePoints: 0,
-      };
-    }
-
-    const endIndex = Math.max(visibleWindow.startIndex, visibleWindow.endExclusive - 1);
-
-    return {
-      startTs: timelineTelemetryData[visibleWindow.startIndex]?.ts,
-      endTs: timelineTelemetryData[endIndex]?.ts,
-      visiblePoints: visibleWindow.visiblePoints,
-    };
-  }, [timelineTelemetryData, visibleWindow.endExclusive, visibleWindow.startIndex, visibleWindow.visiblePoints]);
-
-  const applyBrushWindowByTimestamp = useCallback(
-    (requestedStartTs: number, requestedEndTs: number) => {
-      if (timelinePointCount <= 0) {
-        return;
-      }
-
-      const firstTs = timelineTelemetryData[0]?.ts ?? 0;
-      const lastTs = timelineTelemetryData[timelinePointCount - 1]?.ts ?? firstTs;
-      const safeStartTs = Math.max(firstTs, Math.min(lastTs, Math.min(requestedStartTs, requestedEndTs)));
-      const safeEndTs = Math.max(firstTs, Math.min(lastTs, Math.max(requestedStartTs, requestedEndTs)));
-
-      const findNearestTimelineIndex = (targetTs: number): number => {
-        let low = 0;
-        let high = timelinePointCount - 1;
-        while (low < high) {
-          const mid = Math.floor((low + high) / 2);
-          const value = timelineTelemetryData[mid]?.ts ?? firstTs;
-          if (value < targetTs) {
-            low = mid + 1;
-          } else {
-            high = mid;
-          }
-        }
-
-        const rightIndex = low;
-        const leftIndex = Math.max(0, rightIndex - 1);
-        const leftDistance = Math.abs((timelineTelemetryData[leftIndex]?.ts ?? firstTs) - targetTs);
-        const rightDistance = Math.abs((timelineTelemetryData[rightIndex]?.ts ?? firstTs) - targetTs);
-        return rightDistance < leftDistance ? rightIndex : leftIndex;
-      };
-
-      let startIndex = findNearestTimelineIndex(safeStartTs);
-      let endIndex = findNearestTimelineIndex(safeEndTs);
-      if (startIndex > endIndex) {
-        const temp = startIndex;
-        startIndex = endIndex;
-        endIndex = temp;
-      }
-      if (endIndex < startIndex) {
-        endIndex = startIndex;
-      }
-      if (startIndex === endIndex && timelinePointCount > 1) {
-        if (endIndex < timelinePointCount - 1) {
-          endIndex += 1;
-        } else if (startIndex > 0) {
-          startIndex -= 1;
-        }
-      }
-
-      const nextVisiblePoints = Math.max(1, endIndex - startIndex + 1);
-      const nextOffset = Math.max(0, timelinePointCount - (endIndex + 1));
-      if (nextVisiblePoints === trendVisiblePoints && nextOffset === trendWindowOffset) {
-        return;
-      }
-      setTrendVisiblePoints(nextVisiblePoints);
-      setTrendWindowOffset(nextOffset);
-      pulseTrendReloadSpinner(130);
-    },
-    [pulseTrendReloadSpinner, timelinePointCount, timelineTelemetryData, trendVisiblePoints, trendWindowOffset],
-  );
-
-  const timeBrushResetKey = useMemo(
+  const trendOverviewGapRanges = useMemo(() => {
+    return buildNullGapRanges(
+      timelineTelemetryData,
+      (row) =>
+        (typeof row.temp === "number" && Number.isFinite(row.temp))
+        || (typeof row.ax === "number" && Number.isFinite(row.ax))
+        || (typeof row.ay === "number" && Number.isFinite(row.ay))
+        || (typeof row.az === "number" && Number.isFinite(row.az)),
+      (row) => row.ts,
+      telemetryGapStepMs,
+    );
+  }, [telemetryGapStepMs, timelineTelemetryData]);
+  const trendOverviewResetKey = useMemo(
     () =>
-      `${sensor?.id ?? "no-sensor"}:${activeHistoryPreset ?? "none"}:${timelinePointCount}:${Math.floor(telemetryWindowAnchorMs / 1000)}`,
-    [activeHistoryPreset, sensor?.id, telemetryWindowAnchorMs, timelinePointCount],
+      `${sensor?.id ?? "no-sensor"}:${activeHistoryPreset ?? "none"}:${Math.round(telemetryWindowStartMs / 1000)}:${Math.round(telemetryWindowAnchorMs / 1000)}`,
+    [activeHistoryPreset, sensor?.id, telemetryWindowAnchorMs, telemetryWindowStartMs],
   );
-  useEffect(() => {
-    if (trendWindowOffset !== trendEffectiveOffset) {
-      setTrendWindowOffset(trendEffectiveOffset);
-    }
-  }, [trendEffectiveOffset, trendWindowOffset]);
+  const trendOverviewDisplayWindow = useMemo(() => {
+    return clampTrendViewport(
+      {
+        startMs: trendVisibleWindow.startMs,
+        endMs: trendVisibleWindow.endMs,
+      },
+      telemetryWindowStartMs,
+      telemetryWindowAnchorMs,
+      trendMinViewWindowMs,
+    );
+  }, [
+    telemetryWindowAnchorMs,
+    telemetryWindowStartMs,
+    trendMinViewWindowMs,
+    trendVisibleWindow.endMs,
+    trendVisibleWindow.startMs,
+  ]);
+  const activePresetLabel = activePresetConfig?.label ?? DEFAULT_HISTORY_PRESET_KEY;
 
   useEffect(() => {
     if (!sensor) {
@@ -3256,17 +4336,19 @@ export function SensorChartModal({
     setTelemetryWindowAnchorMs(Date.now());
     setTempHalfSpan(5);
     setAccelAmplitudeLimit(ACCEL_LIMIT_MS2);
-    setTrendWindowOffset(0);
-    setTrendVisiblePoints(DEFAULT_VISIBLE_POINTS);
+    setAccelTrendMode("instant");
+    setTrendViewWindow(null);
+    setTrendPanning(false);
     setActiveHistoryPreset(DEFAULT_HISTORY_PRESET_KEY);
+    setSelectedCalendarDate("");
+    setCalendarPopoverOpen(false);
+    setCalendarHoverDate(null);
+    setCalendarMonthCursor(startOfMonthLocal(new Date()));
+    setCalendarAvailabilityByMonth({});
+    setCalendarAvailabilityLoadingKey(null);
+    setCalendarAvailabilityError("");
     setHistoryPresetLoading(null);
-    if (trendReloadTimerRef.current !== null) {
-      window.clearTimeout(trendReloadTimerRef.current);
-      trendReloadTimerRef.current = null;
-    }
-    setTrendRenderReloading(false);
-    panStateRef.current = null;
-    setPanningChart(null);
+    setCalendarLoading(false);
   }, [sensor?.id]);
 
   useEffect(() => {
@@ -3280,91 +4362,6 @@ export function SensorChartModal({
     void handleHistoryPresetSelect(DEFAULT_HISTORY_PRESET_KEY);
   }, [handleHistoryPresetSelect, onRequestTelemetryHistory, sensor]);
 
-  const handleTempWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const zoomOut = event.deltaY > 0;
-    setTempHalfSpan((previous) => {
-      const next = zoomOut ? previous * 1.1 : previous / 1.1;
-      return clampTempHalfSpan(next);
-    });
-  };
-
-  const handleAccelWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const zoomOut = event.deltaY > 0;
-    setAccelAmplitudeLimit((previous) => {
-      const next = zoomOut ? previous * 1.1 : previous / 1.1;
-      return clampAccelAmplitudeLimit(next);
-    });
-  };
-
-  const startPanDrag = (
-    chart: "temp" | "accel",
-    event: React.MouseEvent<HTMLDivElement>,
-    currentOffset: number,
-    maxOffset: number,
-  ) => {
-    if (maxOffset <= 0) {
-      return;
-    }
-
-    panStateRef.current = {
-      startX: event.clientX,
-      startOffset: currentOffset,
-      width: event.currentTarget.clientWidth || 1,
-      maxOffset,
-    };
-    showTrendReloadSpinner();
-    setPanningChart(chart);
-  };
-
-  const handleTempWrapperMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button === 0) {
-      event.preventDefault();
-      startPanDrag("temp", event, trendEffectiveOffset, trendMaxOffset);
-    }
-  };
-
-  const handleAccelWrapperMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button === 0) {
-      event.preventDefault();
-      startPanDrag("accel", event, trendEffectiveOffset, trendMaxOffset);
-    }
-  };
-
-  useEffect(() => {
-    if (!panningChart) {
-      return;
-    }
-
-    const handleMove = (event: MouseEvent) => {
-      const panState = panStateRef.current;
-      if (!panState) {
-        return;
-      }
-      const pointsRange = Math.max(1, panState.maxOffset);
-      const pointsPerPixel = pointsRange / Math.max(1, panState.width);
-      const deltaX = event.clientX - panState.startX;
-      const rawOffset = panState.startOffset + Math.round(deltaX * pointsPerPixel);
-      const nextOffset = Math.max(0, Math.min(panState.maxOffset, rawOffset));
-      setTrendWindowOffset(nextOffset);
-    };
-
-    const handleUp = () => {
-      panStateRef.current = null;
-      setPanningChart(null);
-      hideTrendReloadSpinner(130);
-    };
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-    };
-  }, [hideTrendReloadSpinner, panningChart]);
-
   if (!sensor) return null;
 
   const chartTextStyle = { fill: C.textMuted, fontSize: 10 };
@@ -3375,26 +4372,39 @@ export function SensorChartModal({
       <div onClick={handleClose} style={{
         position: "fixed", inset: 0, zIndex: 60,
         background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
-        opacity: visible ? 1 : 0, transition: "opacity 0.22s ease",
+        opacity: visible ? 1 : 0, transition: `opacity ${CHART_MODAL_TRANSITION_MS}ms ease`,
       }} />
 
-      <div style={{
+      <div
+        data-ux="chart-modal"
+        data-ux-chart-ready={showInitialLoading ? "false" : "true"}
+        data-ux-telemetry-points={telemetryPoints.length}
+        style={{
         position: "fixed", top: "50%", left: "50%", zIndex: 61,
-        transform: visible ? "translate(-50%,-53%) scale(1)" : "translate(-50%,-51%) scale(0.97)",
+        transform: visible ? "translate(-50%,-50%) scale(1)" : "translate(-50%,-49%) scale(0.97)",
         opacity: visible ? 1 : 0,
-        transition: "transform 0.22s cubic-bezier(0.32,0.72,0,1), opacity 0.22s ease",
-        width: "min(97vw, 1300px)", maxHeight: "95vh",
+        transition: `transform ${CHART_MODAL_TRANSITION_MS}ms cubic-bezier(0.32,0.72,0,1), opacity ${CHART_MODAL_TRANSITION_MS}ms ease`,
+        width: modalLayout.modalWidth,
+        height: "auto",
+        maxWidth: "1500px",
+        maxHeight: modalLayout.modalMaxHeight,
         background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14,
         boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
         display: "flex", flexDirection: "column", overflow: "hidden",
-      }}>
+      }}
+      >
         {/* Header */}
         <div style={{
           background: C.card, borderBottom: `1px solid ${C.border}`,
-          padding: "14px 18px 12px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: modalLayout.headerPadding,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
           flexShrink: 0,
         }}>
-	          <div>
+	          <div style={{ minWidth: 0 }}>
 	            <div style={{ color: C.textMuted, fontSize: "0.58rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 3 }}>
 	              Phân tích dữ liệu cảm biến
 	            </div>
@@ -3474,7 +4484,411 @@ export function SensorChartModal({
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
+            <div ref={calendarPopoverRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                disabled={!onRequestTelemetryHistory || controlsBusy}
+                onClick={handleToggleCalendarPopover}
+                style={{
+                  height: 32,
+                  borderRadius: 999,
+                  border: `1px solid ${calendarPopoverOpen ? C.primary : C.border}`,
+                  padding: "0 10px",
+                  background: calendarPopoverOpen ? C.primaryBg : C.surface,
+                  color: calendarPopoverOpen ? C.primary : C.textBase,
+                  fontSize: "0.66rem",
+                  fontWeight: 700,
+                  cursor: !onRequestTelemetryHistory || controlsBusy ? "not-allowed" : "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  minWidth: 128,
+                  justifyContent: "space-between",
+                  opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
+                  transition: "all 0.14s ease",
+                }}
+                title="Chọn ngày dữ liệu"
+                aria-label="Chọn ngày dữ liệu"
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <CalendarDays size={13} strokeWidth={2.1} />
+                  <span>{selectedCalendarDateLabel}</span>
+                </span>
+                <ChevronDown
+                  size={13}
+                  strokeWidth={2.2}
+                  style={{
+                    transform: calendarPopoverOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 0.14s ease",
+                  }}
+                />
+              </button>
+
+              {calendarPopoverOpen ? (
+                <div
+                  className="calendar-popover-anim"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    width: 296,
+                    borderRadius: 14,
+                    border: `1px solid ${C.border}`,
+                    background: `linear-gradient(180deg, ${C.surface} 0%, ${C.card} 100%)`,
+                    boxShadow: "0 18px 36px rgba(0, 0, 0, 0.35)",
+                    padding: "10px 10px 9px",
+                    zIndex: 42,
+                    display: "grid",
+                    gap: 8,
+                    transformOrigin: "top right",
+                    animation: "calendarPopoverIn 190ms cubic-bezier(0.2, 0.85, 0.25, 1)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleCalendarMonthShift(-1)}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 8,
+                        border: `1px solid ${C.border}`,
+                        background: C.surface,
+                        color: C.textMuted,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <ArrowLeft size={13} strokeWidth={2.4} />
+                    </button>
+                    <div style={{ minWidth: 0, textAlign: "center" }}>
+                      <div style={{ color: C.textBright, fontSize: "0.73rem", fontWeight: 800, letterSpacing: "0.01em" }}>
+                        {calendarMonthLabel}
+                      </div>
+                      <div style={{ color: C.textMuted, fontSize: "0.62rem" }}>
+                        {calendarDaysWithDataCount > 0
+                          ? `${calendarDaysWithDataCount} ngày có dữ liệu`
+                          : "Chưa có dữ liệu trong tháng"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCalendarMonthShift(1)}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 8,
+                        border: `1px solid ${C.border}`,
+                        background: C.surface,
+                        color: C.textMuted,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <ArrowRight size={13} strokeWidth={2.4} />
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                      gap: 4,
+                      padding: "0 2px",
+                    }}
+                  >
+                    {CALENDAR_WEEKDAY_LABELS.map((label) => (
+                      <div
+                        key={label}
+                        style={{
+                          textAlign: "center",
+                          color: C.textMuted,
+                          fontSize: "0.58rem",
+                          fontWeight: 700,
+                          letterSpacing: "0.05em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    key={calendarMonthKey}
+                    className="calendar-month-anim"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                      gap: 4,
+                      animation: "calendarMonthIn 180ms ease-out",
+                    }}
+                  >
+                    {calendarDayCells.map((cell) => {
+                      const hasData = Number(calendarMonthAvailability[cell.dateValue] ?? 0) > 0;
+                      const selected = selectedCalendarDate === cell.dateValue;
+                      const inCurrentMonth = cell.monthOffset === 0;
+                      const disabled = cell.isFuture || controlsBusy;
+                      const hovered = calendarHoverDate === cell.dateValue && !disabled;
+                      return (
+                        <button
+                          key={cell.dateValue}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            void handleCalendarDaySelect(cell.dateValue);
+                          }}
+                          onMouseEnter={() => {
+                            if (!disabled) {
+                              setCalendarHoverDate(cell.dateValue);
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            setCalendarHoverDate(null);
+                          }}
+                          onFocus={() => {
+                            if (!disabled) {
+                              setCalendarHoverDate(cell.dateValue);
+                            }
+                          }}
+                          onBlur={() => {
+                            setCalendarHoverDate(null);
+                          }}
+                          style={{
+                            position: "relative",
+                            height: 34,
+                            borderRadius: 10,
+                            border: selected
+                              ? `1px solid ${C.primary}`
+                              : hovered
+                                ? `1px solid ${C.primary}`
+                              : hasData
+                                ? `1px solid ${C.success}66`
+                                : `1px solid ${C.border}`,
+                            background: selected
+                              ? C.primaryBg
+                              : hovered
+                                ? "rgba(59, 130, 246, 0.18)"
+                              : hasData
+                                ? `${C.success}14`
+                                : inCurrentMonth
+                                  ? C.surface
+                                  : `${C.surface}99`,
+                            color: selected
+                              ? C.primary
+                              : hovered
+                                ? C.primary
+                              : inCurrentMonth
+                                ? C.textBase
+                                : C.textDim,
+                            fontSize: "0.68rem",
+                            fontWeight: selected || hovered ? 800 : 700,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            opacity: disabled ? 0.45 : inCurrentMonth ? 1 : 0.72,
+                            transform: hovered ? "translateY(-1px) scale(1.06)" : "translateY(0) scale(1)",
+                            boxShadow: hovered ? `0 10px 18px ${C.primary}33` : "none",
+                            zIndex: hovered ? 2 : 1,
+                            transition: "transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease",
+                          }}
+                          title={hasData ? `${cell.dateValue}: có dữ liệu` : `${cell.dateValue}: chưa có dữ liệu`}
+                        >
+                          {cell.dayNumber}
+                          {hasData ? (
+                            <span
+                              className="calendar-dot-anim"
+                              style={{
+                                position: "absolute",
+                                bottom: 5,
+                                width: 5,
+                                height: 5,
+                                borderRadius: "50%",
+                                background: selected ? C.primary : C.success,
+                                boxShadow: selected ? "none" : `0 0 6px ${C.success}AA`,
+                                transform: hovered ? "scale(1.25)" : "scale(1)",
+                                animation: "calendarDataDotPulse 2.2s ease-in-out infinite",
+                              }}
+                            />
+                          ) : null}
+                          {cell.isToday && !selected ? (
+                            <span
+                              style={{
+                                position: "absolute",
+                                inset: 2,
+                                borderRadius: 8,
+                                border: `1px dashed ${C.primary}66`,
+                                pointerEvents: "none",
+                              }}
+                            />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "2px 2px 0",
+                      minHeight: 18,
+                    }}
+                  >
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.6rem" }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, display: "inline-block" }} />
+                      Có dữ liệu
+                    </div>
+                    <div style={{ color: C.textMuted, fontSize: "0.6rem" }}>
+                      {calendarMonthLoading
+                        ? "Đang tải ngày dữ liệu..."
+                        : calendarAvailabilityError
+                          ? "Không tải được ngày dữ liệu"
+                          : ""}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div ref={timePresetMenuRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                disabled={!onRequestTelemetryHistory || controlsBusy}
+                onClick={() => {
+                  setTimePresetMenuOpen((open) => !open);
+                }}
+                style={{
+                  height: 32,
+                  borderRadius: 999,
+                  border: `1px solid ${C.border}`,
+                  padding: "0 10px",
+                  background: C.surface,
+                  color: C.textBase,
+                  fontSize: "0.66rem",
+                  fontWeight: 700,
+                  cursor: !onRequestTelemetryHistory || controlsBusy ? "not-allowed" : "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  minWidth: 120,
+                  justifyContent: "space-between",
+                  opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
+                }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Clock3 size={13} strokeWidth={2.1} />
+                  {activePresetLabel}
+                </span>
+                <ChevronDown
+                  size={13}
+                  strokeWidth={2.2}
+                  style={{
+                    transform: timePresetMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 0.14s ease",
+                  }}
+                />
+              </button>
+
+              {timePresetMenuOpen ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    minWidth: 170,
+                    borderRadius: 10,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    boxShadow: "0 14px 28px rgba(0, 0, 0, 0.28)",
+                    padding: 6,
+                    zIndex: 40,
+                  }}
+                >
+                  {TELEMETRY_HISTORY_PRESETS.map((preset) => {
+                    const active = activeHistoryPreset === preset.key;
+                    const loading = historyPresetLoading === preset.key;
+                    return (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        disabled={controlsBusy}
+                        onClick={() => {
+                          setTimePresetMenuOpen(false);
+                          void handleHistoryPresetSelect(preset.key);
+                        }}
+                        style={{
+                          width: "100%",
+                          height: 30,
+                          border: "none",
+                          borderRadius: 8,
+                          background: active ? C.primaryBg : "transparent",
+                          color: active ? C.primary : C.textBase,
+                          fontSize: "0.67rem",
+                          fontWeight: 700,
+                          cursor: controlsBusy ? "not-allowed" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "0 9px",
+                        }}
+                      >
+                        <span>{preset.label}</span>
+                        {loading ? (
+                          <span
+                            style={{
+                              width: 10,
+                              height: 10,
+                              borderRadius: "50%",
+                              border: `2px solid ${C.border}`,
+                              borderTopColor: C.primary,
+                              animation: "chartSpin 0.8s linear infinite",
+                            }}
+                          />
+                        ) : active ? (
+                          <span
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: "50%",
+                              background: C.primary,
+                            }}
+                          />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              disabled={trendAtLatest}
+              onClick={handleResetTrendViewToLatest}
+              style={{
+                height: 32,
+                borderRadius: 999,
+                border: `1px solid ${trendAtLatest ? C.border : C.primary}`,
+                padding: "0 12px",
+                background: trendAtLatest ? C.surface : C.primaryBg,
+                color: trendAtLatest ? C.textMuted : C.primary,
+                fontSize: "0.66rem",
+                fontWeight: 700,
+                cursor: trendAtLatest ? "default" : "pointer",
+                opacity: trendAtLatest ? 0.7 : 1,
+              }}
+            >
+              Mới nhất
+            </button>
+
             {/* X close button – prominent */}
             <button
               onClick={handleClose}
@@ -3507,9 +4921,50 @@ export function SensorChartModal({
         </div>
 
         {/* Scrollable content */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+        <div
+          data-ux="chart-modal-scroll"
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflowY: "auto",
+            padding: modalLayout.contentPadding,
+            overscrollBehavior: "contain",
+            scrollbarGutter: "stable",
+          }}
+        >
           <style>{`
             @keyframes chartSpin { to { transform: rotate(360deg); } }
+            @keyframes calendarPopoverIn {
+              from {
+                opacity: 0;
+                transform: translateY(-7px) scale(0.975);
+              }
+              to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+              }
+            }
+            @keyframes calendarMonthIn {
+              from {
+                opacity: 0;
+                transform: translateY(4px);
+              }
+              to {
+                opacity: 1;
+                transform: translateY(0);
+              }
+            }
+            @keyframes calendarDataDotPulse {
+              0%,
+              100% {
+                transform: scale(1);
+                opacity: 0.9;
+              }
+              50% {
+                transform: scale(1.2);
+                opacity: 1;
+              }
+            }
             @keyframes dataSettingsBackdropIn {
               from { opacity: 0; }
               to { opacity: 1; }
@@ -3596,15 +5051,10 @@ export function SensorChartModal({
               pointer-events: none;
               will-change: transform, opacity;
             }
-            .chart-pan-area, .chart-pan-area * {
-              cursor: grab !important;
-              user-select: none !important;
-              -webkit-user-select: none !important;
-            }
-            .chart-pan-area.panning, .chart-pan-area.panning * {
-              cursor: grabbing !important;
-            }
             @media (prefers-reduced-motion: reduce) {
+              .calendar-popover-anim,
+              .calendar-month-anim,
+              .calendar-dot-anim,
               .data-settings-modal-backdrop,
               .data-settings-modal-card,
               .data-clear-confirm-backdrop,
@@ -3614,463 +5064,215 @@ export function SensorChartModal({
             }
           `}</style>
 
+          {/* Top row: Temperature + Acceleration */}
           <div
             style={{
-              marginBottom: 12,
-              padding: "10px 12px 12px",
-              borderRadius: 10,
-              border: `1px solid ${C.border}`,
-              background: C.card,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+              display: "grid",
+              gridTemplateColumns: modalLayout.topGridColumns,
+              gap: modalLayout.topGridGap,
+              marginBottom: modalLayout.sectionGap,
             }}
           >
+            <ChartSection
+              title="Xu hướng nhiệt độ (°C)"
+              icon={<Thermometer size={13} strokeWidth={2} />}
+              C={C}
+              titleGap={modalLayout.chartTitleGap}
+              cardPadding={modalLayout.chartCardPadding}
+            >
+              {showInitialLoading ? (
+                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                  <div>Đang tải dữ liệu lịch sử...</div>
+                </div>
+              ) : (
+                <div onContextMenu={handleTelemetryChartUnpin}>
+                  <TelemetryTrendChart
+                    data={tempDisplayData}
+                    hoverPoints={tempDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
+                    series={[
+                      {
+                        key: "temp",
+                        name: "Nhiệt độ",
+                        color: C.primary,
+                        strokeWidth: 2,
+                        latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
+                      },
+                    ]}
+                    gapSegmentsBySeries={{ temp: tempGapRanges }}
+                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
+                    yDomain={tempDomain}
+                    pinnedTarget={spectrumPinnedTarget}
+                    gridColor={gridColor}
+                    axisLabelColor={chartTextStyle.fill}
+                    C={C}
+                    height={modalLayout.chartHeight}
+                    showLegend
+                    panActive={trendPanning}
+                    canPanOlder={trendCanPanOlder}
+                    canPanNewer={trendCanPanNewer}
+                    onHoverTarget={handleTelemetryChartHover}
+                    onPinTarget={handleTelemetryChartPin}
+                    onViewportZoom={handleTrendViewportZoom}
+                    onYAxisZoom={handleTempYAxisZoom}
+                    onViewportPanChange={handleTrendViewportPanChange}
+                    onViewportPanStateChange={handleTrendPanStateChange}
+                    onLeave={handleTelemetryChartLeave}
+                  />
+                </div>
+              )}
+            </ChartSection>
+
+            <ChartSection
+              title="Xu hướng gia tốc (m/s²)"
+              icon={<Activity size={13} strokeWidth={2} />}
+              C={C}
+              titleGap={modalLayout.chartTitleGap}
+              cardPadding={modalLayout.chartCardPadding}
+              headerAction={
+                <div
+                  role="group"
+                  aria-label="Chế độ giá trị gia tốc"
+                  style={{
+                    display: "inline-grid",
+                    gridTemplateColumns: "repeat(2, 70px)",
+                    height: 26,
+                    padding: 2,
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                  }}
+                >
+                  {(["instant", "rms"] as const).map((mode) => {
+                    const active = accelTrendMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setAccelTrendMode(mode)}
+                        aria-pressed={active}
+                        title={mode === "instant" ? "Giá trị tức thời" : "Giá trị RMS"}
+                        style={{
+                          border: "none",
+                          borderRadius: 999,
+                          background: active ? C.primaryBg : "transparent",
+                          color: active ? C.primary : C.textMuted,
+                          fontSize: "0.62rem",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          minWidth: 0,
+                          transition: "background 0.14s ease, color 0.14s ease",
+                        }}
+                      >
+                        {mode === "instant" ? "Tức thời" : "RMS"}
+                      </button>
+                    );
+                  })}
+                </div>
+              }
+            >
+              {showInitialLoading ? (
+                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                  <div>Đang tải dữ liệu lịch sử...</div>
+                </div>
+              ) : (
+                <div onContextMenu={handleTelemetryChartUnpin}>
+                  <TelemetryTrendChart
+                    data={accelDisplayData}
+                    hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
+                    series={[
+                      { key: "ax", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.ax} RMS` : VIBRATION_AXIS_LABELS.ax, color: "#f87171", strokeWidth: 1.8 },
+                      { key: "ay", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.ay} RMS` : VIBRATION_AXIS_LABELS.ay, color: "#60a5fa", strokeWidth: 1.8 },
+                      { key: "az", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.az} RMS` : VIBRATION_AXIS_LABELS.az, color: "#a78bfa", strokeWidth: 1.8 },
+                    ]}
+                    gapSegmentsBySeries={{
+                      ax: accelGapRanges,
+                      ay: accelGapRanges,
+                      az: accelGapRanges,
+                    }}
+                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
+                    yDomain={accelTrendYDomain}
+                    pinnedTarget={spectrumPinnedTarget}
+                    gridColor={gridColor}
+                    axisLabelColor={chartTextStyle.fill}
+                    C={C}
+                    height={modalLayout.chartHeight}
+                    showLegend
+                    panActive={trendPanning}
+                    canPanOlder={trendCanPanOlder}
+                    canPanNewer={trendCanPanNewer}
+                    onHoverTarget={handleTelemetryChartHover}
+                    onPinTarget={handleTelemetryChartPin}
+                    onViewportZoom={handleTrendViewportZoom}
+                    onYAxisZoom={accelTrendMode === "instant" ? handleAccelYAxisZoom : undefined}
+                    onViewportPanChange={handleTrendViewportPanChange}
+                    onViewportPanStateChange={handleTrendPanStateChange}
+                    onLeave={handleTelemetryChartLeave}
+                  />
+                </div>
+              )}
+            </ChartSection>
+          </div>
+
+          {!showInitialLoading ? (
+            <div style={{ marginBottom: modalLayout.sectionGap }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: modalLayout.chartTitleGap, flexWrap: "wrap" }}>
+                <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
+                <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Toàn cảnh dữ liệu đã tải</span>
+                <span style={{ color: C.textMuted, fontSize: "0.66rem" }}>
+                  {`${activePresetLabel} · kéo hoặc resize để đổi vùng đang xem`}
+                </span>
+              </div>
+              <div
+                style={{
+                  background: C.card,
+                  border: `1px solid ${C.cardBorder}`,
+                  borderRadius: 10,
+                  padding: modalLayout.overviewCardPadding,
+                }}
+              >
+                <TrendOverviewBrush
+                  rows={timelineTelemetryData}
+                  gapSegments={trendOverviewGapRanges}
+                  selectedStartTs={trendOverviewDisplayWindow.startMs}
+                  selectedEndTs={trendOverviewDisplayWindow.endMs}
+                  resetKey={trendOverviewResetKey}
+                  axisLabelColor={chartTextStyle.fill}
+                  C={C}
+                  height={modalLayout.overviewHeight}
+                  minWindowMs={trendMinViewWindowMs}
+                  onRangeCommit={(startTs, endTs) => {
+                    handleTrendViewportPanChange({ startMs: startTs, endMs: endTs });
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+
+	          {/* Bottom row: FFT axes in one row */}
+	          <div>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 10,
-                flexWrap: "wrap",
+                marginBottom: modalLayout.fftHeaderGap,
+                minHeight: 18,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span
-                  style={{
-                    color: C.textMuted,
-                    fontSize: "0.66rem",
-                    fontWeight: 700,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Khung thời gian
-                </span>
-                <div ref={timePresetMenuRef} style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    disabled={!onRequestTelemetryHistory || Boolean(historyPresetLoading)}
-                    onClick={() => {
-                      setTimePresetMenuOpen((open) => !open);
-                    }}
-                    style={{
-                      height: 30,
-                      borderRadius: 999,
-                      border: `1px solid ${C.border}`,
-                      padding: "0 10px",
-                      background: C.surface,
-                      color: C.textBase,
-                      fontSize: "0.66rem",
-                      fontWeight: 700,
-                      cursor: !onRequestTelemetryHistory || Boolean(historyPresetLoading) ? "not-allowed" : "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 7,
-                      minWidth: 120,
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <Clock3 size={14} strokeWidth={2.1} />
-                      {activePresetLabel}
-                    </span>
-                    <ChevronDown
-                      size={13}
-                      strokeWidth={2.2}
-                      style={{
-                        transform: timePresetMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                        transition: "transform 0.14s ease",
-                      }}
-                    />
-                  </button>
-
-                  {timePresetMenuOpen ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "calc(100% + 8px)",
-                        left: 0,
-                        minWidth: 170,
-                        borderRadius: 10,
-                        border: `1px solid ${C.border}`,
-                        background: C.surface,
-                        boxShadow: "0 14px 28px rgba(0, 0, 0, 0.28)",
-                        padding: 6,
-                        zIndex: 40,
-                      }}
-                    >
-                      {TELEMETRY_HISTORY_PRESETS.map((preset) => {
-                        const active = activeHistoryPreset === preset.key;
-                        const loading = historyPresetLoading === preset.key;
-                        return (
-                          <button
-                            key={preset.key}
-                            type="button"
-                            disabled={Boolean(historyPresetLoading)}
-                            onClick={() => {
-                              setTimePresetMenuOpen(false);
-                              void handleHistoryPresetSelect(preset.key);
-                            }}
-                            style={{
-                              width: "100%",
-                              height: 30,
-                              border: "none",
-                              borderRadius: 8,
-                              background: active ? C.primaryBg : "transparent",
-                              color: active ? C.primary : C.textBase,
-                              fontSize: "0.67rem",
-                              fontWeight: 700,
-                              cursor: Boolean(historyPresetLoading) ? "not-allowed" : "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              padding: "0 9px",
-                            }}
-                          >
-                            <span>{preset.label}</span>
-                            {loading ? (
-                              <span
-                                style={{
-                                  width: 10,
-                                  height: 10,
-                                  borderRadius: "50%",
-                                  border: `2px solid ${C.border}`,
-                                  borderTopColor: C.primary,
-                                  animation: "chartSpin 0.8s linear infinite",
-                                }}
-                              />
-                            ) : active ? (
-                              <span
-                                style={{
-                                  width: 7,
-                                  height: 7,
-                                  borderRadius: "50%",
-                                  background: C.primary,
-                                }}
-                              />
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  color: C.textMuted,
-                  fontSize: "0.66rem",
-                  fontWeight: 600,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                {historyPresetLoading || trendRenderReloading ? (
-                  <span
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: "50%",
-                      border: `2px solid ${C.border}`,
-                      borderTopColor: C.primary,
-                      animation: "chartSpin 0.8s linear infinite",
-                    }}
-                  />
-                ) : null}
-                <span>
-                  {historyPresetLoading
-                    ? "Đang tải thêm dữ liệu lịch sử..."
-                    : trendRenderReloading
-                      ? "Đang tải lại biểu đồ..."
-                      : `${brushWindow.visiblePoints.toLocaleString("vi-VN")} / ${timelinePointCount.toLocaleString("vi-VN")} điểm`}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+                <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
+                <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Phổ tần số FFT</span>
+                <span style={{ color: C.textMuted, fontSize: "0.68rem" }}>
+                  ({VIBRATION_AXIS_LABELS.ax} / {VIBRATION_AXIS_LABELS.ay} / {VIBRATION_AXIS_LABELS.az})
                 </span>
               </div>
-            </div>
-
-            <TimeWindowBrush
-              rows={timelineTelemetryData}
-              selectedStartTs={brushWindow.startTs}
-              selectedEndTs={brushWindow.endTs}
-              resetKey={timeBrushResetKey}
-              axisLabelColor={chartTextStyle.fill}
-              C={C}
-              onRangeCommit={(startTs, endTs) => {
-                applyBrushWindowByTimestamp(startTs, endTs);
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8,
-                flexWrap: "wrap",
-                color: C.textMuted,
-                fontSize: "0.66rem",
-                fontWeight: 600,
-              }}
-            >
-              <span>
-                Từ:{" "}
-                {typeof brushWindow.startTs === "number"
-                  ? formatAbsoluteAxisTime(brushWindow.startTs)
-                  : "--:-- --/--"}
-              </span>
-              <span>
-                Đến:{" "}
-                {typeof brushWindow.endTs === "number"
-                  ? formatAbsoluteAxisTime(brushWindow.endTs)
-                  : "--:-- --/--"}
-              </span>
-            </div>
-          </div>
-
-          {/* Top row: Temperature + Acceleration side by side */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 14 }}>
-
-            {/* 1. Temperature trend */}
-            <ChartSection title="Xu hướng nhiệt độ (°C)" icon={<Thermometer size={13} strokeWidth={2} />} C={C}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, paddingLeft: 4 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "4px 10px",
-                    borderRadius: 6,
-                    fontSize: "0.68rem",
-                    fontWeight: 600,
-                    background: C.primaryBg,
-                    color: C.primary,
-                    border: `1px solid ${C.primary + "30"}`,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: C.primary,
-                      boxShadow: `0 0 0 2px ${C.primary}22`,
-                    }}
-                  />
-                  Nhiệt độ
-                </div>
-              </div>
-              {showInitialLoading ? (
-                <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : tempData.length === 0 ? (
-                <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.72rem" }}>
-                  Không có dữ liệu nhiệt độ trong khung {activePresetLabel}.
-                </div>
-              ) : (
-                <div
-                  onMouseDown={handleTempWrapperMouseDown}
-                  onContextMenu={handleTelemetryChartUnpin}
-                  onWheel={handleTempWheel}
-                  className={`chart-pan-area${panningChart === "temp" ? " panning" : ""}`}
-                  style={{ touchAction: "none" }}
-                >
-                  <div style={{ position: "relative" }}>
-                    <TelemetryTrendChart
-                      data={tempDisplayData}
-                      hoverPoints={tempVisible.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                      series={[
-                        {
-                          key: "temp",
-                          name: "Nhiệt độ",
-                          color: C.primary,
-                          strokeWidth: 2,
-                          latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
-                        },
-                      ]}
-                      gapSegmentsBySeries={{
-                        temp: tempGapRanges.map((gap) => ({
-                          from: gap.from,
-                          to: gap.to,
-                        })),
-                      }}
-                      yDomain={tempDomain}
-                      gridColor={gridColor}
-                      axisLabelColor={chartTextStyle.fill}
-                      C={C}
-                      onHoverTarget={handleTelemetryChartHover}
-                      onPinTarget={handleTelemetryChartPin}
-                      onLeave={handleTelemetryChartLeave}
-                    />
-                  </div>
-                </div>
-              )}
-            </ChartSection>
-
-            {/* 2. Acceleration trend */}
-            <ChartSection
-              title="Xu hướng gia tốc (m/s²)"
-              icon={<Activity size={13} strokeWidth={2} />}
-              C={C}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  marginBottom: 8,
-                  paddingLeft: 4,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div style={{ color: C.textMuted, fontSize: "0.66rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                  Chế độ 2D
-                </div>
-
-                {latestAccel ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      flexWrap: "wrap",
-                      justifyContent: "flex-end",
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        border: "1px solid #f8717144",
-                        background: "#f8717112",
-                        color: "#f87171",
-                        fontWeight: 700,
-                        fontSize: "0.68rem",
-                      }}
-                    >
-                      Ax: {typeof latestAccel.ax === "number" ? latestAccel.ax.toFixed(2) : "--"}
-                    </div>
-                    <div
-                      style={{
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        border: "1px solid #60a5fa44",
-                        background: "#60a5fa12",
-                        color: "#60a5fa",
-                        fontWeight: 700,
-                        fontSize: "0.68rem",
-                      }}
-                    >
-                      Ay: {typeof latestAccel.ay === "number" ? latestAccel.ay.toFixed(2) : "--"}
-                    </div>
-                    <div
-                      style={{
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        border: "1px solid #a78bfa44",
-                        background: "#a78bfa12",
-                        color: "#a78bfa",
-                        fontWeight: 700,
-                        fontSize: "0.68rem",
-                      }}
-                    >
-                      Az: {typeof latestAccel.az === "number" ? latestAccel.az.toFixed(2) : "--"}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {showInitialLoading ? (
-                <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : accelData.length === 0 ? (
-                <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.72rem" }}>
-                  Không có dữ liệu gia tốc trong khung {activePresetLabel}.
-                </div>
-              ) : (
-                <div
-                  onMouseDown={handleAccelWrapperMouseDown}
-                  onContextMenu={handleTelemetryChartUnpin}
-                  onWheel={handleAccelWheel}
-                  className={`chart-pan-area${panningChart === "accel" ? " panning" : ""}`}
-                  style={{ touchAction: "none" }}
-                >
-                  <TelemetryTrendChart
-                    data={accelDisplayData}
-                    hoverPoints={accelVisible.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                    series={[
-                      { key: "ax", name: "Ax", color: "#f87171", strokeWidth: 1.8 },
-                      { key: "ay", name: "Ay", color: "#60a5fa", strokeWidth: 1.8 },
-                      { key: "az", name: "Az", color: "#a78bfa", strokeWidth: 1.8 },
-                    ]}
-                    gapSegmentsBySeries={{
-                      ax: accelGapRanges.map((gap) => ({
-                        from: gap.from,
-                        to: gap.to,
-                      })),
-                      ay: accelGapRanges.map((gap) => ({
-                        from: gap.from,
-                        to: gap.to,
-                      })),
-                      az: accelGapRanges.map((gap) => ({
-                        from: gap.from,
-                        to: gap.to,
-                      })),
-                    }}
-                    yDomain={[-accelAmplitudeLimit, accelAmplitudeLimit]}
-                    gridColor={gridColor}
-                    axisLabelColor={chartTextStyle.fill}
-                    C={C}
-                    showLegend
-                    onHoverTarget={handleTelemetryChartHover}
-                    onPinTarget={handleTelemetryChartPin}
-                    onLeave={handleTelemetryChartLeave}
-                  />
-                </div>
-              )}
-	            </ChartSection>
-	          </div>
-
-	          {/* Bottom row: FFT X / Y / Z in one row */}
-	          <div style={{ marginBottom: 4 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-              <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
-              <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Phổ tần số FFT</span>
-              <span style={{ color: C.textMuted, fontSize: "0.68rem" }}>(Ax / Ay / Az)</span>
-              <span
-                style={{
-                  color: hasAnySpectrum ? C.success : C.textMuted,
-                  fontSize: "0.62rem",
-                  fontWeight: 600,
-                  padding: "2px 7px",
-                  borderRadius: 999,
-                  border: `1px solid ${hasAnySpectrum ? `${C.success}44` : C.border}`,
-                  background: hasAnySpectrum ? `${C.success}14` : C.surface,
-                }}
-              >
-                {hoverSpectrumBusy
-                  ? hoverSpectrumDebouncing
-                    ? "Đang đồng bộ mốc..."
-                    : "Đang tải theo mốc..."
-                  : spectrumPinned
-                    ? "Đã ghim mốc (chuột phải để bỏ)"
-                  : hasAnySpectrum
-                    ? missingSpectrumAxes.length === 0
-                      ? showingHoveredSpectrum
-                        ? "Theo mốc hover"
-                        : "Realtime"
-                      : `Thiếu: ${missingSpectrumAxes.map((axis) => axis.toUpperCase()).join(", ")}`
-                    : "Chưa có dữ liệu"}
-              </span>
               {hoverTelemetrySnapshot ? (
                 <span
                   style={{
+                    maxWidth: "48%",
                     color: C.textMuted,
                     fontSize: "0.62rem",
                     fontWeight: 600,
@@ -4078,16 +5280,14 @@ export function SensorChartModal({
                     borderRadius: 999,
                     border: `1px solid ${C.border}`,
                     background: C.card,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    pointerEvents: "none",
+                    flexShrink: 1,
                   }}
                 >
-                  {`Mốc: ${formatTooltipDateTime(hoverTelemetrySnapshot.ts)} · Temp ${formatOptionalValue(
-                    hoverTelemetrySnapshot.temp,
-                    2,
-                    "°C",
-                  )} · Ax ${formatOptionalValue(hoverTelemetrySnapshot.ax, 2)} · Ay ${formatOptionalValue(
-                    hoverTelemetrySnapshot.ay,
-                    2,
-                  )} · Az ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`}
+                  {hoverTelemetrySummaryLabel || "Mốc: --"}
                 </span>
               ) : null}
             </div>
@@ -4096,30 +5296,44 @@ export function SensorChartModal({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr 1fr",
-                  gap: 10,
+                  gridTemplateColumns: modalLayout.spectrumGridColumns,
+                  gap: modalLayout.fftGridGap,
                 }}
               >
 
-                {/* FFT X */}
+                {/* FFT ngang */}
                 <div style={{
                   position: "relative",
                   background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: "10px 6px 6px",
+                  padding: modalLayout.fftCardPadding,
                 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, padding: "0 4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
                     <div style={{ color: "#f87171", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ Ax
+                      ■ {VIBRATION_AXIS_LABELS.ax}
                     </div>
-                    <div style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 600 }}>
-                      {formatPeakSummary(
-                        spectrumPeakByAxis.x.frequencyHz,
-                        spectrumPeakByAxis.x.amplitude,
-                        spectrumUnitByAxis.x,
-                      )}
+                    <div
+                      style={{
+                        color: C.textMuted,
+                        fontSize: "0.62rem",
+                        fontWeight: 600,
+                        minWidth: 0,
+                        maxWidth: "72%",
+                        textAlign: "right",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {hoverSpectrumBusy
+                        ? SPECTRUM_LOADING_LABEL
+                        : formatPeakSummary(
+                            spectrumPeakByAxis.x.frequencyHz,
+                            spectrumPeakByAxis.x.amplitude,
+                            spectrumUnitByAxis.x,
+                          )}
                     </div>
                   </div>
-                  {fftRenderX.length > 0 ? (
+                  <div style={{ position: "relative" }}>
                     <SpectrumZoomChart
                       data={fftRenderX}
                       color="#f87171"
@@ -4128,75 +5342,71 @@ export function SensorChartModal({
                       maxHz={spectrumMaxHzByAxis.x}
                       yMax={spectrumFixedYMax}
                       C={C}
+                      height={modalLayout.spectrumHeight}
                     />
-                  ) : hoverSpectrumBusy ? (
-                    <div style={{ height: 160 }} />
-                  ) : (
-                    <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.72rem" }}>
-                      Chưa có dữ liệu phổ Ax.
-                    </div>
-                  )}
-                  <div style={{ textAlign: "right", color: C.textMuted, fontSize: "0.58rem", paddingRight: 6, marginTop: -2 }}>Hz</div>
-                  {hoverSpectrumBusy ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        pointerEvents: "none",
-                      }}
-                    >
+                    {hoverSpectrumBusy ? (
                       <div
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "5px 9px",
-                          borderRadius: 999,
-                          border: `1px solid ${C.border}`,
-                          background: `${C.surface}EE`,
-                          color: C.textMuted,
-                          fontSize: "0.62rem",
-                          fontWeight: 700,
+                          position: "absolute",
+                          inset: 0,
+                          borderRadius: 8,
+                          overflow: "hidden",
+                          pointerEvents: "none",
                         }}
                       >
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            border: `2px solid ${C.border}`,
-                            borderTopColor: "#f87171",
-                            animation: "chartSpin 0.8s linear infinite",
-                          }}
-                        />
-                        {hoverSpectrumDebouncing ? "Chờ debounce..." : "Đang tải..."}
+                        <SpectrumLoadingState C={C} accentColor="#f87171" overlay />
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: "right",
+                      color: C.textMuted,
+                      fontSize: "0.58rem",
+                      paddingRight: 6,
+                      marginTop: -2,
+                      minHeight: modalLayout.fftAxisFooterHeight,
+                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
+                      visibility: hoverSpectrumBusy ? "hidden" : "visible",
+                    }}
+                  >
+                    Hz
+                  </div>
                 </div>
 
-                {/* FFT Y */}
+                {/* FFT đứng */}
                 <div style={{
                   position: "relative",
                   background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: "10px 6px 6px",
+                  padding: modalLayout.fftCardPadding,
                 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, padding: "0 4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
                     <div style={{ color: "#60a5fa", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ Ay
+                      ■ {VIBRATION_AXIS_LABELS.ay}
                     </div>
-                    <div style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 600 }}>
-                      {formatPeakSummary(
-                        spectrumPeakByAxis.y.frequencyHz,
-                        spectrumPeakByAxis.y.amplitude,
-                        spectrumUnitByAxis.y,
-                      )}
+                    <div
+                      style={{
+                        color: C.textMuted,
+                        fontSize: "0.62rem",
+                        fontWeight: 600,
+                        minWidth: 0,
+                        maxWidth: "72%",
+                        textAlign: "right",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {hoverSpectrumBusy
+                        ? SPECTRUM_LOADING_LABEL
+                        : formatPeakSummary(
+                            spectrumPeakByAxis.y.frequencyHz,
+                            spectrumPeakByAxis.y.amplitude,
+                            spectrumUnitByAxis.y,
+                          )}
                     </div>
                   </div>
-                  {fftRenderY.length > 0 ? (
+                  <div style={{ position: "relative" }}>
                     <SpectrumZoomChart
                       data={fftRenderY}
                       color="#60a5fa"
@@ -4205,75 +5415,71 @@ export function SensorChartModal({
                       maxHz={spectrumMaxHzByAxis.y}
                       yMax={spectrumFixedYMax}
                       C={C}
+                      height={modalLayout.spectrumHeight}
                     />
-                  ) : hoverSpectrumBusy ? (
-                    <div style={{ height: 160 }} />
-                  ) : (
-                    <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.72rem" }}>
-                      Chưa có dữ liệu phổ Ay.
-                    </div>
-                  )}
-                  <div style={{ textAlign: "right", color: C.textMuted, fontSize: "0.58rem", paddingRight: 6, marginTop: -2 }}>Hz</div>
-                  {hoverSpectrumBusy ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        pointerEvents: "none",
-                      }}
-                    >
+                    {hoverSpectrumBusy ? (
                       <div
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "5px 9px",
-                          borderRadius: 999,
-                          border: `1px solid ${C.border}`,
-                          background: `${C.surface}EE`,
-                          color: C.textMuted,
-                          fontSize: "0.62rem",
-                          fontWeight: 700,
+                          position: "absolute",
+                          inset: 0,
+                          borderRadius: 8,
+                          overflow: "hidden",
+                          pointerEvents: "none",
                         }}
                       >
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            border: `2px solid ${C.border}`,
-                            borderTopColor: "#60a5fa",
-                            animation: "chartSpin 0.8s linear infinite",
-                          }}
-                        />
-                        {hoverSpectrumDebouncing ? "Chờ debounce..." : "Đang tải..."}
+                        <SpectrumLoadingState C={C} accentColor="#60a5fa" overlay />
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: "right",
+                      color: C.textMuted,
+                      fontSize: "0.58rem",
+                      paddingRight: 6,
+                      marginTop: -2,
+                      minHeight: modalLayout.fftAxisFooterHeight,
+                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
+                      visibility: hoverSpectrumBusy ? "hidden" : "visible",
+                    }}
+                  >
+                    Hz
+                  </div>
                 </div>
 
-                {/* FFT Z */}
+                {/* FFT dọc trục */}
                 <div style={{
                   position: "relative",
                   background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: "10px 6px 6px",
+                  padding: modalLayout.fftCardPadding,
                 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, padding: "0 4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
                     <div style={{ color: "#a78bfa", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ Az
+                      ■ {VIBRATION_AXIS_LABELS.az}
                     </div>
-                    <div style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 600 }}>
-                      {formatPeakSummary(
-                        spectrumPeakByAxis.z.frequencyHz,
-                        spectrumPeakByAxis.z.amplitude,
-                        spectrumUnitByAxis.z,
-                      )}
+                    <div
+                      style={{
+                        color: C.textMuted,
+                        fontSize: "0.62rem",
+                        fontWeight: 600,
+                        minWidth: 0,
+                        maxWidth: "72%",
+                        textAlign: "right",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {hoverSpectrumBusy
+                        ? SPECTRUM_LOADING_LABEL
+                        : formatPeakSummary(
+                            spectrumPeakByAxis.z.frequencyHz,
+                            spectrumPeakByAxis.z.amplitude,
+                            spectrumUnitByAxis.z,
+                          )}
                     </div>
                   </div>
-                  {fftRenderZ.length > 0 ? (
+                  <div style={{ position: "relative" }}>
                     <SpectrumZoomChart
                       data={fftRenderZ}
                       color="#a78bfa"
@@ -4282,54 +5488,36 @@ export function SensorChartModal({
                       maxHz={spectrumMaxHzByAxis.z}
                       yMax={spectrumFixedYMax}
                       C={C}
+                      height={modalLayout.spectrumHeight}
                     />
-                  ) : hoverSpectrumBusy ? (
-                    <div style={{ height: 160 }} />
-                  ) : (
-                    <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.72rem" }}>
-                      Chưa có dữ liệu phổ Az.
-                    </div>
-                  )}
-                  <div style={{ textAlign: "right", color: C.textMuted, fontSize: "0.58rem", paddingRight: 6, marginTop: -2 }}>Hz</div>
-                  {hoverSpectrumBusy ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        pointerEvents: "none",
-                      }}
-                    >
+                    {hoverSpectrumBusy ? (
                       <div
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "5px 9px",
-                          borderRadius: 999,
-                          border: `1px solid ${C.border}`,
-                          background: `${C.surface}EE`,
-                          color: C.textMuted,
-                          fontSize: "0.62rem",
-                          fontWeight: 700,
+                          position: "absolute",
+                          inset: 0,
+                          borderRadius: 8,
+                          overflow: "hidden",
+                          pointerEvents: "none",
                         }}
                       >
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            border: `2px solid ${C.border}`,
-                            borderTopColor: "#a78bfa",
-                            animation: "chartSpin 0.8s linear infinite",
-                          }}
-                        />
-                        {hoverSpectrumDebouncing ? "Chờ debounce..." : "Đang tải..."}
+                        <SpectrumLoadingState C={C} accentColor="#a78bfa" overlay />
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: "right",
+                      color: C.textMuted,
+                      fontSize: "0.58rem",
+                      paddingRight: 6,
+                      marginTop: -2,
+                      minHeight: modalLayout.fftAxisFooterHeight,
+                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
+                      visibility: hoverSpectrumBusy ? "hidden" : "visible",
+                    }}
+                  >
+                    Hz
+                  </div>
                 </div>
 
               </div>
