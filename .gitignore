@@ -56,3 +56,6 @@ output/
 .mem0-local/
 .token-savior-local/
 scripts/token-savior-local.sh
+
+# Local development notes
+SOCKETIO-DEVICE-COMMANDS.md
