@@ -7,27 +7,43 @@
 
 ## Tổng quan
 
-SGP Vibration Datacenter là hệ thống giám sát rung động cho thiết bị trong datacenter. Project được tổ chức dạng monorepo `pnpm` với hai phần chính:
+SGP Vibration Datacenter là hệ thống giám sát rung động cho thiết bị thật trong datacenter. Hệ thống nhận dữ liệu realtime từ thiết bị qua Socket.IO, lưu telemetry vào MySQL nếu đã cấu hình database, phát dữ liệu realtime lên dashboard và cung cấp các API vận hành cho thiết bị, zone, cảnh báo, sự cố, rollout và OTA.
 
-- `server`: Fastify API server, Socket.IO realtime gateway, telemetry persistence, quản lý thiết bị, cảnh báo, sự cố, zone, rollout, OTA và metrics.
-- `web`: Dashboard React/Vite để quan sát telemetry, biểu đồ rung động, nhiệt độ, phổ tần số, trạng thái thiết bị và các workflow vận hành.
+Repository là monorepo `pnpm` gồm hai ứng dụng chính:
 
-Khi chạy, server cung cấp:
+| Thành phần | Công nghệ | Vai trò |
+| --- | --- | --- |
+| `server` | Fastify, Socket.IO, MySQL | API backend, realtime gateway, lưu telemetry, quản lý thiết bị/cảnh báo/sự cố/OTA/metrics. |
+| `web` | React, Vite | Dashboard quan sát thiết bị, telemetry, biểu đồ rung động, nhiệt độ, phổ tần số và các thao tác vận hành. |
 
-- API HTTP tại `/api/*`
-- Socket.IO tại `/socket.io`
-- health checks tại `/health`, `/health/live`, `/health/ready`
-- Prometheus metrics tại `/metrics`
-- dashboard production tại `/app/`
+Khi server chạy, các endpoint chính là:
 
-## Yêu cầu
+| Endpoint | Ý nghĩa |
+| --- | --- |
+| `/api/*` | API cho dashboard và workflow vận hành. |
+| `/socket.io` | Kênh realtime cho thiết bị thật và dashboard. |
+| `/health`, `/health/live`, `/health/ready` | Kiểm tra trạng thái server. |
+| `/metrics` | Prometheus metrics. |
+| `/app/` | Dashboard production sau khi build web. |
+| `/socket-info` | Thông tin nhanh về Socket.IO path và event đang hỗ trợ. |
+
+## Luồng dữ liệu với thiết bị thật
+
+1. Thiết bị kết nối Socket.IO đến server tại `http://<server-ip>:8080/socket.io` với `clientType=device` và `deviceId`.
+2. Server xác thực token nếu `DEVICE_AUTH_TOKEN` được cấu hình, sau đó trả event `device:ack`.
+3. Thiết bị gửi `device:metadata`, `device:heartbeat`, `device:telemetry` và các frame phổ `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`.
+4. Server chuẩn hóa dữ liệu, cập nhật trạng thái online/heartbeat, lưu telemetry/spectrum và kiểm tra rule cảnh báo.
+5. Dashboard kết nối với `clientType=dashboard` và nhận realtime qua các event `telemetry`, `telemetry:spectrum`, `device:heartbeat`, `device:metadata` và `alert`.
+6. Khi dashboard gửi lệnh vận hành, server phát `device:command` đến thiết bị đang online; thiết bị xác nhận lại bằng `device:command:ack`.
+
+## Yêu cầu hệ thống
 
 Cài các công cụ sau trước khi chạy project:
 
-- Node.js 20 hoặc mới hơn
-- pnpm 10.x, repository đang khai báo `pnpm@10.32.1`
-- MySQL 8.x hoặc database tương thích, khuyến nghị dùng để lưu dữ liệu bền vững
-- Git
+- Node.js 20 hoặc mới hơn.
+- pnpm 10.x. Repository đang khai báo `pnpm@10.32.1`.
+- MySQL 8.x hoặc database tương thích nếu cần lưu dữ liệu bền vững.
+- Git.
 
 Nếu chưa có pnpm, bật qua Corepack:
 
@@ -36,7 +52,7 @@ corepack enable
 corepack prepare pnpm@10.32.1 --activate
 ```
 
-## Cấu hình môi trường
+## Cấu hình server
 
 Tạo file môi trường cho server:
 
@@ -44,15 +60,7 @@ Tạo file môi trường cho server:
 cp server/.env.example server/.env
 ```
 
-Nếu chỉ cần chạy nhanh để phát triển giao diện hoặc kiểm thử local, có thể để trống các biến MySQL. Server sẽ bỏ qua bước khởi tạo schema và dùng fallback local/in-memory cho một số dữ liệu.
-
-Khuyến nghị tạo MySQL database khi cần dữ liệu bền vững:
-
-```bash
-mysql -uroot -e "CREATE DATABASE IF NOT EXISTS sgp_vibration_datacenter CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-Ví dụ `server/.env`:
+Ví dụ cấu hình tối thiểu trong `server/.env`:
 
 ```dotenv
 NODE_ENV=development
@@ -64,16 +72,29 @@ TELEMETRY_RETENTION_HOURS=168
 SPECTRUM_STORAGE_DIR=storage/spectrum
 ```
 
-Nếu thiết bị ESP hoặc máy khác trong LAN cần tải OTA, đặt URL mà thiết bị truy cập được:
+Giải thích các điểm quan trọng:
+
+- `HOST=0.0.0.0` giúp thiết bị trong cùng LAN truy cập được server qua IP máy chạy backend.
+- Thiết bị thật không dùng `localhost` để gọi server. Với firmware, `localhost` là chính thiết bị. Hãy dùng IP/domain của máy chạy server, ví dụ `http://192.168.1.10:8080`.
+- Nếu chưa cấu hình MySQL, server vẫn chạy được cho kiểm thử nhanh, nhưng dữ liệu bền vững nên dùng MySQL.
+- Nếu bật `DEVICE_AUTH_TOKEN`, firmware phải gửi đúng token khi handshake Socket.IO.
+
+Tạo database MySQL nếu cần lưu dữ liệu bền vững:
+
+```bash
+mysql -uroot -e "CREATE DATABASE IF NOT EXISTS sgp_vibration_datacenter CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+Nếu thiết bị cần tải OTA binary từ server, cấu hình URL mà thiết bị truy cập được:
 
 ```dotenv
 OTA_PUBLIC_BASE_URL=http://192.168.1.10:8080
 ```
 
-Nếu muốn xác thực thiết bị qua Socket.IO:
+Nếu cần xác thực thiết bị:
 
 ```dotenv
-DEVICE_AUTH_TOKEN=replace-with-a-local-dev-token
+DEVICE_AUTH_TOKEN=replace-with-a-real-device-token
 ```
 
 ## Cài dependencies
@@ -94,16 +115,13 @@ Chạy server và web cùng lúc:
 pnpm dev
 ```
 
-Các service mặc định:
+Service mặc định:
 
-- server: `http://localhost:8080`
-- Vite web dev server: `http://localhost:5173`
-
-Khi dev, mở dashboard tại:
-
-```text
-http://localhost:5173/app/
-```
+| Service | URL |
+| --- | --- |
+| Server | `http://localhost:8080` |
+| Vite web dev server | `http://localhost:5173` |
+| Dashboard dev | `http://localhost:5173/app/` |
 
 Vite sẽ proxy `/api`, `/health` và `/socket.io` về server port `8080`.
 
@@ -114,6 +132,175 @@ pnpm dev:server
 pnpm dev:web
 ```
 
+## Kết nối thiết bị thật
+
+Thiết bị kết nối Socket.IO đến URL server mà thiết bị truy cập được:
+
+```text
+http://<server-lan-ip>:8080
+```
+
+Handshake cần gửi các field sau qua `auth` hoặc query string:
+
+| Field | Bắt buộc | Ý nghĩa |
+| --- | --- | --- |
+| `clientType` | Có | Đặt là `device` cho thiết bị thật. |
+| `deviceId` | Có | ID duy nhất của thiết bị, ví dụ `esp-001`. |
+| `token` | Khi có `DEVICE_AUTH_TOKEN` | Token xác thực thiết bị. |
+
+Ví dụ bằng Socket.IO client:
+
+```ts
+import { io } from "socket.io-client";
+
+const socket = io("http://192.168.1.10:8080", {
+  transports: ["websocket"],
+  auth: {
+    clientType: "device",
+    deviceId: "esp-001",
+    token: "replace-with-a-real-device-token",
+  },
+});
+```
+
+Kết nối thành công sẽ nhận:
+
+```json
+{ "ok": true, "deviceId": "esp-001" }
+```
+
+qua event `device:ack`.
+
+Nếu lỗi, server có thể trả `device:error` với:
+
+- `missing_device_id`: thiếu `deviceId`.
+- `unauthorized`: token không khớp `DEVICE_AUTH_TOKEN`.
+
+## Event thiết bị gửi lên server
+
+### `device:metadata`
+
+Gửi khi thiết bị boot hoặc khi metadata thay đổi.
+
+```json
+{
+  "uuid": "esp32-uuid-001",
+  "name": "ESP Vibration 001",
+  "site": "SGP",
+  "zone": "Rack-A1",
+  "firmwareVersion": "1.0.0",
+  "sensorVersion": "adxl355-v1",
+  "notes": "Main rack sensor"
+}
+```
+
+Server cũng chấp nhận dạng envelope:
+
+```json
+{
+  "metadata": {
+    "firmware": "1.0.0",
+    "sensor_version": "adxl355-v1"
+  }
+}
+```
+
+### `device:heartbeat`
+
+Gửi định kỳ để dashboard biết thiết bị còn online.
+
+```json
+{
+  "socketConnected": true,
+  "staConnected": true,
+  "signal": -62,
+  "uptimeSec": 3600
+}
+```
+
+### `device:telemetry`
+
+Gửi mẫu telemetry chính. Các field phụ được giữ trong payload, còn MySQL hiện lưu các field lõi sau: `temperature`, `vibration`, `ax`, `ay`, `az`, `sample_count`, `telemetry_uuid`.
+
+```json
+{
+  "messageId": "esp-001-1713938400000",
+  "telemetry_uuid": "esp-001-1713938400000",
+  "temperature": 31.2,
+  "vibration": 0.23,
+  "ax": 0.01,
+  "ay": -0.02,
+  "az": 1.03,
+  "sample_count": 1024
+}
+```
+
+`telemetry_uuid` nên ổn định và duy nhất theo thiết bị cho mỗi sample để liên kết telemetry với frame phổ và tránh ghi trùng ở tầng lưu trữ. Nếu muốn server loại duplicate ngay ở tầng ingress, gửi thêm một trong các field `messageId`, `sequence` hoặc `seq`; các field này được kiểm tra theo `TELEMETRY_DEDUPE_WINDOW_MS`.
+
+### `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`
+
+Gửi phổ tần số theo từng trục. Có thể gửi mảng số trong JSON:
+
+```json
+{
+  "telemetry_uuid": "esp-001-1713938400000",
+  "sample_rate_hz": 3200,
+  "source_sample_count": 1024,
+  "bin_count": 512,
+  "bin_hz": 3.125,
+  "value_scale": 256,
+  "magnitude_unit": "m/s2",
+  "values": [12, 18, 20, 15]
+}
+```
+
+Hoặc gửi metadata làm payload thứ nhất và binary `Uint8Array`/buffer làm payload thứ hai. Binary được đọc theo dạng unsigned 16-bit little-endian. Nếu không truyền `value_scale`, server mặc định scale binary theo `256`.
+
+## Lệnh từ dashboard xuống thiết bị
+
+Khi dashboard/API gửi lệnh, thiết bị sẽ nhận event:
+
+```text
+device:command
+```
+
+Payload luôn có tối thiểu:
+
+```json
+{
+  "commandId": "cmd-123",
+  "command": "restart",
+  "type": "restart",
+  "deviceId": "esp-001"
+}
+```
+
+Sau khi xử lý, thiết bị cần gửi ack:
+
+```json
+{
+  "commandId": "cmd-123",
+  "status": "ok",
+  "detail": "restarted",
+  "deviceId": "esp-001",
+  "firmwareVersion": "1.0.1"
+}
+```
+
+qua event:
+
+```text
+device:command:ack
+```
+
+Nếu thiết bị vừa reconnect và muốn lấy lại lệnh gần nhất, gửi:
+
+```text
+device:request-last-command
+```
+
+Server sẽ phát lại `device:command` nếu lệnh gần nhất thuộc đúng `deviceId`.
+
 ## Kiểm tra cài đặt
 
 Kiểm tra server:
@@ -121,6 +308,7 @@ Kiểm tra server:
 ```bash
 curl http://localhost:8080/health
 curl http://localhost:8080/health/ready
+curl http://localhost:8080/socket-info
 ```
 
 Kiểm tra build và TypeScript:
@@ -135,28 +323,6 @@ Chạy test server:
 ```bash
 pnpm -C server test
 ```
-
-## Giả lập thiết bị
-
-Sau khi server đã chạy, khởi động thiết bị giả lập:
-
-```bash
-pnpm -C server simulate:devices -- --url http://localhost:8080 --count 5 --interval 1000
-```
-
-Nếu đã đặt `DEVICE_AUTH_TOKEN`, truyền cùng token:
-
-```bash
-pnpm -C server simulate:devices -- --url http://localhost:8080 --count 5 --token replace-with-a-local-dev-token
-```
-
-Một số option hữu ích:
-
-- `--count`: số lượng thiết bị giả lập
-- `--interval`: chu kỳ gửi telemetry, tính bằng milliseconds
-- `--heartbeat`: chu kỳ heartbeat, tính bằng milliseconds
-- `--duration`: tự dừng sau N giây
-- `--ramp-step`: mỗi thiết bị start lệch nhau N milliseconds
 
 ## Build production
 
@@ -178,7 +344,7 @@ Chạy server đã compile:
 pnpm -C server start:prod
 ```
 
-Sau đó mở:
+Sau đó mở dashboard production:
 
 ```text
 http://localhost:8080/app/
@@ -186,13 +352,13 @@ http://localhost:8080/app/
 
 Với môi trường gần production, nên cấu hình tối thiểu:
 
-- `NODE_ENV=production`
-- `PORT`
-- `HOST`
-- `MYSQL_URL` hoặc các biến `MYSQL_*`
-- `AUTH_*` tokens bằng secret riêng, không dùng giá trị mặc định
-- `DEVICE_AUTH_TOKEN` nếu thiết bị thật cần xác thực
-- `OTA_PUBLIC_BASE_URL` nếu dùng OTA dispatch
+- `NODE_ENV=production`.
+- `PORT`.
+- `HOST`.
+- `MYSQL_URL` hoặc các biến `MYSQL_*`.
+- `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` bằng secret riêng, không dùng giá trị mặc định.
+- `DEVICE_AUTH_TOKEN` nếu thiết bị thật cần xác thực.
+- `OTA_PUBLIC_BASE_URL` nếu dùng OTA dispatch.
 
 ## Biến môi trường quan trọng
 
@@ -203,14 +369,17 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 | `MYSQL_URL` | Connection string MySQL khuyến nghị. |
 | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Cấu hình MySQL dạng tách biến. |
 | `DB_AUTO_INIT` | Đặt `false` để tắt tự động khởi tạo schema. |
-| `DEVICE_AUTH_TOKEN` | Token tùy chọn cho device Socket.IO client. |
+| `DEVICE_AUTH_TOKEN` | Token xác thực device Socket.IO client. |
+| `COMMAND_TIMEOUT_MS` | Thời gian chờ ack cho lệnh gửi xuống thiết bị. |
 | `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` | Token role tĩnh cho API/dashboard; giá trị mặc định chỉ nên dùng local. |
-| `AUTH_BYPASS_GATING` | Mặc định `true`, điều khiển auth gating. |
+| `AUTH_BYPASS_GATING` | Điều khiển auth gating. |
 | `TELEMETRY_RETENTION_HOURS` | Thời gian giữ telemetry, mặc định `168` giờ. |
-| `TELEMETRY_DEDUPE_WINDOW_MS` | Khoảng thời gian dedupe khi nhận telemetry. |
-| `TELEMETRY_MAX_PER_DEVICE_PER_MINUTE` | Giới hạn telemetry mỗi phút cho từng device. |
+| `TELEMETRY_DEDUPE_WINDOW_MS` | Khoảng thời gian dedupe telemetry theo `messageId`, `sequence` hoặc `seq` của từng thiết bị. |
+| `TELEMETRY_MAX_PER_DEVICE_PER_MINUTE` | Giới hạn telemetry mỗi phút cho từng thiết bị. |
 | `TELEMETRY_MAX_GLOBAL_PER_MINUTE` | Giới hạn telemetry mỗi phút toàn hệ thống. |
 | `SPECTRUM_STORAGE_DIR` | Thư mục lưu spectrum, mặc định `storage/spectrum`. |
+| `SPECTRUM_FRAME_FLUSH_MS` | Chu kỳ flush frame phổ xuống storage. |
+| `SPECTRUM_MATCH_WINDOW_MS` | Cửa sổ thời gian dùng để ghép telemetry với spectrum khi thiếu `telemetry_uuid`. |
 | `OTA_PUBLIC_BASE_URL` | Base URL public/LAN để thiết bị tải OTA binary. |
 
 ## Lệnh thường dùng
@@ -225,14 +394,17 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 | `pnpm typecheck` | Kiểm tra TypeScript phía server. |
 | `pnpm -C server test` | Chạy test phía server. |
 | `pnpm -C server db:init` | Khởi tạo schema MySQL khi đã cấu hình MySQL. |
-| `pnpm -C server simulate:devices` | Chạy giả lập thiết bị Socket.IO. |
+| `pnpm -C server start:prod` | Chạy server từ output đã build. |
 | `pnpm perf:lighthouse` | Build và chạy kiểm tra Lighthouse. |
 
 ## Xử lý lỗi thường gặp
 
-- `db:init skipped`: chưa cấu hình MySQL. Điều này bình thường nếu chỉ dev nhanh local.
+- `db:init skipped`: chưa cấu hình MySQL. Điều này chấp nhận được khi chỉ chạy local nhanh, nhưng môi trường thật nên cấu hình MySQL.
+- Thiết bị không kết nối được: kiểm tra server đang bind `HOST=0.0.0.0`, firewall cho phép port `8080`, firmware dùng IP/domain thật thay vì `localhost`, và `deviceId` không rỗng.
+- Thiết bị bị `unauthorized`: token firmware gửi lên không khớp `DEVICE_AUTH_TOKEN`.
+- Thiết bị online nhưng dashboard không thấy telemetry: kiểm tra event đang gửi đúng là `device:telemetry`, payload có số hợp lệ, `/health` có connected device count, dashboard không bị filter sai thiết bị/zone.
+- Không thấy spectrum: kiểm tra event đúng trục `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`; payload có `values` hoặc binary attachment; `telemetry_uuid` nên khớp telemetry chính.
 - Không mở được dashboard tại `localhost:8080/app/` khi dev: hãy chạy `pnpm build` trước, hoặc dùng Vite tại `http://localhost:5173/app/`.
 - Vite không gọi được API: đảm bảo `pnpm dev:server` đang chạy ở port `8080`.
-- Simulator kết nối được nhưng không thấy telemetry: kiểm tra `DEVICE_AUTH_TOKEN`, filter trên dashboard và connected device count trong `/health`.
 - OTA download lỗi trên thiết bị thật: không dùng `localhost` trong `OTA_PUBLIC_BASE_URL`; hãy dùng IP máy tính hoặc domain mà thiết bị truy cập được.
 - MySQL connection lỗi: kiểm tra database đã tồn tại, credential đúng và MySQL cho phép TCP connection trên host/port đã cấu hình.

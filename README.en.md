@@ -7,27 +7,43 @@
 
 ## Overview
 
-SGP Vibration Datacenter is a vibration monitoring system for datacenter devices. The project is a `pnpm` monorepo with two main apps:
+SGP Vibration Datacenter is a vibration monitoring system for physical datacenter devices. It receives realtime data from devices over Socket.IO, persists telemetry to MySQL when a database is configured, streams realtime updates to the dashboard, and exposes operational APIs for devices, zones, alerts, incidents, rollouts, and OTA.
 
-- `server`: Fastify API server, Socket.IO realtime gateway, telemetry persistence, device management, alerts, incidents, zones, rollouts, OTA, and metrics.
-- `web`: React/Vite dashboard for telemetry, vibration charts, temperature, spectrum data, device state, and operational workflows.
+The repository is a `pnpm` monorepo with two main applications:
 
-At runtime, the server exposes:
+| Component | Stack | Role |
+| --- | --- | --- |
+| `server` | Fastify, Socket.IO, MySQL | Backend API, realtime gateway, telemetry persistence, device/alert/incident/OTA/metrics management. |
+| `web` | React, Vite | Dashboard for devices, telemetry, vibration charts, temperature, spectrum data, and operational workflows. |
 
-- HTTP APIs at `/api/*`
-- Socket.IO at `/socket.io`
-- health checks at `/health`, `/health/live`, `/health/ready`
-- Prometheus metrics at `/metrics`
-- production dashboard at `/app/`
+When the server is running, the main endpoints are:
+
+| Endpoint | Meaning |
+| --- | --- |
+| `/api/*` | API for the dashboard and operational workflows. |
+| `/socket.io` | Realtime channel for physical devices and dashboard clients. |
+| `/health`, `/health/live`, `/health/ready` | Server health checks. |
+| `/metrics` | Prometheus metrics. |
+| `/app/` | Production dashboard after the web app is built. |
+| `/socket-info` | Quick Socket.IO path and event reference. |
+
+## Physical Device Data Flow
+
+1. A device connects to Socket.IO at `http://<server-ip>:8080/socket.io` with `clientType=device` and `deviceId`.
+2. The server validates the token when `DEVICE_AUTH_TOKEN` is configured, then returns `device:ack`.
+3. The device emits `device:metadata`, `device:heartbeat`, `device:telemetry`, and spectrum frames through `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`.
+4. The server normalizes the data, updates online/heartbeat state, persists telemetry/spectrum, and evaluates alert rules.
+5. The dashboard connects with `clientType=dashboard` and receives realtime updates through `telemetry`, `telemetry:spectrum`, `device:heartbeat`, `device:metadata`, and `alert`.
+6. When the dashboard sends an operational command, the server emits `device:command` to the online device; the device confirms with `device:command:ack`.
 
 ## Prerequisites
 
 Install these tools before running the project:
 
-- Node.js 20 or newer
-- pnpm 10.x, this repository declares `pnpm@10.32.1`
-- MySQL 8.x or a compatible database, recommended for durable persistence
-- Git
+- Node.js 20 or newer.
+- pnpm 10.x. This repository declares `pnpm@10.32.1`.
+- MySQL 8.x or a compatible database when durable persistence is required.
+- Git.
 
 If pnpm is not installed, enable it through Corepack:
 
@@ -36,7 +52,7 @@ corepack enable
 corepack prepare pnpm@10.32.1 --activate
 ```
 
-## Environment Setup
+## Server Configuration
 
 Create the server environment file:
 
@@ -44,15 +60,7 @@ Create the server environment file:
 cp server/.env.example server/.env
 ```
 
-For quick local development, MySQL variables can be left empty. The server will skip schema initialization and use local/in-memory fallback behavior for some data.
-
-For durable persistence, create a MySQL database:
-
-```bash
-mysql -uroot -e "CREATE DATABASE IF NOT EXISTS sgp_vibration_datacenter CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-Example `server/.env`:
+Minimal `server/.env` example:
 
 ```dotenv
 NODE_ENV=development
@@ -64,16 +72,29 @@ TELEMETRY_RETENTION_HOURS=168
 SPECTRUM_STORAGE_DIR=storage/spectrum
 ```
 
-If ESP devices or other LAN machines need to download OTA binaries, set a reachable URL:
+Important details:
+
+- `HOST=0.0.0.0` lets devices on the same LAN reach the backend by the server machine IP.
+- Physical devices must not call `localhost` for the server. On firmware, `localhost` means the device itself. Use the server machine IP or domain, for example `http://192.168.1.10:8080`.
+- The server can run without MySQL for quick checks, but physical deployments should configure MySQL for durable data.
+- If `DEVICE_AUTH_TOKEN` is set, firmware must send the same token during the Socket.IO handshake.
+
+Create the MySQL database when durable persistence is needed:
+
+```bash
+mysql -uroot -e "CREATE DATABASE IF NOT EXISTS sgp_vibration_datacenter CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+If devices need to download OTA binaries from the server, set a reachable URL:
 
 ```dotenv
 OTA_PUBLIC_BASE_URL=http://192.168.1.10:8080
 ```
 
-If device Socket.IO authentication is required:
+If device authentication is required:
 
 ```dotenv
-DEVICE_AUTH_TOKEN=replace-with-a-local-dev-token
+DEVICE_AUTH_TOKEN=replace-with-a-real-device-token
 ```
 
 ## Install Dependencies
@@ -96,14 +117,11 @@ pnpm dev
 
 Default services:
 
-- server: `http://localhost:8080`
-- Vite web dev server: `http://localhost:5173`
-
-During development, open the dashboard at:
-
-```text
-http://localhost:5173/app/
-```
+| Service | URL |
+| --- | --- |
+| Server | `http://localhost:8080` |
+| Vite web dev server | `http://localhost:5173` |
+| Development dashboard | `http://localhost:5173/app/` |
 
 Vite proxies `/api`, `/health`, and `/socket.io` to the server on port `8080`.
 
@@ -114,6 +132,175 @@ pnpm dev:server
 pnpm dev:web
 ```
 
+## Connect Physical Devices
+
+Devices connect to the Socket.IO server URL that is reachable from the device:
+
+```text
+http://<server-lan-ip>:8080
+```
+
+The handshake must send these fields through `auth` or the query string:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `clientType` | Yes | Must be `device` for physical devices. |
+| `deviceId` | Yes | Unique device ID, for example `esp-001`. |
+| `token` | When `DEVICE_AUTH_TOKEN` is set | Device authentication token. |
+
+Socket.IO client example:
+
+```ts
+import { io } from "socket.io-client";
+
+const socket = io("http://192.168.1.10:8080", {
+  transports: ["websocket"],
+  auth: {
+    clientType: "device",
+    deviceId: "esp-001",
+    token: "replace-with-a-real-device-token",
+  },
+});
+```
+
+A successful connection receives:
+
+```json
+{ "ok": true, "deviceId": "esp-001" }
+```
+
+on the `device:ack` event.
+
+On failure, the server can return `device:error` with:
+
+- `missing_device_id`: `deviceId` is missing.
+- `unauthorized`: the token does not match `DEVICE_AUTH_TOKEN`.
+
+## Device Events Sent to the Server
+
+### `device:metadata`
+
+Send this when the device boots or when metadata changes.
+
+```json
+{
+  "uuid": "esp32-uuid-001",
+  "name": "ESP Vibration 001",
+  "site": "SGP",
+  "zone": "Rack-A1",
+  "firmwareVersion": "1.0.0",
+  "sensorVersion": "adxl355-v1",
+  "notes": "Main rack sensor"
+}
+```
+
+The server also accepts an envelope:
+
+```json
+{
+  "metadata": {
+    "firmware": "1.0.0",
+    "sensor_version": "adxl355-v1"
+  }
+}
+```
+
+### `device:heartbeat`
+
+Send periodically so the dashboard can show the device as online.
+
+```json
+{
+  "socketConnected": true,
+  "staConnected": true,
+  "signal": -62,
+  "uptimeSec": 3600
+}
+```
+
+### `device:telemetry`
+
+Send the main telemetry sample. Extra fields are kept in the payload, while MySQL currently persists these core fields: `temperature`, `vibration`, `ax`, `ay`, `az`, `sample_count`, `telemetry_uuid`.
+
+```json
+{
+  "messageId": "esp-001-1713938400000",
+  "telemetry_uuid": "esp-001-1713938400000",
+  "temperature": 31.2,
+  "vibration": 0.23,
+  "ax": 0.01,
+  "ay": -0.02,
+  "az": 1.03,
+  "sample_count": 1024
+}
+```
+
+`telemetry_uuid` should be stable and unique per device sample so telemetry can be linked with spectrum frames and duplicate storage writes can be avoided. If the device needs ingress-level dedupe, also send one of `messageId`, `sequence`, or `seq`; those fields are checked within `TELEMETRY_DEDUPE_WINDOW_MS`.
+
+### `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`
+
+Send spectrum data per axis. A numeric JSON array is accepted:
+
+```json
+{
+  "telemetry_uuid": "esp-001-1713938400000",
+  "sample_rate_hz": 3200,
+  "source_sample_count": 1024,
+  "bin_count": 512,
+  "bin_hz": 3.125,
+  "value_scale": 256,
+  "magnitude_unit": "m/s2",
+  "values": [12, 18, 20, 15]
+}
+```
+
+The device may also send metadata as the first payload and a binary `Uint8Array`/buffer as the second payload. Binary data is decoded as unsigned 16-bit little-endian values. If `value_scale` is omitted, the server scales binary values by `256`.
+
+## Commands from Dashboard to Device
+
+When the dashboard/API sends a command, the device receives:
+
+```text
+device:command
+```
+
+The payload always includes at least:
+
+```json
+{
+  "commandId": "cmd-123",
+  "command": "restart",
+  "type": "restart",
+  "deviceId": "esp-001"
+}
+```
+
+After handling the command, the device should acknowledge it:
+
+```json
+{
+  "commandId": "cmd-123",
+  "status": "ok",
+  "detail": "restarted",
+  "deviceId": "esp-001",
+  "firmwareVersion": "1.0.1"
+}
+```
+
+through:
+
+```text
+device:command:ack
+```
+
+If a device has just reconnected and wants the most recent command, emit:
+
+```text
+device:request-last-command
+```
+
+The server re-emits `device:command` when the most recent command belongs to the same `deviceId`.
+
 ## Verify Installation
 
 Check the server:
@@ -121,6 +308,7 @@ Check the server:
 ```bash
 curl http://localhost:8080/health
 curl http://localhost:8080/health/ready
+curl http://localhost:8080/socket-info
 ```
 
 Check build and TypeScript:
@@ -135,28 +323,6 @@ Run server tests:
 ```bash
 pnpm -C server test
 ```
-
-## Simulate Devices
-
-After the server is running, start simulated devices:
-
-```bash
-pnpm -C server simulate:devices -- --url http://localhost:8080 --count 5 --interval 1000
-```
-
-If `DEVICE_AUTH_TOKEN` is set, pass the same token:
-
-```bash
-pnpm -C server simulate:devices -- --url http://localhost:8080 --count 5 --token replace-with-a-local-dev-token
-```
-
-Useful options:
-
-- `--count`: number of simulated devices
-- `--interval`: telemetry interval in milliseconds
-- `--heartbeat`: heartbeat interval in milliseconds
-- `--duration`: auto-stop after N seconds
-- `--ramp-step`: stagger device startup by N milliseconds
 
 ## Production Build
 
@@ -178,7 +344,7 @@ Run the compiled server:
 pnpm -C server start:prod
 ```
 
-Then open:
+Then open the production dashboard:
 
 ```text
 http://localhost:8080/app/
@@ -186,13 +352,13 @@ http://localhost:8080/app/
 
 For production-like environments, configure at least:
 
-- `NODE_ENV=production`
-- `PORT`
-- `HOST`
-- `MYSQL_URL` or individual `MYSQL_*` variables
-- `AUTH_*` tokens with non-default secrets
-- `DEVICE_AUTH_TOKEN` if physical devices must authenticate
-- `OTA_PUBLIC_BASE_URL` if OTA dispatch is used
+- `NODE_ENV=production`.
+- `PORT`.
+- `HOST`.
+- `MYSQL_URL` or individual `MYSQL_*` variables.
+- `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` with non-default secrets.
+- `DEVICE_AUTH_TOKEN` if physical devices must authenticate.
+- `OTA_PUBLIC_BASE_URL` if OTA dispatch is used.
 
 ## Important Environment Variables
 
@@ -203,14 +369,17 @@ For production-like environments, configure at least:
 | `MYSQL_URL` | Recommended MySQL connection string. |
 | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Alternative split MySQL config. |
 | `DB_AUTO_INIT` | Set `false` to disable automatic schema initialization. |
-| `DEVICE_AUTH_TOKEN` | Optional token for device Socket.IO clients. |
+| `DEVICE_AUTH_TOKEN` | Token for device Socket.IO clients. |
+| `COMMAND_TIMEOUT_MS` | Timeout while waiting for device command acknowledgements. |
 | `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` | Static role tokens for API/dashboard; defaults are for local use only. |
-| `AUTH_BYPASS_GATING` | Defaults to `true`, controls auth gating. |
+| `AUTH_BYPASS_GATING` | Controls auth gating. |
 | `TELEMETRY_RETENTION_HOURS` | Telemetry retention window, default `168` hours. |
-| `TELEMETRY_DEDUPE_WINDOW_MS` | Dedupe window for telemetry ingress. |
+| `TELEMETRY_DEDUPE_WINDOW_MS` | Telemetry dedupe window for each device's `messageId`, `sequence`, or `seq`. |
 | `TELEMETRY_MAX_PER_DEVICE_PER_MINUTE` | Per-device telemetry rate limit. |
 | `TELEMETRY_MAX_GLOBAL_PER_MINUTE` | Global telemetry rate limit. |
 | `SPECTRUM_STORAGE_DIR` | Spectrum storage directory, default `storage/spectrum`. |
+| `SPECTRUM_FRAME_FLUSH_MS` | Spectrum frame storage flush interval. |
+| `SPECTRUM_MATCH_WINDOW_MS` | Time window used to match telemetry with spectrum when `telemetry_uuid` is missing. |
 | `OTA_PUBLIC_BASE_URL` | Public/LAN base URL for OTA binary downloads. |
 
 ## Common Commands
@@ -225,14 +394,17 @@ For production-like environments, configure at least:
 | `pnpm typecheck` | Type-check the server. |
 | `pnpm -C server test` | Run server tests. |
 | `pnpm -C server db:init` | Initialize MySQL schema when MySQL is configured. |
-| `pnpm -C server simulate:devices` | Start Socket.IO device simulator. |
+| `pnpm -C server start:prod` | Run the server from compiled output. |
 | `pnpm perf:lighthouse` | Build and run Lighthouse checks. |
 
 ## Troubleshooting
 
-- `db:init skipped`: MySQL is not configured. This is acceptable for quick local development.
+- `db:init skipped`: MySQL is not configured. This is acceptable for quick local checks, but physical deployments should configure MySQL.
+- Device cannot connect: verify the server is bound to `HOST=0.0.0.0`, firewall allows port `8080`, firmware uses a real IP/domain instead of `localhost`, and `deviceId` is not empty.
+- Device receives `unauthorized`: the firmware token does not match `DEVICE_AUTH_TOKEN`.
+- Device is online but telemetry is not visible: verify the device emits `device:telemetry`, payload fields are valid numbers, `/health` shows connected devices, and dashboard filters are not hiding the device/zone.
+- Spectrum is not visible: verify the axis event is `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, or `device:telemetry:zspectrum`; payload contains `values` or a binary attachment; `telemetry_uuid` should match the main telemetry sample.
 - Cannot open the dashboard at `localhost:8080/app/` during dev: run `pnpm build` first, or use Vite at `http://localhost:5173/app/`.
 - Vite cannot reach the API: make sure `pnpm dev:server` is running on port `8080`.
-- Device simulator connects but no telemetry appears: check `DEVICE_AUTH_TOKEN`, dashboard filters, and `/health` connected device count.
 - OTA download fails on physical devices: do not use `localhost` in `OTA_PUBLIC_BASE_URL`; use the machine IP or a domain reachable by the device.
 - MySQL connection fails: verify that the database exists, credentials are correct, and MySQL accepts TCP connections on the configured host/port.
