@@ -56,7 +56,7 @@ type SpectrumStorageOptions = {
   lookupMaxDeltaMs?: number;
 };
 
-export type SpectrumFrameLookupResult = {
+type SpectrumFrameLookupResult = {
   deviceId: string;
   capturedAt: string;
   telemetryUuid?: string;
@@ -66,13 +66,13 @@ export type SpectrumFrameLookupResult = {
   points: TelemetrySpectrumMessage[];
 };
 
-export type SpectrumFramePurgeResult = {
+type SpectrumFramePurgeResult = {
   framesDeleted: number;
   filesDeleted: number;
   fileDeleteErrors: number;
 };
 
-export type SpectrumFrameSummary = {
+type SpectrumFrameSummary = {
   totalFrames: number;
   latestCapturedAt?: string;
   totalBytes: number;

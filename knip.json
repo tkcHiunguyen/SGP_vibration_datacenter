@@ -1,0 +1,42 @@
+{
+  "workspaces": {
+    ".": {
+      "entry": [
+        "package.json",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "scripts/**/*.mjs"
+      ],
+      "ignoreDependencies": [
+        "dependency-cruiser",
+        "madge"
+      ],
+      "ignoreBinaries": [
+        "python3"
+      ]
+    },
+    "server": {
+      "entry": [
+        "package.json"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "server/client": {
+      "entry": [
+        "package.json",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs"
+      ],
+      "ignoreDependencies": [
+        "tailwindcss",
+        "tw-animate-css"
+      ]
+    }
+  }
+}

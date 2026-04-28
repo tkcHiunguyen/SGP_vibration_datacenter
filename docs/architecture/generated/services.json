@@ -1,0 +1,42 @@
+[
+  {
+    "name": "AlertService",
+    "file": "server/src/modules/alert/alert.service.ts",
+    "module": "server/src/modules/alert"
+  },
+  {
+    "name": "AuditService",
+    "file": "server/src/modules/audit/audit.service.ts",
+    "module": "server/src/modules/audit"
+  },
+  {
+    "name": "AuthService",
+    "file": "server/src/modules/auth/auth.service.ts",
+    "module": "server/src/modules/auth"
+  },
+  {
+    "name": "CommandService",
+    "file": "server/src/modules/command/command.service.ts",
+    "module": "server/src/modules/command"
+  },
+  {
+    "name": "DeviceService",
+    "file": "server/src/modules/device/device.service.ts",
+    "module": "server/src/modules/device"
+  },
+  {
+    "name": "SpectrumStorageService",
+    "file": "server/src/modules/spectrum/spectrum-storage.service.ts",
+    "module": "server/src/modules/spectrum"
+  },
+  {
+    "name": "TelemetryService",
+    "file": "server/src/modules/telemetry/telemetry.service.ts",
+    "module": "server/src/modules/telemetry"
+  },
+  {
+    "name": "ZoneService",
+    "file": "server/src/modules/zone/zone.service.ts",
+    "module": "server/src/modules/zone"
+  }
+]

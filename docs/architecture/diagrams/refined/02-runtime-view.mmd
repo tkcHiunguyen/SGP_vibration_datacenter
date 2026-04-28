@@ -1,0 +1,38 @@
+sequenceDiagram
+  autonumber
+  participant UI as React Dashboard
+  participant API as Fastify REST routes
+  participant RT as Socket.IO gateway/handlers
+  participant Guard as TelemetryIngressGuard
+  participant Dev as DeviceService
+  participant Tel as TelemetryService
+  participant Spec as SpectrumStorageService
+  participant Cmd as CommandService
+  participant DB as MySQL + in-memory repos
+  participant Edge as Sensor Device
+
+  UI->>API: Fetch zones, devices, history, OTA screens
+  API->>DB: Query/update domain state
+  DB-->>API: Records and summaries
+  API-->>UI: JSON response
+
+  Edge->>RT: device:heartbeat / device:metadata
+  RT->>Dev: upsert device state
+  RT-->>UI: device:heartbeat / device:metadata
+
+  Edge->>RT: device:telemetry
+  RT->>Guard: validate/rate-limit ingress
+  Guard-->>RT: accepted sample
+  RT->>Tel: persist sample + enrich device context
+  Tel->>DB: write telemetry
+  Tel-->>RT: latest telemetry view
+  RT-->>UI: telemetry
+
+  UI->>API: Create command / OTA action
+  API->>Cmd: plan or enqueue command
+  Cmd->>DB: save command state
+  Cmd->>RT: send device:command
+  RT-->>Edge: device:command
+  Edge-->>RT: device:command:ack
+  RT->>Cmd: update command status
+  RT-->>UI: device:ack / device:command

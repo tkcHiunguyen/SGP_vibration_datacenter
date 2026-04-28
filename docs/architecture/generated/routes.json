@@ -1,0 +1,240 @@
+[
+  {
+    "method": "GET",
+    "path": "/health",
+    "file": "server/src/modules/http/core.routes.ts",
+    "line": 91,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/me",
+    "file": "server/src/modules/http/core.routes.ts",
+    "line": 102,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/socket-info",
+    "file": "server/src/modules/http/core.routes.ts",
+    "line": 121,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/last-telemetry",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 481,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/zones",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 491,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/zones/:zoneId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 519,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/zones",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 534,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/zones/:zoneId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 562,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/zones/:zoneId/impact",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 599,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/zones/:zoneId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 622,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 688,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 699,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId/history",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 724,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId/telemetry",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 753,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId/telemetry-availability",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 774,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId/spectrum-frame",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 798,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/devices/:deviceId/data-summary",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 827,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/devices/:deviceId/data",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 868,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/devices",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 921,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/devices/:deviceId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 946,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/devices/:deviceId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 978,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/commands/recent",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1022,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/commands/lookup",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1032,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ota/upload-bin",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1044,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/ota/dispatch",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1120,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/alerts",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1222,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/alerts/summary",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1233,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/alerts/:alertId/ack",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1244,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/alerts/:alertId/resolve",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1302,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/alert-rules",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1366,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/alert-rules",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1376,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/alert-rules/:ruleId",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1401,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "GET",
+    "path": "/api/audit-logs",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1433,
+    "module": "server/src/modules/http"
+  },
+  {
+    "method": "POST",
+    "path": "/api/devices/:deviceId/commands",
+    "file": "server/src/modules/http/register-routes.ts",
+    "line": 1452,
+    "module": "server/src/modules/http"
+  }
+]

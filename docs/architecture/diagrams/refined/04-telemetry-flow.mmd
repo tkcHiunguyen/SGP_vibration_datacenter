@@ -1,0 +1,28 @@
+flowchart LR
+  classDef source fill:#eef6ff,stroke:#2563eb,color:#082f49
+  classDef process fill:#ecfdf5,stroke:#059669,color:#052e16
+  classDef store fill:#fff7ed,stroke:#c2410c,color:#431407
+  classDef ui fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
+
+  Device["Sensor device"]:::source
+  Socket["socket.handlers.ts<br/>device:telemetry"]:::process
+  Guard["TelemetryIngressGuard<br/>filter invalid/noisy ingress"]:::process
+  DeviceSvc["DeviceService<br/>resolve registered device"]:::process
+  TelemetrySvc["TelemetryService<br/>normalize + persist sample"]:::process
+  Repo["Telemetry repository<br/>MySQL preferred, in-memory candidate"]:::store
+  AlertSvc["AlertService<br/>evaluate alert conditions"]:::process
+  Gateway["SocketIoGateway<br/>dashboard room"]:::process
+  UI["React dashboard<br/>live telemetry charts"]:::ui
+  API["REST history endpoints<br/>/api/devices/*"]:::process
+
+  Device -->|device:telemetry| Socket
+  Socket --> Guard
+  Guard --> DeviceSvc
+  Guard --> TelemetrySvc
+  TelemetrySvc --> Repo
+  TelemetrySvc --> AlertSvc
+  TelemetrySvc --> Gateway
+  AlertSvc -->|alert| Gateway
+  Gateway -->|telemetry| UI
+  Gateway -->|alert| UI
+  UI -->|history fetch| API --> TelemetrySvc

@@ -1,0 +1,22 @@
+flowchart LR
+  classDef actor fill:#eef6ff,stroke:#2f6f9f,color:#102a43
+  classDef app fill:#f7f0ff,stroke:#7c3aed,color:#27134d
+  classDef backend fill:#eefdf3,stroke:#15803d,color:#10351f
+  classDef store fill:#fff7ed,stroke:#c2410c,color:#3b1d0b
+
+  Device["Sensor / edge devices<br/>heartbeat, metadata, telemetry, spectra"]:::actor
+  Browser["Operations dashboard<br/>React app + Socket.IO client"]:::app
+  Server["Datacenter backend<br/>Fastify REST + Socket.IO"]:::backend
+  Static["Built web assets<br/>server/public/app"]:::app
+  MySQL[("MySQL runtime data<br/>telemetry, spectrum, zones")]:::store
+  Memory[("In-memory domain stores<br/>alerts, commands")]:::store
+  Ops["Ops / monitoring<br/>basic health"]:::actor
+
+  Browser -->|REST API<br/>13 frontend calls| Server
+  Browser <-->|Socket.IO<br/>telemetry + spectrum live updates| Server
+  Static -->|served by| Server
+  Device -->|Socket.IO ingest<br/>25 generated socket events| Server
+  Server -->|commands / OTA dispatch| Device
+  Server --> MySQL
+  Server --> Memory
+  Ops -->|/health| Server

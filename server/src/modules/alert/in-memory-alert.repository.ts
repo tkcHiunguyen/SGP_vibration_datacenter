@@ -234,6 +234,26 @@ export class InMemoryAlertRepository implements AlertRepository {
     this.persistAlert(record);
   }
 
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    const deletedAlertIds = this.alertOrder.filter((alertId) => this.alerts.get(alertId)?.deviceId === deviceId);
+    const persistedDeleted = this.mysql
+      ? await this.mysql.execute('DELETE FROM alerts WHERE device_id = ?', [deviceId])
+      : 0;
+
+    for (const alertId of deletedAlertIds) {
+      const alert = this.alerts.get(alertId);
+      if (alert) {
+        this.activeByRuleAndDevice.delete(this.createActiveKey(alert.ruleId, alert.deviceId));
+      }
+      this.alerts.delete(alertId);
+    }
+
+    const remainingAlertIds = this.alertOrder.filter((alertId) => !deletedAlertIds.includes(alertId));
+    this.alertOrder.splice(0, this.alertOrder.length, ...remainingAlertIds);
+
+    return Math.max(deletedAlertIds.length, persistedDeleted);
+  }
+
   countActiveAlerts(): number {
     return this.activeByRuleAndDevice.size;
   }

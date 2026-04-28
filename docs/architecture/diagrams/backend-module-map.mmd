@@ -1,0 +1,50 @@
+flowchart TD
+  Entry[server/src/index.ts]
+  server_src_modules_alert[alert]
+  server_src_modules_audit[audit]
+  server_src_modules_auth[auth]
+  server_src_modules_command[command]
+  server_src_modules_device[device]
+  server_src_modules_http[http]
+  server_src_modules_persistence[persistence]
+  server_src_modules_realtime[realtime]
+  server_src_modules_reliability[reliability]
+  server_src_modules_spectrum[spectrum]
+  server_src_modules_telemetry[telemetry]
+  server_src_modules_zone[zone]
+  Entry --> server_src_modules_alert
+  Entry --> server_src_modules_audit
+  Entry --> server_src_modules_auth
+  Entry --> server_src_modules_command
+  Entry --> server_src_modules_device
+  Entry --> server_src_modules_http
+  Entry --> server_src_modules_persistence
+  Entry --> server_src_modules_realtime
+  Entry --> server_src_modules_reliability
+  Entry --> server_src_modules_spectrum
+  Entry --> server_src_modules_telemetry
+  Entry --> server_src_modules_zone
+  server_src_modules_alert --> server_src_modules_persistence
+  server_src_modules_audit --> server_src_modules_persistence
+  server_src_modules_command --> server_src_modules_device
+  server_src_modules_command --> server_src_modules_persistence
+  server_src_modules_device --> server_src_modules_persistence
+  server_src_modules_http --> server_src_modules_alert
+  server_src_modules_http --> server_src_modules_audit
+  server_src_modules_http --> server_src_modules_auth
+  server_src_modules_http --> server_src_modules_command
+  server_src_modules_http --> server_src_modules_device
+  server_src_modules_http --> server_src_modules_realtime
+  server_src_modules_http --> server_src_modules_spectrum
+  server_src_modules_http --> server_src_modules_telemetry
+  server_src_modules_http --> server_src_modules_zone
+  server_src_modules_realtime --> server_src_modules_alert
+  server_src_modules_realtime --> server_src_modules_command
+  server_src_modules_realtime --> server_src_modules_device
+  server_src_modules_realtime --> server_src_modules_reliability
+  server_src_modules_realtime --> server_src_modules_spectrum
+  server_src_modules_realtime --> server_src_modules_telemetry
+  server_src_modules_spectrum --> server_src_modules_persistence
+  server_src_modules_telemetry --> server_src_modules_device
+  server_src_modules_telemetry --> server_src_modules_persistence
+  server_src_modules_zone --> server_src_modules_persistence

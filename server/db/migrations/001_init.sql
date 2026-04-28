@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS device_metadata (
   site TEXT,
   zone TEXT,
   firmware_version TEXT,
-  sensor_version TEXT,
   notes TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL

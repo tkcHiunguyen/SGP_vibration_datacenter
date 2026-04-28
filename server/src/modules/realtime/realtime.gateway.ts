@@ -20,6 +20,7 @@ export interface RealtimeGateway {
   }): void;
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void;
   sendCommand(deviceId: string, command: DeviceCommand): void;
+  disconnectDevice(deviceId: string): void;
   onConnection(handler: (socket: Socket) => void): void;
   joinDashboardRoom(socket: Socket): void;
   connectedClientsCount(): number;

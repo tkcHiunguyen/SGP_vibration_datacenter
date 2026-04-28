@@ -1,0 +1,67 @@
+[
+  {
+    "url": "<dynamic>",
+    "file": "server/client/src/App.tsx",
+    "line": 401
+  },
+  {
+    "url": "/api/zones",
+    "file": "server/client/src/app/components/DeviceInfoModal.tsx",
+    "line": 183
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/DeviceInfoModal.tsx",
+    "line": 216
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/DeviceInfoModal.tsx",
+    "line": 451
+  },
+  {
+    "url": "<dynamic>",
+    "file": "server/client/src/app/components/OtaManagement.tsx",
+    "line": 91
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/SensorChartModal.tsx",
+    "line": 322
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/SensorChartModal.tsx",
+    "line": 358
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/SensorChartModal.tsx",
+    "line": 645
+  },
+  {
+    "url": "/api/devices/<dynamic>",
+    "file": "server/client/src/app/components/SensorChartModal.tsx",
+    "line": 830
+  },
+  {
+    "url": "/api/zones?<dynamic>",
+    "file": "server/client/src/app/components/ZoneManagement.tsx",
+    "line": 217
+  },
+  {
+    "url": "<dynamic>",
+    "file": "server/client/src/app/components/ZoneManagement.tsx",
+    "line": 323
+  },
+  {
+    "url": "/api/zones/<dynamic>",
+    "file": "server/client/src/app/components/ZoneManagement.tsx",
+    "line": 363
+  },
+  {
+    "url": "<dynamic>",
+    "file": "server/client/src/app/components/ZoneManagement.tsx",
+    "line": 409
+  }
+]

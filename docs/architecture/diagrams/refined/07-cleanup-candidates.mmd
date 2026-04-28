@@ -1,0 +1,24 @@
+flowchart TD
+  classDef risk fill:#fee2e2,stroke:#dc2626,color:#450a0a
+  classDef review fill:#fef9c3,stroke:#ca8a04,color:#422006
+  classDef keep fill:#dcfce7,stroke:#16a34a,color:#052e16
+
+  Knip["knip generated report<br/>static cleanup signal"]:::review
+  Files["Unused files: 11"]:::risk
+  Deps["Unused dependencies: 6"]:::risk
+  Exports["Unused exports: 34<br/>Unused exported types: 101"]:::review
+  Config["Configuration hints: 12"]:::review
+
+  TelemetryMemory["Telemetry in-memory persistence<br/>in-memory-telemetry.repository.ts<br/>telemetry.persistence.ts"]:::risk
+  ClientCss["Client styling leftovers<br/>app.css, fonts.css, postcss.config.mjs"]:::review
+  UnusedDeps["echarts, recharts, ioredis,<br/>pino, socket.io-client"]:::risk
+  PublicExports["Auth/type exports<br/>may be API surface; verify before deletion"]:::review
+
+  Knip --> Files
+  Knip --> Deps
+  Knip --> Exports
+  Knip --> Config
+  Files --> TelemetryMemory
+  Files --> ClientCss
+  Deps --> UnusedDeps
+  Exports --> PublicExports

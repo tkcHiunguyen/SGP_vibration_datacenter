@@ -147,6 +147,22 @@ export class InMemoryAuditRepository implements AuditRepository {
     return this.query({ from, to, limit });
   }
 
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    const normalizedDeviceId = normalizeDeviceId(deviceId);
+    const matchingAuditIds = [...this.records.values()]
+      .filter((record) => record.deviceId === normalizedDeviceId)
+      .map((record) => record.auditId);
+    const persistedDeleted = this.mysql
+      ? await this.mysql.execute('DELETE FROM audit_logs WHERE device_id = ?', [normalizedDeviceId])
+      : 0;
+
+    for (const auditId of matchingAuditIds) {
+      this.records.delete(auditId);
+    }
+
+    return Math.max(matchingAuditIds.length, persistedDeleted);
+  }
+
   private async persistRecord(record: AuditRecord): Promise<void> {
     if (!this.mysql) {
       return;

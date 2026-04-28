@@ -8,7 +8,7 @@ const authRoleRank: Record<AuthRole, number> = {
   admin: 4,
 };
 
-export function isAuthRole(value: string): value is AuthRole {
+function isAuthRole(value: string): value is AuthRole {
   return (
     value === 'admin'
     || value === 'approver'
@@ -22,7 +22,7 @@ export function roleRank(role: AuthRole): number {
   return authRoleRank[role];
 }
 
-export function normalizeToken(token: string): string {
+function normalizeToken(token: string): string {
   return token.trim();
 }
 
@@ -113,8 +113,4 @@ export function uniqueByToken(seeds: AuthTokenSeed[]): AuthTokenSeed[] {
     seen.set(seed.token, seed);
   }
   return [...seen.values()];
-}
-
-export function compareRoles(left: AuthRole, right: AuthRole): number {
-  return roleRank(left) - roleRank(right);
 }

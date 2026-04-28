@@ -46,17 +46,14 @@ CREATE TABLE IF NOT EXISTS devices (
   site VARCHAR(128) NULL,
   zone VARCHAR(64) NULL,
   firmware_version VARCHAR(128) NULL,
-  sensor_version VARCHAR(128) NULL,
   notes TEXT NULL,
-  archived_at DATETIME(3) NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_devices_device_id (device_id),
   UNIQUE KEY uq_devices_uuid (uuid),
   KEY idx_devices_site (site),
-  KEY idx_devices_zone (zone),
-  KEY idx_devices_archived_at (archived_at)
+  KEY idx_devices_zone (zone)
 );
 
 CREATE TABLE IF NOT EXISTS zones (
@@ -169,20 +166,6 @@ PREPARE normalize_devices_zone_column_stmt FROM @normalize_devices_zone_column_s
 EXECUTE normalize_devices_zone_column_stmt;
 DEALLOCATE PREPARE normalize_devices_zone_column_stmt;
 
-SET @has_devices_archived_at_column := (
-  SELECT COUNT(*)
-  FROM information_schema.columns
-  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'archived_at'
-);
-SET @add_devices_archived_at_column_sql := IF(
-  @has_devices_archived_at_column = 0,
-  'ALTER TABLE devices ADD COLUMN archived_at DATETIME(3) NULL AFTER notes',
-  'SELECT 1'
-);
-PREPARE add_devices_archived_at_column_stmt FROM @add_devices_archived_at_column_sql;
-EXECUTE add_devices_archived_at_column_stmt;
-DEALLOCATE PREPARE add_devices_archived_at_column_stmt;
-
 SET @has_idx_devices_archived_at := (
   SELECT COUNT(*)
   FROM information_schema.statistics
@@ -190,14 +173,42 @@ SET @has_idx_devices_archived_at := (
     AND table_name = 'devices'
     AND index_name = 'idx_devices_archived_at'
 );
-SET @add_idx_devices_archived_at_sql := IF(
-  @has_idx_devices_archived_at = 0,
-  'ALTER TABLE devices ADD KEY idx_devices_archived_at (archived_at)',
+SET @drop_idx_devices_archived_at_sql := IF(
+  @has_idx_devices_archived_at > 0,
+  'ALTER TABLE devices DROP INDEX idx_devices_archived_at',
   'SELECT 1'
 );
-PREPARE add_idx_devices_archived_at_stmt FROM @add_idx_devices_archived_at_sql;
-EXECUTE add_idx_devices_archived_at_stmt;
-DEALLOCATE PREPARE add_idx_devices_archived_at_stmt;
+PREPARE drop_idx_devices_archived_at_stmt FROM @drop_idx_devices_archived_at_sql;
+EXECUTE drop_idx_devices_archived_at_stmt;
+DEALLOCATE PREPARE drop_idx_devices_archived_at_stmt;
+
+SET @has_devices_archived_at_column := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'archived_at'
+);
+SET @drop_devices_archived_at_column_sql := IF(
+  @has_devices_archived_at_column > 0,
+  'ALTER TABLE devices DROP COLUMN archived_at',
+  'SELECT 1'
+);
+PREPARE drop_devices_archived_at_column_stmt FROM @drop_devices_archived_at_column_sql;
+EXECUTE drop_devices_archived_at_column_stmt;
+DEALLOCATE PREPARE drop_devices_archived_at_column_stmt;
+
+SET @has_devices_sensor_version_column := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'sensor_version'
+);
+SET @drop_devices_sensor_version_column_sql := IF(
+  @has_devices_sensor_version_column > 0,
+  'ALTER TABLE devices DROP COLUMN sensor_version',
+  'SELECT 1'
+);
+PREPARE drop_devices_sensor_version_column_stmt FROM @drop_devices_sensor_version_column_sql;
+EXECUTE drop_devices_sensor_version_column_stmt;
+DEALLOCATE PREPARE drop_devices_sensor_version_column_stmt;
 
 SET @devices_pk_columns := (
   SELECT GROUP_CONCAT(k.column_name ORDER BY k.ordinal_position SEPARATOR ',')

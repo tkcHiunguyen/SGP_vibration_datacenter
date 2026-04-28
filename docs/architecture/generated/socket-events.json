@@ -1,0 +1,202 @@
+[
+  {
+    "direction": "inbound",
+    "event": "device:command:ack",
+    "file": "server/src/modules/realtime/command.handlers.ts",
+    "line": 31,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:request-last-command",
+    "file": "server/src/modules/realtime/command.handlers.ts",
+    "line": 73,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:command",
+    "file": "server/src/modules/realtime/command.handlers.ts",
+    "line": 92,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:heartbeat",
+    "file": "server/src/modules/realtime/device-state.handlers.ts",
+    "line": 43,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:metadata",
+    "file": "server/src/modules/realtime/device-state.handlers.ts",
+    "line": 65,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:error",
+    "file": "server/src/modules/realtime/session.handlers.ts",
+    "line": 31,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:error",
+    "file": "server/src/modules/realtime/session.handlers.ts",
+    "line": 36,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:ack",
+    "file": "server/src/modules/realtime/session.handlers.ts",
+    "line": 44,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "telemetry",
+    "file": "server/src/modules/realtime/session.handlers.ts",
+    "line": 52,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "disconnect",
+    "file": "server/src/modules/realtime/session.handlers.ts",
+    "line": 63,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "outbound",
+    "event": "telemetry",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 26,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(SocketIoGateway.DASHBOARD_ROOM)"
+  },
+  {
+    "direction": "outbound",
+    "event": "telemetry:spectrum",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 30,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(SocketIoGateway.DASHBOARD_ROOM)"
+  },
+  {
+    "direction": "outbound",
+    "event": "alert",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 34,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(SocketIoGateway.DASHBOARD_ROOM)"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:heartbeat",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 43,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(SocketIoGateway.DASHBOARD_ROOM)"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:metadata",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 47,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(SocketIoGateway.DASHBOARD_ROOM)"
+  },
+  {
+    "direction": "outbound",
+    "event": "device:command",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 70,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io.to(`device:${deviceId}`)"
+  },
+  {
+    "direction": "inbound",
+    "event": "connection",
+    "file": "server/src/modules/realtime/socket-io.gateway.ts",
+    "line": 74,
+    "module": "server/src/modules/realtime",
+    "receiver": "this.io"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:telemetry:xspectrum",
+    "file": "server/src/modules/realtime/spectrum-ingest.handlers.ts",
+    "line": 58,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:telemetry:yspectrum",
+    "file": "server/src/modules/realtime/spectrum-ingest.handlers.ts",
+    "line": 62,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:telemetry:zspectrum",
+    "file": "server/src/modules/realtime/spectrum-ingest.handlers.ts",
+    "line": 66,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "device:telemetry",
+    "file": "server/src/modules/realtime/telemetry-ingest.handlers.ts",
+    "line": 27,
+    "module": "server/src/modules/realtime",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "connect",
+    "file": "server/client/src/App.tsx",
+    "line": 982,
+    "module": "server/client/src/app-shell",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "disconnect",
+    "file": "server/client/src/App.tsx",
+    "line": 989,
+    "module": "server/client/src/app-shell",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "telemetry",
+    "file": "server/client/src/App.tsx",
+    "line": 996,
+    "module": "server/client/src/app-shell",
+    "receiver": "socket"
+  },
+  {
+    "direction": "inbound",
+    "event": "telemetry:spectrum",
+    "file": "server/client/src/App.tsx",
+    "line": 1014,
+    "module": "server/client/src/app-shell",
+    "receiver": "socket"
+  }
+]

@@ -1,5 +1,3 @@
-export type DeviceClientType = 'device' | 'dashboard';
-
 export type TelemetryPayload = {
   vibration?: number;
   temperature?: number;
@@ -88,51 +86,6 @@ export type AlertRecord = {
   updatedAt: string;
 };
 
-export type IncidentStatus = 'open' | 'assigned' | 'monitoring' | 'resolved' | 'closed';
-
-export type IncidentEventType =
-  | 'created'
-  | 'assigned'
-  | 'monitoring'
-  | 'resolved'
-  | 'closed'
-  | 'note'
-  | 'linked_alert'
-  | 'acknowledged';
-
-export type IncidentTimelineEntry = {
-  entryId: string;
-  incidentId: string;
-  type: IncidentEventType;
-  actor: string;
-  createdAt: string;
-  message?: string;
-  metadata?: Record<string, unknown>;
-};
-
-export type IncidentRecord = {
-  incidentId: string;
-  title: string;
-  summary?: string;
-  severity: AlertSeverity;
-  status: IncidentStatus;
-  owner?: string;
-  site?: string;
-  deviceId?: string;
-  alertIds: string[];
-  primaryAlertId?: string;
-  createdAt: string;
-  updatedAt: string;
-  openedAt: string;
-  assignedAt?: string;
-  assignedBy?: string;
-  monitoringAt?: string;
-  resolvedAt?: string;
-  resolvedBy?: string;
-  closedAt?: string;
-  closedBy?: string;
-};
-
 export type DeviceSession = {
   deviceId: string;
   socketId: string;
@@ -156,7 +109,6 @@ export type DeviceMetadata = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
-  sensorVersion?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;

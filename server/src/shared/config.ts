@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 dotenv.config();
 
-export const envSchema = z.object({
+const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
