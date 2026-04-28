@@ -7,14 +7,14 @@
 
 ## Overview
 
-SGP Vibration Datacenter is a vibration monitoring system for physical datacenter devices. It receives realtime data from devices over Socket.IO, persists telemetry to MySQL when a database is configured, streams realtime updates to the dashboard, and exposes operational APIs for devices, zones, alerts, incidents, rollouts, and OTA.
+SGP Vibration Datacenter is a vibration monitoring system for physical datacenter devices. It receives realtime data from devices over Socket.IO, persists telemetry to MySQL when a database is configured, streams realtime updates to the dashboard, and exposes operational APIs for devices, zones, alerts, commands, and OTA.
 
 The repository is a `pnpm` monorepo with two main applications:
 
 | Component | Stack | Role |
 | --- | --- | --- |
-| `server` | Fastify, Socket.IO, MySQL | Backend API, realtime gateway, telemetry persistence, device/alert/incident/OTA/metrics management. |
-| `web` | React, Vite | Dashboard for devices, telemetry, vibration charts, temperature, spectrum data, and operational workflows. |
+| `server` | Fastify, Socket.IO, MySQL | Backend API, realtime gateway, telemetry persistence, device/alert/command/OTA management. |
+| `server/client` | React, Vite | Dashboard for devices, telemetry, vibration charts, temperature, spectrum data, and operational workflows. |
 
 When the server is running, the main endpoints are:
 
@@ -22,8 +22,7 @@ When the server is running, the main endpoints are:
 | --- | --- |
 | `/api/*` | API for the dashboard and operational workflows. |
 | `/socket.io` | Realtime channel for physical devices and dashboard clients. |
-| `/health`, `/health/live`, `/health/ready` | Server health checks. |
-| `/metrics` | Prometheus metrics. |
+| `/health` | Server health check. |
 | `/app/` | Production dashboard after the web app is built. |
 | `/socket-info` | Quick Socket.IO path and event reference. |
 
@@ -76,7 +75,7 @@ Important details:
 
 - `HOST=0.0.0.0` lets devices on the same LAN reach the backend by the server machine IP.
 - Physical devices must not call `localhost` for the server. On firmware, `localhost` means the device itself. Use the server machine IP or domain, for example `http://192.168.1.10:8080`.
-- The server can run without MySQL for quick checks, but physical deployments should configure MySQL for durable data.
+- Without MySQL, the server runs in demo/in-memory mode for quick checks; production/persistent mode needs MySQL to keep telemetry, metadata, audit, and command state after restarts.
 - If `DEVICE_AUTH_TOKEN` is set, firmware must send the same token during the Socket.IO handshake.
 
 Create the MySQL database when durable persistence is needed:
@@ -120,16 +119,16 @@ Default services:
 | Service | URL |
 | --- | --- |
 | Server | `http://localhost:8080` |
-| Vite web dev server | `http://localhost:5173` |
-| Development dashboard | `http://localhost:5173/app/` |
+| Server + dashboard dev | `http://localhost:8080/app/` |
+| Health check | `http://localhost:8080/health` |
 
-Vite proxies `/api`, `/health`, and `/socket.io` to the server on port `8080`.
+In dev mode, `server/client` runs Vite build watch and writes assets into `server/public/app`; Fastify serves the dashboard directly at `/app/`.
 
 Run each side separately if needed:
 
 ```bash
-pnpm dev:server
-pnpm dev:web
+pnpm -C server dev
+pnpm -C server/client dev
 ```
 
 ## Connect Physical Devices
@@ -189,7 +188,6 @@ Send this when the device boots or when metadata changes.
   "site": "SGP",
   "zone": "Rack-A1",
   "firmwareVersion": "1.0.0",
-  "sensorVersion": "adxl355-v1",
   "notes": "Main rack sensor"
 }
 ```
@@ -199,8 +197,7 @@ The server also accepts an envelope:
 ```json
 {
   "metadata": {
-    "firmware": "1.0.0",
-    "sensor_version": "adxl355-v1"
+    "firmware": "1.0.0"
   }
 }
 ```
@@ -307,7 +304,6 @@ Check the server:
 
 ```bash
 curl http://localhost:8080/health
-curl http://localhost:8080/health/ready
 curl http://localhost:8080/socket-info
 ```
 
@@ -316,6 +312,12 @@ Check build and TypeScript:
 ```bash
 pnpm build
 pnpm typecheck
+```
+
+Each `pnpm build` also exports the current MySQL bootstrap schema to:
+
+```text
+docs/database/mysql-schema.sql
 ```
 
 Run server tests:
@@ -341,7 +343,7 @@ server/public/app
 Run the compiled server:
 
 ```bash
-pnpm -C server start:prod
+pnpm start
 ```
 
 Then open the production dashboard:
@@ -388,13 +390,14 @@ For production-like environments, configure at least:
 | --- | --- |
 | `pnpm install` | Install dependencies and run DB init. |
 | `pnpm dev` | Run server and web dev servers together. |
-| `pnpm dev:server` | Run only the Fastify server. |
-| `pnpm dev:web` | Run only the Vite web app. |
-| `pnpm build` | Build web then server. |
-| `pnpm typecheck` | Type-check the server. |
+| `pnpm -C server dev` | Run only the Fastify server. |
+| `pnpm -C server/client dev` | Run only the Vite build watch for the dashboard. |
+| `pnpm build` | Build web, build server, and export SQL schema to `docs/database/mysql-schema.sql`. |
+| `pnpm typecheck` | Type-check the dashboard and server. |
 | `pnpm -C server test` | Run server tests. |
 | `pnpm -C server db:init` | Initialize MySQL schema when MySQL is configured. |
-| `pnpm -C server start:prod` | Run the server from compiled output. |
+| `pnpm db:schema:export` | Export the MySQL bootstrap schema to `docs/database/mysql-schema.sql`. |
+| `pnpm start` | Run the server from compiled output. |
 | `pnpm perf:lighthouse` | Build and run Lighthouse checks. |
 
 ## Troubleshooting
@@ -404,7 +407,7 @@ For production-like environments, configure at least:
 - Device receives `unauthorized`: the firmware token does not match `DEVICE_AUTH_TOKEN`.
 - Device is online but telemetry is not visible: verify the device emits `device:telemetry`, payload fields are valid numbers, `/health` shows connected devices, and dashboard filters are not hiding the device/zone.
 - Spectrum is not visible: verify the axis event is `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, or `device:telemetry:zspectrum`; payload contains `values` or a binary attachment; `telemetry_uuid` should match the main telemetry sample.
-- Cannot open the dashboard at `localhost:8080/app/` during dev: run `pnpm build` first, or use Vite at `http://localhost:5173/app/`.
-- Vite cannot reach the API: make sure `pnpm dev:server` is running on port `8080`.
+- Cannot open the dashboard at `localhost:8080/app/` during dev: make sure `pnpm dev` is running, or run `pnpm build` first if you only need production assets.
+- Dashboard does not update during dev: make sure `pnpm -C server/client dev` is running to rebuild assets and `pnpm -C server dev` is running on port `8080`.
 - OTA download fails on physical devices: do not use `localhost` in `OTA_PUBLIC_BASE_URL`; use the machine IP or a domain reachable by the device.
 - MySQL connection fails: verify that the database exists, credentials are correct, and MySQL accepts TCP connections on the configured host/port.

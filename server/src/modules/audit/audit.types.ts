@@ -1,11 +1,11 @@
-export type AuditTargetResource = {
+type AuditTargetResource = {
   resourceType: string;
   resourceId: string;
   resourceName?: string;
   metadata?: Record<string, unknown>;
 };
 
-export type AuditChangeSummary = {
+type AuditChangeSummary = {
   before?: string;
   after?: string;
 };

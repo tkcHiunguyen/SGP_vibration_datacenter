@@ -1,0 +1,404 @@
+[
+  {
+    "name": "server/client/src/app-shell",
+    "kind": "frontend",
+    "files": [
+      "server/client/src/App.tsx",
+      "server/client/src/main.tsx",
+      "server/client/src/vite-env.d.ts"
+    ],
+    "imports": [
+      "server/client/src/app/components",
+      "server/client/src/app/context",
+      "server/client/src/app/data",
+      "server/client/src/styles"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 4
+  },
+  {
+    "name": "server/client/src/app/components",
+    "kind": "frontend",
+    "files": [
+      "server/client/src/app/components/Analyze3DPanel.tsx",
+      "server/client/src/app/components/DeviceInfoModal.tsx",
+      "server/client/src/app/components/DeviceManagement.tsx",
+      "server/client/src/app/components/LeftPanel.tsx",
+      "server/client/src/app/components/MainPanel.tsx",
+      "server/client/src/app/components/MotorSceneCanvas.tsx",
+      "server/client/src/app/components/OtaManagement.tsx",
+      "server/client/src/app/components/SensorChartModal.tsx",
+      "server/client/src/app/components/ThreeDPage.tsx",
+      "server/client/src/app/components/TopHeader.tsx",
+      "server/client/src/app/components/UnderDevelopment.tsx",
+      "server/client/src/app/components/ZoneManagement.tsx",
+      "server/client/src/app/components/sensor-chart-modal/chart-parts.tsx",
+      "server/client/src/app/components/sensor-chart-modal/useChartModalLayout.ts"
+    ],
+    "imports": [
+      "server/client/src/app/components/ui",
+      "server/client/src/app/context",
+      "server/client/src/app/data"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/client/src/app/components/ui",
+    "kind": "frontend",
+    "files": [
+      "server/client/src/app/components/ui/Button.tsx",
+      "server/client/src/app/components/ui/EmptyState.tsx",
+      "server/client/src/app/components/ui/Form.tsx",
+      "server/client/src/app/components/ui/Modal.tsx",
+      "server/client/src/app/components/ui/Page.tsx",
+      "server/client/src/app/components/ui/StatCard.tsx",
+      "server/client/src/app/components/ui/Toast.tsx",
+      "server/client/src/app/components/ui/cx.ts",
+      "server/client/src/app/components/ui/index.ts"
+    ],
+    "imports": [
+      "server/client/src/app/context"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/client/src/app/context",
+    "kind": "frontend",
+    "files": [
+      "server/client/src/app/context/ThemeContext.tsx"
+    ],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/client/src/app/data",
+    "kind": "frontend",
+    "files": [
+      "server/client/src/app/data/sensors.ts"
+    ],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/client/src/styles",
+    "kind": "frontend",
+    "files": [],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src",
+    "kind": "other",
+    "files": [
+      "server/src/index.ts"
+    ],
+    "imports": [
+      "server/src/modules/alert",
+      "server/src/modules/audit",
+      "server/src/modules/auth",
+      "server/src/modules/command",
+      "server/src/modules/device",
+      "server/src/modules/http",
+      "server/src/modules/persistence",
+      "server/src/modules/realtime",
+      "server/src/modules/reliability",
+      "server/src/modules/spectrum",
+      "server/src/modules/telemetry",
+      "server/src/modules/zone",
+      "server/src/shared"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/alert",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/alert/alert.repository.ts",
+      "server/src/modules/alert/alert.service.ts",
+      "server/src/modules/alert/in-memory-alert.repository.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence",
+      "server/src/shared"
+    ],
+    "services": [
+      "AlertService"
+    ],
+    "repositories": [
+      "InMemoryAlertRepository"
+    ],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/audit",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/audit/audit.repository.ts",
+      "server/src/modules/audit/audit.service.ts",
+      "server/src/modules/audit/audit.types.ts",
+      "server/src/modules/audit/in-memory-audit.repository.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence"
+    ],
+    "services": [
+      "AuditService"
+    ],
+    "repositories": [
+      "InMemoryAuditRepository"
+    ],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/auth",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/auth/auth.config.ts",
+      "server/src/modules/auth/auth.service.ts",
+      "server/src/modules/auth/auth.types.ts",
+      "server/src/modules/auth/auth.utils.ts",
+      "server/src/modules/auth/index.ts"
+    ],
+    "imports": [
+      "server/src/shared"
+    ],
+    "services": [
+      "AuthService"
+    ],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/command",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/command/command.repository.ts",
+      "server/src/modules/command/command.service.ts",
+      "server/src/modules/command/in-memory-command.repository.ts",
+      "server/src/modules/command/mysql-command.repository.ts"
+    ],
+    "imports": [
+      "server/src/modules/device",
+      "server/src/modules/persistence",
+      "server/src/shared"
+    ],
+    "services": [
+      "CommandService"
+    ],
+    "repositories": [
+      "InMemoryCommandRepository",
+      "MySqlCommandRepository"
+    ],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/device",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/device/device.repository.ts",
+      "server/src/modules/device/device.service.test.ts",
+      "server/src/modules/device/device.service.ts",
+      "server/src/modules/device/in-memory-device.repository.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence",
+      "server/src/shared"
+    ],
+    "services": [
+      "DeviceService"
+    ],
+    "repositories": [
+      "FakeDeviceRepository",
+      "InMemoryDeviceRepository"
+    ],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/http",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/http/core.routes.ts",
+      "server/src/modules/http/register-routes.ts"
+    ],
+    "imports": [
+      "server/src/modules/alert",
+      "server/src/modules/audit",
+      "server/src/modules/auth",
+      "server/src/modules/command",
+      "server/src/modules/device",
+      "server/src/modules/realtime",
+      "server/src/modules/spectrum",
+      "server/src/modules/telemetry",
+      "server/src/modules/zone",
+      "server/src/shared"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 34,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/persistence",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/persistence/mysql-access.ts",
+      "server/src/modules/persistence/mysql-env.ts",
+      "server/src/modules/persistence/mysql-schema.ts"
+    ],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/realtime",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/realtime/command.handlers.ts",
+      "server/src/modules/realtime/device-state.handlers.ts",
+      "server/src/modules/realtime/realtime.gateway.ts",
+      "server/src/modules/realtime/session.handlers.ts",
+      "server/src/modules/realtime/socket-handler.types.ts",
+      "server/src/modules/realtime/socket-io.gateway.ts",
+      "server/src/modules/realtime/socket-payload.utils.ts",
+      "server/src/modules/realtime/socket.handlers.ts",
+      "server/src/modules/realtime/spectrum-ingest.handlers.ts",
+      "server/src/modules/realtime/spectrum-message.normalizer.ts",
+      "server/src/modules/realtime/telemetry-ingest.handlers.ts"
+    ],
+    "imports": [
+      "server/src/modules/alert",
+      "server/src/modules/command",
+      "server/src/modules/device",
+      "server/src/modules/reliability",
+      "server/src/modules/spectrum",
+      "server/src/modules/telemetry",
+      "server/src/shared"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 21
+  },
+  {
+    "name": "server/src/modules/reliability",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/reliability/telemetry-ingress-guard.ts"
+    ],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/spectrum",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/spectrum/spectrum-storage.service.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence",
+      "server/src/shared"
+    ],
+    "services": [
+      "SpectrumStorageService"
+    ],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/telemetry",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/telemetry/mysql-telemetry.repository.ts",
+      "server/src/modules/telemetry/telemetry.repository.ts",
+      "server/src/modules/telemetry/telemetry.service.ts"
+    ],
+    "imports": [
+      "server/src/modules/device",
+      "server/src/modules/persistence",
+      "server/src/shared"
+    ],
+    "services": [
+      "TelemetryService"
+    ],
+    "repositories": [
+      "MySqlTelemetryRepository"
+    ],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/modules/zone",
+    "kind": "backend-module",
+    "files": [
+      "server/src/modules/zone/zone.service.test.ts",
+      "server/src/modules/zone/zone.service.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence"
+    ],
+    "services": [
+      "ZoneService"
+    ],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/shared",
+    "kind": "backend-shared",
+    "files": [
+      "server/src/shared/config.ts",
+      "server/src/shared/types.ts"
+    ],
+    "imports": [],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  },
+  {
+    "name": "server/src/tools",
+    "kind": "other",
+    "files": [
+      "server/src/tools/bootstrap-db-schema.ts"
+    ],
+    "imports": [
+      "server/src/modules/persistence"
+    ],
+    "services": [],
+    "repositories": [],
+    "routes": 0,
+    "socketEvents": 0
+  }
+]

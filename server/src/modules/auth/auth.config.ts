@@ -24,7 +24,7 @@ const ROLE_ENV_VARS: Array<{
   { role: 'viewer', envKey: 'AUTH_VIEWER_TOKEN' },
 ];
 
-export function createAuthConfigFromEnv(source: AuthEnvSource = env): AuthConfig {
+function createAuthConfigFromEnv(source: AuthEnvSource = env): AuthConfig {
   const tokenSeeds: AuthTokenSeed[] = [
     ...parseAuthTokenSeeds(source.AUTH_STATIC_TOKENS, source.AUTH_DEFAULT_ROLE),
     ...ROLE_ENV_VARS.flatMap(({ role, envKey }) => {

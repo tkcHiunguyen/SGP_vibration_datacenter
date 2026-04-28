@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DeviceRemovalResult, DeviceRepository } from './device.repository.js';
+import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
 import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
 
 type RegisterDeviceInput = {
@@ -9,7 +9,6 @@ type RegisterDeviceInput = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
-  sensorVersion?: string;
   notes?: string;
 };
 
@@ -20,11 +19,10 @@ type SocketMetadataInput = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
-  sensorVersion?: string;
   notes?: string;
 };
 
-export type DeviceListItem = {
+type DeviceListItem = {
   deviceId: string;
   online: boolean;
   socketId?: string;
@@ -35,14 +33,14 @@ export type DeviceListItem = {
   metadata?: DeviceMetadata;
 };
 
-export type DeviceListFilters = {
+type DeviceListFilters = {
   site?: string;
   zone?: string;
   status?: 'online' | 'offline';
   search?: string;
 };
 
-export type ZoneAssignmentClearResult = {
+type ZoneAssignmentClearResult = {
   updated: number;
   deviceIds: string[];
 };
@@ -62,7 +60,6 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
-      sensorVersion: input.sensorVersion ?? existing?.sensorVersion,
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -83,7 +80,6 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
-      sensorVersion: input.sensorVersion ?? existing?.sensorVersion,
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -118,9 +114,6 @@ export class DeviceService {
     }
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
-    }
-    if (Object.prototype.hasOwnProperty.call(input, 'sensorVersion')) {
-      metadata.sensorVersion = this.normalizeOptionalText(input.sensorVersion);
     }
     if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
       metadata.notes = this.normalizeOptionalText(input.notes);
@@ -161,9 +154,6 @@ export class DeviceService {
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
     }
-    if (Object.prototype.hasOwnProperty.call(input, 'sensorVersion')) {
-      metadata.sensorVersion = this.normalizeOptionalText(input.sensorVersion);
-    }
     if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
       metadata.notes = this.normalizeOptionalText(input.notes);
     }
@@ -198,7 +188,6 @@ export class DeviceService {
       next.site !== existing.site ||
       next.zone !== existing.zone ||
       next.firmwareVersion !== existing.firmwareVersion ||
-      next.sensorVersion !== existing.sensorVersion ||
       next.notes !== existing.notes;
 
     if (!hasChanged) {
@@ -323,6 +312,15 @@ export class DeviceService {
     return this.repository.removeMetadata(normalizedDeviceId);
   }
 
+  async inspectDeletionImpact(deviceId: string): Promise<DeviceDeletionImpact | null> {
+    const normalizedDeviceId = this.normalizeOptionalText(deviceId);
+    if (!normalizedDeviceId) {
+      return null;
+    }
+
+    return this.repository.inspectRemoval(normalizedDeviceId);
+  }
+
   async clearTelemetryDataStrict(deviceId: string): Promise<number | null> {
     const normalizedDeviceId = this.normalizeOptionalText(deviceId);
     if (!normalizedDeviceId) {
@@ -374,7 +372,6 @@ export class DeviceService {
       item.metadata?.site,
       item.metadata?.zone,
       item.metadata?.firmwareVersion,
-      item.metadata?.sensorVersion,
       item.metadata?.notes,
     ]
       .filter((value): value is string => Boolean(value))
@@ -415,11 +412,6 @@ export class DeviceService {
     const firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
     if (firmwareVersion !== undefined) {
       normalized.firmwareVersion = firmwareVersion;
-    }
-
-    const sensorVersion = this.normalizeOptionalText(input.sensorVersion);
-    if (sensorVersion !== undefined) {
-      normalized.sensorVersion = sensorVersion;
     }
 
     const notes = this.normalizeOptionalText(input.notes);

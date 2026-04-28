@@ -152,6 +152,19 @@ export class AlertService {
     return this.repository.listAlerts(limit, status);
   }
 
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    const normalizedDeviceId = deviceId.trim();
+    if (!normalizedDeviceId) {
+      return 0;
+    }
+    for (const key of Array.from(this.state.keys())) {
+      if (key.endsWith(`:${normalizedDeviceId}`)) {
+        this.state.delete(key);
+      }
+    }
+    return await this.repository.deleteByDeviceId(normalizedDeviceId);
+  }
+
   summarizeAlerts() {
     return this.repository.summarizeAlerts();
   }

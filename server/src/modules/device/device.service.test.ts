@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
-import type { DeviceRemovalResult, DeviceRepository } from './device.repository.js';
+import type { MySqlAccess } from '../persistence/mysql-access.js';
+import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
 import { DeviceService } from './device.service.js';
+import { InMemoryDeviceRepository } from './in-memory-device.repository.js';
 
 class FakeDeviceRepository implements DeviceRepository {
   readonly metadata = new Map<string, DeviceMetadata>();
   readonly sessions = new Map<string, DeviceSession>();
   failNextMetadataUpsert = false;
+  impactOverrides = new Map<string, Partial<DeviceDeletionImpact>>();
 
   async upsertMetadata(metadata: DeviceMetadata): Promise<void> {
     if (this.failNextMetadataUpsert) {
@@ -22,12 +25,21 @@ class FakeDeviceRepository implements DeviceRepository {
     if (!existing) {
       return null;
     }
+    const impact = await this.inspectRemoval(deviceId);
     this.metadata.delete(deviceId);
     this.sessions.delete(deviceId);
     return {
       metadata: existing,
-      telemetryDeleted: 0,
+      impact: impact ?? this.createDefaultImpact(deviceId, existing),
     };
+  }
+
+  async inspectRemoval(deviceId: string): Promise<DeviceDeletionImpact | null> {
+    const existing = this.metadata.get(deviceId) ?? null;
+    if (!existing) {
+      return null;
+    }
+    return this.createDefaultImpact(deviceId, existing);
   }
 
   async clearTelemetryData(deviceId: string): Promise<number> {
@@ -83,6 +95,35 @@ class FakeDeviceRepository implements DeviceRepository {
 
   countConnected(): number {
     return this.sessions.size;
+  }
+
+  private createDefaultImpact(deviceId: string, metadata: DeviceMetadata): DeviceDeletionImpact {
+    const override = this.impactOverrides.get(deviceId) ?? {};
+    const base: DeviceDeletionImpact = {
+      deviceId,
+      deviceName: metadata.name,
+      deviceRows: 1,
+      telemetryRows: 0,
+      spectrumFrames: 0,
+      spectrumBytes: 0,
+      socketSessions: this.sessions.has(deviceId) ? 1 : 0,
+      commandRows: 0,
+      alertRows: 0,
+      auditLogRows: 0,
+      totalRows: 1 + (this.sessions.has(deviceId) ? 1 : 0),
+    };
+    const next = { ...base, ...override };
+    return {
+      ...next,
+      totalRows:
+        next.deviceRows +
+        next.telemetryRows +
+        next.spectrumFrames +
+        next.socketSessions +
+        next.commandRows +
+        next.alertRows +
+        next.auditLogRows,
+    };
   }
 }
 
@@ -143,19 +184,96 @@ test('clearZoneAssignments removes zone for all devices in target zone', async (
   assert.equal(repository.getMetadata('ESP-C')?.zone, 'ZONE_Y');
 });
 
-test('deleteStrict archives/removes device metadata from active inventory', async () => {
+test('repository loads device rows without legacy archive or sensor version columns', async () => {
+  const mysql = {
+    async query<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
+      if (!sql.includes('FROM devices')) {
+        return [];
+      }
+      assert.equal(sql.includes('archived_at'), false);
+      assert.equal(sql.includes('sensor_version'), false);
+      const rows = [
+        {
+          device_id: 'ESP-ACTIVE',
+          uuid: 'active-uuid',
+          name: 'Active device',
+          site: null,
+          zone: null,
+          firmware_version: null,
+          notes: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          device_id: 'ESP-LEGACY',
+          uuid: 'legacy-uuid',
+          name: 'Legacy device',
+          site: null,
+          zone: null,
+          firmware_version: null,
+          notes: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-02T00:00:00.000Z',
+        },
+      ];
+      return rows as unknown as T[];
+    },
+    async execute(): Promise<number> {
+      return 0;
+    },
+  } as unknown as MySqlAccess;
+
+  const repository = await InMemoryDeviceRepository.create(mysql);
+  const service = new DeviceService(repository);
+
+  assert.deepEqual(service.list().map((device) => device.deviceId), ['ESP-ACTIVE', 'ESP-LEGACY']);
+  assert.equal(await service.inspectDeletionImpact('ESP-LEGACY') !== null, true);
+});
+
+test('inspectDeletionImpact reports related rows before hard delete', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository);
+
+  await service.registerStrict({ deviceId: 'ESP-IMPACT', name: 'Impact target', zone: 'ZONE_Z' });
+  repository.impactOverrides.set('ESP-IMPACT', {
+    telemetryRows: 12,
+    spectrumFrames: 3,
+    commandRows: 2,
+    alertRows: 1,
+    auditLogRows: 4,
+  });
+
+  const impact = await service.inspectDeletionImpact('ESP-IMPACT');
+
+  assert.ok(impact);
+  assert.equal(impact?.deviceRows, 1);
+  assert.equal(impact?.telemetryRows, 12);
+  assert.equal(impact?.spectrumFrames, 3);
+  assert.equal(impact?.commandRows, 2);
+  assert.equal(impact?.alertRows, 1);
+  assert.equal(impact?.auditLogRows, 4);
+  assert.equal(impact?.totalRows, 23);
+});
+
+test('deleteStrict hard deletes device metadata and reports deleted impact', async () => {
   const repository = new FakeDeviceRepository();
   const service = new DeviceService(repository);
 
   await service.registerStrict({ deviceId: 'ESP-DEL', name: 'To delete', zone: 'ZONE_Z' });
+  repository.impactOverrides.set('ESP-DEL', {
+    telemetryRows: 7,
+    commandRows: 2,
+  });
   assert.equal(service.list().length, 1);
 
   const deleted = await service.deleteStrict('ESP-DEL');
   assert.ok(deleted);
   assert.equal(deleted?.metadata.deviceId, 'ESP-DEL');
-  assert.equal(deleted?.telemetryDeleted, 0);
+  assert.equal(deleted?.impact.telemetryRows, 7);
+  assert.equal(deleted?.impact.commandRows, 2);
   assert.equal(service.list().length, 0);
   assert.equal(repository.getMetadata('ESP-DEL'), null);
+  assert.equal(await service.inspectDeletionImpact('ESP-DEL'), null);
 });
 
 test('clearTelemetryDataStrict clears telemetry only for existing device', async () => {

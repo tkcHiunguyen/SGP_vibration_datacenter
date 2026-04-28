@@ -90,4 +90,12 @@ export class AuditService {
   listByTimeRange(from?: string | Date, to?: string | Date, limit = 100): AuditRecord[] {
     return this.repository.listByTimeRange(from, to, limit);
   }
+
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    const normalizedDeviceId = deviceId.trim();
+    if (!normalizedDeviceId) {
+      return 0;
+    }
+    return await this.repository.deleteByDeviceId(normalizedDeviceId);
+  }
 }

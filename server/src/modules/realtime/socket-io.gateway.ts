@@ -70,6 +70,10 @@ export class SocketIoGateway implements RealtimeGateway {
     this.io.to(`device:${deviceId}`).emit('device:command', wirePayload);
   }
 
+  disconnectDevice(deviceId: string): void {
+    this.io.in(`device:${deviceId}`).disconnectSockets(true);
+  }
+
   onConnection(handler: (socket: Socket) => void): void {
     this.io.on('connection', handler);
   }

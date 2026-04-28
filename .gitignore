@@ -24,8 +24,9 @@ server/.env.*
 !server/.env.example
 
 # Vite / build outputs
-web/dist/
-web/.vite/
+server/client/dist/
+server/client/.vite/
+server/public/app/
 
 # Graphify generated outputs
 graphify-out/

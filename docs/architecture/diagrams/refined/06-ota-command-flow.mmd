@@ -1,0 +1,23 @@
+sequenceDiagram
+  autonumber
+  participant UI as OtaManagement / dashboard
+  participant API as Fastify REST API
+  participant Command as CommandService
+  participant Audit as AuditService
+  participant Repo as Command repository
+  participant Gateway as SocketIoGateway
+  participant Device as Sensor device
+
+  UI->>API: POST /api/ota/upload-bin
+  API-->>UI: Firmware URL under /ota-bins
+  UI->>API: POST /api/ota/dispatch with deviceIds + otaUrl
+  API->>Command: Create OTA command per target device
+  Command->>Repo: Save pending command
+  API->>Gateway: dispatch device:command
+  Gateway-->>Device: device:command
+  Device-->>Gateway: device:command:ack
+  Gateway->>Command: Update ack/result status
+  Gateway-->>UI: device:ack / device:command update
+  API->>Audit: Record ota_dispatch summary
+  UI->>API: GET /api/commands/recent or lookup
+  API-->>UI: Command status list

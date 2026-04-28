@@ -7,14 +7,14 @@
 
 ## Tổng quan
 
-SGP Vibration Datacenter là hệ thống giám sát rung động cho thiết bị thật trong datacenter. Hệ thống nhận dữ liệu realtime từ thiết bị qua Socket.IO, lưu telemetry vào MySQL nếu đã cấu hình database, phát dữ liệu realtime lên dashboard và cung cấp các API vận hành cho thiết bị, zone, cảnh báo, sự cố, rollout và OTA.
+SGP Vibration Datacenter là hệ thống giám sát rung động cho thiết bị thật trong datacenter. Hệ thống nhận dữ liệu realtime từ thiết bị qua Socket.IO, lưu telemetry vào MySQL nếu đã cấu hình database, phát dữ liệu realtime lên dashboard và cung cấp các API vận hành cho thiết bị, zone, cảnh báo, command và OTA.
 
 Repository là monorepo `pnpm` gồm hai ứng dụng chính:
 
 | Thành phần | Công nghệ | Vai trò |
 | --- | --- | --- |
-| `server` | Fastify, Socket.IO, MySQL | API backend, realtime gateway, lưu telemetry, quản lý thiết bị/cảnh báo/sự cố/OTA/metrics. |
-| `web` | React, Vite | Dashboard quan sát thiết bị, telemetry, biểu đồ rung động, nhiệt độ, phổ tần số và các thao tác vận hành. |
+| `server` | Fastify, Socket.IO, MySQL | API backend, realtime gateway, lưu telemetry, quản lý thiết bị/cảnh báo/command/OTA. |
+| `server/client` | React, Vite | Dashboard quan sát thiết bị, telemetry, biểu đồ rung động, nhiệt độ, phổ tần số và các thao tác vận hành. |
 
 Khi server chạy, các endpoint chính là:
 
@@ -22,8 +22,7 @@ Khi server chạy, các endpoint chính là:
 | --- | --- |
 | `/api/*` | API cho dashboard và workflow vận hành. |
 | `/socket.io` | Kênh realtime cho thiết bị thật và dashboard. |
-| `/health`, `/health/live`, `/health/ready` | Kiểm tra trạng thái server. |
-| `/metrics` | Prometheus metrics. |
+| `/health` | Kiểm tra trạng thái server. |
 | `/app/` | Dashboard production sau khi build web. |
 | `/socket-info` | Thông tin nhanh về Socket.IO path và event đang hỗ trợ. |
 
@@ -76,7 +75,7 @@ Giải thích các điểm quan trọng:
 
 - `HOST=0.0.0.0` giúp thiết bị trong cùng LAN truy cập được server qua IP máy chạy backend.
 - Thiết bị thật không dùng `localhost` để gọi server. Với firmware, `localhost` là chính thiết bị. Hãy dùng IP/domain của máy chạy server, ví dụ `http://192.168.1.10:8080`.
-- Nếu chưa cấu hình MySQL, server vẫn chạy được cho kiểm thử nhanh, nhưng dữ liệu bền vững nên dùng MySQL.
+- Nếu chưa cấu hình MySQL, server chạy ở demo/in-memory mode cho kiểm thử nhanh; production/persistent mode cần MySQL để lưu telemetry, metadata, audit và command state sau restart.
 - Nếu bật `DEVICE_AUTH_TOKEN`, firmware phải gửi đúng token khi handshake Socket.IO.
 
 Tạo database MySQL nếu cần lưu dữ liệu bền vững:
@@ -120,16 +119,16 @@ Service mặc định:
 | Service | URL |
 | --- | --- |
 | Server | `http://localhost:8080` |
-| Vite web dev server | `http://localhost:5173` |
-| Dashboard dev | `http://localhost:5173/app/` |
+| Server + dashboard dev | `http://localhost:8080/app/` |
+| Health check | `http://localhost:8080/health` |
 
-Vite sẽ proxy `/api`, `/health` và `/socket.io` về server port `8080`.
+Trong dev mode, `server/client` chạy Vite build watch và ghi asset vào `server/public/app`; Fastify phục vụ dashboard trực tiếp tại `/app/`.
 
 Chạy riêng từng phần nếu cần:
 
 ```bash
-pnpm dev:server
-pnpm dev:web
+pnpm -C server dev
+pnpm -C server/client dev
 ```
 
 ## Kết nối thiết bị thật
@@ -189,7 +188,6 @@ Gửi khi thiết bị boot hoặc khi metadata thay đổi.
   "site": "SGP",
   "zone": "Rack-A1",
   "firmwareVersion": "1.0.0",
-  "sensorVersion": "adxl355-v1",
   "notes": "Main rack sensor"
 }
 ```
@@ -199,8 +197,7 @@ Server cũng chấp nhận dạng envelope:
 ```json
 {
   "metadata": {
-    "firmware": "1.0.0",
-    "sensor_version": "adxl355-v1"
+    "firmware": "1.0.0"
   }
 }
 ```
@@ -301,13 +298,32 @@ device:request-last-command
 
 Server sẽ phát lại `device:command` nếu lệnh gần nhất thuộc đúng `deviceId`.
 
+## Xoá thiết bị an toàn
+
+Dashboard không còn xoá mềm bằng cách lưu trữ thiết bị. Khi người dùng bấm xoá, UI gọi API kiểm tra trước:
+
+```text
+GET /api/devices/:deviceId/delete-impact
+```
+
+API trả số lượng dữ liệu liên quan sẽ bị xoá: bản ghi `devices`, telemetry trong `device_datas`, frame/file phổ trong `device_spectrum_frames`, session trong `socket_datas`, command/OTA, alert và audit log cũ. Modal sẽ hiển thị “Đang kiểm tra...” trong lúc tải và chỉ cho xác nhận khi có kết quả.
+
+Danh sách thiết bị trên dashboard đọc toàn bộ bảng `devices` để operator có thể mở modal này và xoá cứng các thiết bị còn tồn trong database.
+
+Khi xác nhận, dashboard gọi:
+
+```text
+DELETE /api/devices/:deviceId
+```
+
+Server sẽ ngắt socket thiết bị nếu đang online, xoá dữ liệu liên quan, purge file phổ trên disk, sau đó xoá dòng thiết bị khỏi bảng `devices`. Hành động này không thể hoàn tác; audit xoá mới được ghi với `deviceId = n/a` và giữ ID/name thiết bị trong metadata để tránh lỗi foreign key sau khi dòng `devices` đã bị xoá.
+
 ## Kiểm tra cài đặt
 
 Kiểm tra server:
 
 ```bash
 curl http://localhost:8080/health
-curl http://localhost:8080/health/ready
 curl http://localhost:8080/socket-info
 ```
 
@@ -316,6 +332,12 @@ Kiểm tra build và TypeScript:
 ```bash
 pnpm build
 pnpm typecheck
+```
+
+Mỗi lần chạy `pnpm build`, schema MySQL bootstrap hiện tại cũng được xuất ra:
+
+```text
+docs/database/mysql-schema.sql
 ```
 
 Chạy test server:
@@ -341,7 +363,7 @@ server/public/app
 Chạy server đã compile:
 
 ```bash
-pnpm -C server start:prod
+pnpm start
 ```
 
 Sau đó mở dashboard production:
@@ -388,13 +410,14 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 | --- | --- |
 | `pnpm install` | Cài dependencies và chạy DB init. |
 | `pnpm dev` | Chạy server và web dev cùng lúc. |
-| `pnpm dev:server` | Chỉ chạy Fastify server. |
-| `pnpm dev:web` | Chỉ chạy Vite web app. |
-| `pnpm build` | Build web rồi server. |
-| `pnpm typecheck` | Kiểm tra TypeScript phía server. |
+| `pnpm -C server dev` | Chỉ chạy Fastify server. |
+| `pnpm -C server/client dev` | Chỉ chạy Vite build watch cho dashboard. |
+| `pnpm build` | Build web, build server và xuất schema SQL ra `docs/database/mysql-schema.sql`. |
+| `pnpm typecheck` | Kiểm tra TypeScript phía dashboard và server. |
 | `pnpm -C server test` | Chạy test phía server. |
 | `pnpm -C server db:init` | Khởi tạo schema MySQL khi đã cấu hình MySQL. |
-| `pnpm -C server start:prod` | Chạy server từ output đã build. |
+| `pnpm db:schema:export` | Xuất schema MySQL bootstrap ra `docs/database/mysql-schema.sql`. |
+| `pnpm start` | Chạy server từ output đã build. |
 | `pnpm perf:lighthouse` | Build và chạy kiểm tra Lighthouse. |
 
 ## Xử lý lỗi thường gặp
@@ -404,7 +427,7 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 - Thiết bị bị `unauthorized`: token firmware gửi lên không khớp `DEVICE_AUTH_TOKEN`.
 - Thiết bị online nhưng dashboard không thấy telemetry: kiểm tra event đang gửi đúng là `device:telemetry`, payload có số hợp lệ, `/health` có connected device count, dashboard không bị filter sai thiết bị/zone.
 - Không thấy spectrum: kiểm tra event đúng trục `device:telemetry:xspectrum`, `device:telemetry:yspectrum`, `device:telemetry:zspectrum`; payload có `values` hoặc binary attachment; `telemetry_uuid` nên khớp telemetry chính.
-- Không mở được dashboard tại `localhost:8080/app/` khi dev: hãy chạy `pnpm build` trước, hoặc dùng Vite tại `http://localhost:5173/app/`.
-- Vite không gọi được API: đảm bảo `pnpm dev:server` đang chạy ở port `8080`.
+- Không mở được dashboard tại `localhost:8080/app/` khi dev: đảm bảo `pnpm dev` đang chạy, hoặc chạy `pnpm build` trước nếu chỉ muốn xem production asset.
+- Dashboard không cập nhật khi dev: đảm bảo `pnpm -C server/client dev` đang chạy để rebuild asset và `pnpm -C server dev` đang chạy ở port `8080`.
 - OTA download lỗi trên thiết bị thật: không dùng `localhost` trong `OTA_PUBLIC_BASE_URL`; hãy dùng IP máy tính hoặc domain mà thiết bị truy cập được.
 - MySQL connection lỗi: kiểm tra database đã tồn tại, credential đúng và MySQL cho phép TCP connection trên host/port đã cấu hình.

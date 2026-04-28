@@ -4,7 +4,7 @@ import type { CommandRecord } from '../../shared/types.js';
 export class InMemoryCommandRepository implements CommandRepository {
   private readonly records = new Map<string, CommandRecord>();
 
-  save(record: CommandRecord): void {
+  async save(record: CommandRecord): Promise<void> {
     this.records.set(record.commandId, record);
   }
 
@@ -16,8 +16,20 @@ export class InMemoryCommandRepository implements CommandRepository {
     return [...this.records.values()].slice(-limit).reverse();
   }
 
-  update(record: CommandRecord): void {
+  async update(record: CommandRecord): Promise<void> {
     this.records.set(record.commandId, record);
+  }
+
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    let deleted = 0;
+    for (const [commandId, record] of this.records.entries()) {
+      if (record.deviceId !== deviceId) {
+        continue;
+      }
+      this.records.delete(commandId);
+      deleted += 1;
+    }
+    return deleted;
   }
 
   listTimedOutCandidates(nowIso: string): CommandRecord[] {

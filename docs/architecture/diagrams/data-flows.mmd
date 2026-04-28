@@ -1,0 +1,19 @@
+flowchart TD
+  Sensor[Sensor Device]
+  Socket[socket.handlers.ts]
+  Guard[TelemetryIngressGuard]
+  Device[DeviceService]
+  Telemetry[TelemetryService]
+  Spectrum[SpectrumStorageService]
+  Alert[AlertService]
+  DB[(MySQL / Storage)]
+  API[register-routes.ts]
+  UI[React Dashboard]
+
+  Sensor -->|telemetry| Socket --> Guard --> Telemetry --> DB
+  Socket --> Device
+  Telemetry --> Alert
+  Sensor -->|spectrum frame| Socket --> Spectrum --> DB
+  UI -->|REST fetch| API --> Telemetry
+  UI -->|REST fetch| API --> Spectrum
+  Socket -->|broadcast realtime update| UI

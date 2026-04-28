@@ -1,0 +1,62 @@
+flowchart TD
+  classDef entry fill:#fef3c7,stroke:#b45309,color:#3b2500
+  classDef edge fill:#dbeafe,stroke:#2563eb,color:#082f49
+  classDef domain fill:#dcfce7,stroke:#16a34a,color:#052e16
+  classDef data fill:#ffedd5,stroke:#ea580c,color:#431407
+  classDef ops fill:#f3e8ff,stroke:#9333ea,color:#3b0764
+
+  Entry["server/src/index.ts<br/>composition root"]:::entry
+  Http["HTTP routes<br/>77 app routes"]:::edge
+  Realtime["Realtime module<br/>Socket.IO gateway + handlers<br/>21 backend socket events"]:::edge
+
+  subgraph Core["Device data path"]
+    Device["device<br/>DeviceService + repositories"]:::domain
+    Telemetry["telemetry<br/>TelemetryService + MySQL repo"]:::domain
+    Spectrum["spectrum<br/>SpectrumStorageService"]:::domain
+    Reliability["reliability<br/>TelemetryIngressGuard"]:::ops
+  end
+
+  subgraph OpsDomain["Operations domain"]
+    Alert["alert"]:::domain
+    Command["command"]:::domain
+    Ota["OTA dispatch<br/>direct device targeting"]:::domain
+    Zone["zone"]:::domain
+  end
+
+  subgraph AuditAuth["Auth and audit"]
+    Auth["auth"]:::domain
+    Audit["audit"]:::domain
+  end
+
+  subgraph Platform["Platform"]
+    Persistence[("persistence<br/>MySQL access + schema")]:::data
+    Shared["shared<br/>config + types"]:::ops
+  end
+
+  Entry --> Http
+  Entry --> Realtime
+  Entry --> Core
+  Entry --> OpsDomain
+  Entry --> AuditAuth
+  Entry --> Platform
+
+  Http --> Core
+  Http --> OpsDomain
+  Http --> AuditAuth
+  Realtime --> Device
+  Realtime --> Telemetry
+  Realtime --> Spectrum
+  Realtime --> Reliability
+  Realtime --> Alert
+  Realtime --> Command
+  Http --> Ota
+
+  Telemetry --> Device
+  Telemetry --> Persistence
+  Spectrum --> Persistence
+  Device --> Persistence
+  Zone --> Persistence
+  Alert --> Persistence
+  Audit --> Persistence
+  Command --> Device
+  Ota --> Command

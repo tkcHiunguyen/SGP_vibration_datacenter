@@ -1,0 +1,31 @@
+flowchart LR
+  Sensor[Sensor Device]
+  Browser[Browser Client]
+  Socket[Socket.IO Handlers]
+  Services[Backend Services]
+  Sensor -->|device:command:ack| Socket
+  Sensor -->|device:request-last-command| Socket
+  Sensor -->|device:heartbeat| Socket
+  Sensor -->|device:metadata| Socket
+  Sensor -->|disconnect| Socket
+  Sensor -->|connection| Socket
+  Sensor -->|device:telemetry:xspectrum| Socket
+  Sensor -->|device:telemetry:yspectrum| Socket
+  Sensor -->|device:telemetry:zspectrum| Socket
+  Sensor -->|device:telemetry| Socket
+  Sensor -->|connect| Socket
+  Sensor -->|telemetry| Socket
+  Sensor -->|telemetry:spectrum| Socket
+  Socket -->|device:command| Browser
+  Socket -->|device:error| Browser
+  Socket -->|device:ack| Browser
+  Socket -->|telemetry| Browser
+  Socket -->|telemetry:spectrum| Browser
+  Socket -->|alert| Browser
+  Socket -->|device:heartbeat| Browser
+  Socket -->|device:metadata| Browser
+  Browser <--|connect| Socket
+  Browser <--|disconnect| Socket
+  Browser <--|telemetry| Socket
+  Browser <--|telemetry:spectrum| Socket
+  Socket --> Services

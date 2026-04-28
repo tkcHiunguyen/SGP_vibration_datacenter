@@ -10,7 +10,7 @@ type ZoneRow = {
   updated_at: string | Date;
 };
 
-export type ZoneRecord = {
+type ZoneRecord = {
   id: number;
   code: string;
   name: string;
@@ -19,22 +19,22 @@ export type ZoneRecord = {
   updatedAt: string;
 };
 
-export type ZoneCreateInput = {
+type ZoneCreateInput = {
   code?: string;
   name: string;
   description?: string;
 };
 
-export type ZoneUpdateInput = {
+type ZoneUpdateInput = {
   code?: string;
   name?: string;
   description?: string | null;
 };
 
-export type ZoneDescriptionFilter = 'all' | 'with-description' | 'without-description';
-export type ZoneSortOption = 'updated-desc' | 'name-asc' | 'code-asc';
+type ZoneDescriptionFilter = 'all' | 'with-description' | 'without-description';
+type ZoneSortOption = 'updated-desc' | 'name-asc' | 'code-asc';
 
-export type ZoneListOptions = {
+type ZoneListOptions = {
   search?: string;
   descriptionFilter?: ZoneDescriptionFilter;
   sortBy?: ZoneSortOption;
@@ -42,7 +42,7 @@ export type ZoneListOptions = {
   pageSize?: number;
 };
 
-export type ZoneListResult = {
+type ZoneListResult = {
   items: ZoneRecord[];
   total: number;
   page: number;
@@ -50,7 +50,7 @@ export type ZoneListResult = {
   totalPages: number;
 };
 
-export type ZoneSummary = {
+type ZoneSummary = {
   total: number;
   withDescription: number;
   updatedToday: number;

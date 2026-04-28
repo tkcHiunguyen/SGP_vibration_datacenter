@@ -1,0 +1,26 @@
+[
+  {
+    "direction": "server-to-client",
+    "event": "connect",
+    "file": "server/client/src/App.tsx",
+    "line": 982
+  },
+  {
+    "direction": "server-to-client",
+    "event": "disconnect",
+    "file": "server/client/src/App.tsx",
+    "line": 989
+  },
+  {
+    "direction": "server-to-client",
+    "event": "telemetry",
+    "file": "server/client/src/App.tsx",
+    "line": 996
+  },
+  {
+    "direction": "server-to-client",
+    "event": "telemetry:spectrum",
+    "file": "server/client/src/App.tsx",
+    "line": 1014
+  }
+]

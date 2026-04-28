@@ -28,7 +28,7 @@ export class CommandService {
     return normalized.length > 0 ? normalized : undefined;
   }
 
-  create(deviceId: string, type: CommandType, payload: Record<string, unknown> = {}): DeviceCommand | null {
+  async create(deviceId: string, type: CommandType, payload: Record<string, unknown> = {}): Promise<DeviceCommand | null> {
     if (!this.deviceService.isConnected(deviceId)) {
       return null;
     }
@@ -41,7 +41,7 @@ export class CommandService {
       sentAt: now.toISOString(),
     };
 
-    this.repository.save({
+    await this.repository.save({
       ...command,
       deviceId,
       status: 'sent',
@@ -52,7 +52,7 @@ export class CommandService {
     return command;
   }
 
-  acknowledge(
+  async acknowledge(
     commandId: string,
     deviceId: string,
     ack?: {
@@ -63,7 +63,7 @@ export class CommandService {
       raw?: Record<string, unknown>;
       receivedAt?: string;
     },
-  ): boolean {
+  ): Promise<boolean> {
     const found = this.repository.get(commandId);
     if (!found) {
       return false;
@@ -95,7 +95,7 @@ export class CommandService {
     };
     ackHistory.push(ackEvent);
 
-    this.repository.update({
+    await this.repository.update({
       ...found,
       status: 'acked',
       ackedAt: found.ackedAt ?? nowIso,
@@ -109,14 +109,14 @@ export class CommandService {
     return true;
   }
 
-  processTimeouts(nowIso = new Date().toISOString()): number {
+  async processTimeouts(nowIso = new Date().toISOString()): Promise<number> {
     const candidates = this.repository.listTimedOutCandidates(nowIso);
     if (!candidates.length) {
       return 0;
     }
 
     for (const record of candidates) {
-      this.repository.update({
+      await this.repository.update({
         ...record,
         status: 'timeout',
         timeoutedAt: nowIso,
@@ -128,6 +128,14 @@ export class CommandService {
 
   listRecent(limit = 100) {
     return this.repository.list(limit);
+  }
+
+  async deleteByDeviceId(deviceId: string): Promise<number> {
+    const normalizedDeviceId = this.normalizeOptionalText(deviceId);
+    if (!normalizedDeviceId) {
+      return 0;
+    }
+    return await this.repository.deleteByDeviceId(normalizedDeviceId);
   }
 
   get(commandId: string) {

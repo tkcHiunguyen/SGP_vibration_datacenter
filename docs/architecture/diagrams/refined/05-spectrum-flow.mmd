@@ -1,0 +1,25 @@
+flowchart LR
+  classDef source fill:#eef6ff,stroke:#2563eb,color:#082f49
+  classDef process fill:#ecfdf5,stroke:#059669,color:#052e16
+  classDef store fill:#fff7ed,stroke:#c2410c,color:#431407
+  classDef ui fill:#f5f3ff,stroke:#7c3aed,color:#2e1065
+
+  Device["Sensor device"]:::source
+  X["device:telemetry:xspectrum"]:::source
+  Y["device:telemetry:yspectrum"]:::source
+  Z["device:telemetry:zspectrum"]:::source
+  Socket["Socket handlers<br/>spectrum event normalization"]:::process
+  SpectrumSvc["SpectrumStorageService<br/>store frame + summaries"]:::process
+  MySQL[("MySQL spectrum tables")]:::store
+  Gateway["SocketIoGateway<br/>telemetry:spectrum"]:::process
+  UI["React dashboard<br/>FFT / spectrum panels"]:::ui
+  API["REST spectrum lookup<br/>device detail/chart modal"]:::process
+
+  Device --> X --> Socket
+  Device --> Y --> Socket
+  Device --> Z --> Socket
+  Socket --> SpectrumSvc
+  SpectrumSvc --> MySQL
+  SpectrumSvc --> Gateway
+  Gateway -->|telemetry:spectrum| UI
+  UI -->|fetch historical frames| API --> SpectrumSvc

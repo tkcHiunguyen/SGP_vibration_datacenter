@@ -17,7 +17,7 @@ from graphify.report import generate
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_ROOTS = ("server/src", "web/src")
+DEFAULT_SOURCE_ROOTS = ("server/src", "server/client/src")
 OUTPUT_DIR_NAME = "graphify-out"
 
 
@@ -104,7 +104,7 @@ def main() -> int:
     "--roots",
     nargs="+",
     default=list(DEFAULT_SOURCE_ROOTS),
-    help="Relative source roots to scan (default: server/src web/src).",
+        help="Relative source roots to scan (default: server/src server/client/src).",
   )
   parser.add_argument(
     "--watch",

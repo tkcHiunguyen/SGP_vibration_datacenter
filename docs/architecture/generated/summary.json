@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-28T07:19:41.517Z",
+  "counts": {
+    "files": 75,
+    "modules": 21,
+    "routes": 34,
+    "socketEvents": 25,
+    "services": 8,
+    "repositories": 7,
+    "frontendApiCalls": 13,
+    "frontendSocketCalls": 4
+  }
+}

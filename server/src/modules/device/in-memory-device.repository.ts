@@ -1,4 +1,4 @@
-import type { DeviceRemovalResult, DeviceRepository } from './device.repository.js';
+import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
 import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
@@ -11,9 +11,7 @@ type DeviceMetadataRow = {
   site: string | null;
   zone: string | null;
   firmware_version: string | null;
-  sensor_version: string | null;
   notes: string | null;
-  archived_at: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
 };
@@ -26,6 +24,33 @@ type MySqlErrorLike = {
   code?: string;
   errno?: number;
 };
+
+type CountRow = {
+  total: number | string;
+};
+
+type SpectrumSummaryRow = {
+  total_frames: number | string;
+  total_bytes: number | string | null;
+};
+
+type DeviceCountTable = 'devices' | 'device_datas' | 'socket_datas' | 'device_commands' | 'alerts' | 'audit_logs';
+
+function toCount(row: CountRow | undefined): number {
+  return Math.max(0, Math.floor(Number(row?.total ?? 0)));
+}
+
+function createTotalRows(impact: Omit<DeviceDeletionImpact, 'totalRows'>): number {
+  return (
+    impact.deviceRows +
+    impact.telemetryRows +
+    impact.spectrumFrames +
+    impact.socketSessions +
+    impact.commandRows +
+    impact.alertRows +
+    impact.auditLogRows
+  );
+}
 
 export class InMemoryDeviceRepository implements DeviceRepository {
   private readonly metadata = new Map<string, DeviceMetadata>();
@@ -47,32 +72,87 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     await this.persistMetadata(metadata);
   }
 
+  async inspectRemoval(deviceId: string): Promise<DeviceDeletionImpact | null> {
+    const existing = this.metadata.get(deviceId) ?? null;
+    if (!existing) {
+      return null;
+    }
+
+    if (!this.mysql) {
+      return this.createInMemoryImpact(deviceId, existing);
+    }
+
+    const [deviceRows, telemetryRows, socketSessions, commandRows, alertRows, auditLogRows, spectrumSummary] =
+      await Promise.all([
+        this.countRows('devices', deviceId),
+        this.countRows('device_datas', deviceId),
+        this.countRows('socket_datas', deviceId),
+        this.countRows('device_commands', deviceId),
+        this.countRows('alerts', deviceId),
+        this.countRows('audit_logs', deviceId),
+        this.countSpectrumRows(deviceId),
+      ]);
+
+    const impactWithoutTotal: Omit<DeviceDeletionImpact, 'totalRows'> = {
+      deviceId,
+      deviceName: existing.name,
+      deviceRows,
+      telemetryRows,
+      spectrumFrames: spectrumSummary.frames,
+      spectrumBytes: spectrumSummary.bytes,
+      socketSessions,
+      commandRows,
+      alertRows,
+      auditLogRows,
+    };
+
+    return {
+      ...impactWithoutTotal,
+      totalRows: createTotalRows(impactWithoutTotal),
+    };
+  }
+
   async removeMetadata(deviceId: string): Promise<DeviceRemovalResult | null> {
     const existing = this.metadata.get(deviceId) ?? null;
     if (!existing) {
       return null;
     }
 
-    let telemetryDeleted = 0;
+    let impact = await this.inspectRemoval(deviceId);
+    if (!impact) {
+      impact = this.createInMemoryImpact(deviceId, existing);
+    }
+
     if (this.mysql) {
-      const now = new Date().toISOString();
-      await this.mysql.execute(
-        `
-          UPDATE devices
-          SET archived_at = ?, updated_at = ?
-          WHERE device_id = ?
-        `,
-        [now, now, deviceId],
-      );
-      telemetryDeleted = await this.mysql.execute('DELETE FROM device_datas WHERE device_id = ?', [deviceId]);
-      await this.mysql.execute('DELETE FROM socket_datas WHERE device_id = ?', [deviceId]);
+      const auditLogRows = await this.mysql.execute('DELETE FROM audit_logs WHERE device_id = ?', [deviceId]);
+      const alertRows = await this.mysql.execute('DELETE FROM alerts WHERE device_id = ?', [deviceId]);
+      const commandRows = await this.mysql.execute('DELETE FROM device_commands WHERE device_id = ?', [deviceId]);
+      const spectrumFrames = await this.mysql.execute('DELETE FROM device_spectrum_frames WHERE device_id = ?', [deviceId]);
+      const telemetryRows = await this.mysql.execute('DELETE FROM device_datas WHERE device_id = ?', [deviceId]);
+      const socketSessions = await this.mysql.execute('DELETE FROM socket_datas WHERE device_id = ?', [deviceId]);
+      const deviceRows = await this.mysql.execute('DELETE FROM devices WHERE device_id = ?', [deviceId]);
+
+      const actualImpactWithoutTotal: Omit<DeviceDeletionImpact, 'totalRows'> = {
+        ...impact,
+        deviceRows,
+        telemetryRows,
+        spectrumFrames,
+        socketSessions,
+        commandRows,
+        alertRows,
+        auditLogRows,
+      };
+      impact = {
+        ...actualImpactWithoutTotal,
+        totalRows: createTotalRows(actualImpactWithoutTotal),
+      };
     }
 
     this.metadata.delete(deviceId);
     this.sessions.delete(deviceId);
     return {
       metadata: existing,
-      telemetryDeleted,
+      impact,
     };
   }
 
@@ -141,6 +221,53 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     return this.sessions.size;
   }
 
+  private createInMemoryImpact(deviceId: string, metadata: DeviceMetadata): DeviceDeletionImpact {
+    const impactWithoutTotal: Omit<DeviceDeletionImpact, 'totalRows'> = {
+      deviceId,
+      deviceName: metadata.name,
+      deviceRows: 1,
+      telemetryRows: 0,
+      spectrumFrames: 0,
+      spectrumBytes: 0,
+      socketSessions: this.sessions.has(deviceId) ? 1 : 0,
+      commandRows: 0,
+      alertRows: 0,
+      auditLogRows: 0,
+    };
+
+    return {
+      ...impactWithoutTotal,
+      totalRows: createTotalRows(impactWithoutTotal),
+    };
+  }
+
+  private async countRows(tableName: DeviceCountTable, deviceId: string): Promise<number> {
+    if (!this.mysql) {
+      return 0;
+    }
+    const rows = await this.mysql.query<CountRow>(`SELECT COUNT(*) AS total FROM ${tableName} WHERE device_id = ?`, [
+      deviceId,
+    ]);
+    return toCount(rows[0]);
+  }
+
+  private async countSpectrumRows(deviceId: string): Promise<{ frames: number; bytes: number }> {
+    if (!this.mysql) {
+      return { frames: 0, bytes: 0 };
+    }
+    const rows = await this.mysql.query<SpectrumSummaryRow>(
+      `SELECT COUNT(*) AS total_frames, COALESCE(SUM(file_size_bytes), 0) AS total_bytes
+         FROM device_spectrum_frames
+        WHERE device_id = ?`,
+      [deviceId],
+    );
+    const row = rows[0];
+    return {
+      frames: Math.max(0, Math.floor(Number(row?.total_frames ?? 0))),
+      bytes: Math.max(0, Math.floor(Number(row?.total_bytes ?? 0))),
+    };
+  }
+
   private async persistMetadata(metadata: DeviceMetadata): Promise<void> {
     if (!this.mysql) {
       return;
@@ -149,18 +276,16 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     await this.mysql.execute(
       `
         INSERT INTO devices (
-          device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, archived_at, created_at, updated_at
+          device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           uuid = VALUES(uuid),
           name = VALUES(name),
           site = VALUES(site),
           zone = VALUES(zone),
           firmware_version = VALUES(firmware_version),
-          sensor_version = VALUES(sensor_version),
           notes = VALUES(notes),
-          archived_at = VALUES(archived_at),
           created_at = VALUES(created_at),
           updated_at = VALUES(updated_at)
       `,
@@ -171,9 +296,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata.site ?? null,
         metadata.zone ?? null,
         metadata.firmwareVersion ?? null,
-        metadata.sensorVersion ?? null,
         metadata.notes ?? null,
-        null,
         metadata.createdAt,
         metadata.updatedAt,
       ],
@@ -249,9 +372,8 @@ export class InMemoryDeviceRepository implements DeviceRepository {
 
     const metadataRows = await this.mysql.query<DeviceMetadataRow>(
       `
-        SELECT device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, archived_at, created_at, updated_at
+        SELECT device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
         FROM devices
-        WHERE archived_at IS NULL
         ORDER BY device_id ASC
       `,
     );
@@ -263,7 +385,6 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         site: row.site ?? undefined,
         zone: row.zone ?? undefined,
         firmwareVersion: row.firmware_version ?? undefined,
-        sensorVersion: row.sensor_version ?? undefined,
         notes: row.notes ?? undefined,
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
@@ -313,11 +434,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     await this.mysql.execute(
       `
         INSERT INTO devices (
-          device_id, uuid, name, site, zone, firmware_version, sensor_version, notes, archived_at, created_at, updated_at
+          device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
-          archived_at = VALUES(archived_at),
           updated_at = VALUES(updated_at)
       `,
       [
@@ -327,9 +447,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata?.site ?? null,
         metadata?.zone ?? null,
         metadata?.firmwareVersion ?? null,
-        metadata?.sensorVersion ?? null,
         metadata?.notes ?? null,
-        null,
         createdAt,
         updatedAt,
       ],

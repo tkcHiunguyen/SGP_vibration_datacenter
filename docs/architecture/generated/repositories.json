@@ -1,0 +1,37 @@
+[
+  {
+    "name": "InMemoryAlertRepository",
+    "file": "server/src/modules/alert/in-memory-alert.repository.ts",
+    "module": "server/src/modules/alert"
+  },
+  {
+    "name": "InMemoryAuditRepository",
+    "file": "server/src/modules/audit/in-memory-audit.repository.ts",
+    "module": "server/src/modules/audit"
+  },
+  {
+    "name": "InMemoryCommandRepository",
+    "file": "server/src/modules/command/in-memory-command.repository.ts",
+    "module": "server/src/modules/command"
+  },
+  {
+    "name": "MySqlCommandRepository",
+    "file": "server/src/modules/command/mysql-command.repository.ts",
+    "module": "server/src/modules/command"
+  },
+  {
+    "name": "FakeDeviceRepository",
+    "file": "server/src/modules/device/device.service.test.ts",
+    "module": "server/src/modules/device"
+  },
+  {
+    "name": "InMemoryDeviceRepository",
+    "file": "server/src/modules/device/in-memory-device.repository.ts",
+    "module": "server/src/modules/device"
+  },
+  {
+    "name": "MySqlTelemetryRepository",
+    "file": "server/src/modules/telemetry/mysql-telemetry.repository.ts",
+    "module": "server/src/modules/telemetry"
+  }
+]

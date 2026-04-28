@@ -1,0 +1,328 @@
+{
+  "client/src/App.tsx": [
+    "client/src/app/components/LeftPanel.tsx",
+    "client/src/app/components/MainPanel.tsx",
+    "client/src/app/components/ThreeDPage.tsx",
+    "client/src/app/components/TopHeader.tsx",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/Analyze3DPanel.tsx": [
+    "client/src/app/components/MotorSceneCanvas.tsx",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/DeviceInfoModal.tsx": [
+    "client/src/app/components/ui/Button.tsx",
+    "client/src/app/components/ui/Form.tsx",
+    "client/src/app/components/ui/Modal.tsx",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/DeviceManagement.tsx": [
+    "client/src/app/components/DeviceInfoModal.tsx",
+    "client/src/app/components/SensorChartModal.tsx",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/LeftPanel.tsx": [
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/MainPanel.tsx": [
+    "client/src/app/components/Analyze3DPanel.tsx",
+    "client/src/app/components/DeviceManagement.tsx",
+    "client/src/app/components/OtaManagement.tsx",
+    "client/src/app/components/UnderDevelopment.tsx",
+    "client/src/app/components/ZoneManagement.tsx",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/MotorSceneCanvas.tsx": [],
+  "client/src/app/components/OtaManagement.tsx": [
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/SensorChartModal.tsx": [
+    "client/src/app/components/sensor-chart-modal/chart-parts.tsx",
+    "client/src/app/components/sensor-chart-modal/useChartModalLayout.ts",
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/ThreeDPage.tsx": [
+    "client/src/app/components/MotorSceneCanvas.tsx"
+  ],
+  "client/src/app/components/TopHeader.tsx": [
+    "client/src/app/context/ThemeContext.tsx",
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/UnderDevelopment.tsx": [
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ZoneManagement.tsx": [
+    "client/src/app/components/ui/index.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/sensor-chart-modal/chart-parts.tsx": [
+    "client/src/app/data/sensors.ts"
+  ],
+  "client/src/app/components/sensor-chart-modal/useChartModalLayout.ts": [
+    "client/src/app/components/sensor-chart-modal/chart-parts.tsx"
+  ],
+  "client/src/app/components/ui/Button.tsx": [
+    "client/src/app/components/ui/cx.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/EmptyState.tsx": [
+    "client/src/app/components/ui/cx.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/Form.tsx": [
+    "client/src/app/components/ui/cx.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/Modal.tsx": [
+    "client/src/app/components/ui/Button.tsx",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/Page.tsx": [
+    "client/src/app/components/ui/cx.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/StatCard.tsx": [
+    "client/src/app/components/ui/cx.ts",
+    "client/src/app/context/ThemeContext.tsx"
+  ],
+  "client/src/app/components/ui/Toast.tsx": [],
+  "client/src/app/components/ui/cx.ts": [],
+  "client/src/app/components/ui/index.ts": [
+    "client/src/app/components/ui/Button.tsx",
+    "client/src/app/components/ui/EmptyState.tsx",
+    "client/src/app/components/ui/Form.tsx",
+    "client/src/app/components/ui/Modal.tsx",
+    "client/src/app/components/ui/Page.tsx",
+    "client/src/app/components/ui/StatCard.tsx",
+    "client/src/app/components/ui/Toast.tsx"
+  ],
+  "client/src/app/context/ThemeContext.tsx": [],
+  "client/src/app/data/sensors.ts": [],
+  "client/src/main.tsx": [
+    "client/src/App.tsx",
+    "client/src/styles/index.css"
+  ],
+  "client/src/styles/index.css": [
+    "client/src/styles/tailwind.css",
+    "client/src/styles/theme.css"
+  ],
+  "client/src/styles/tailwind.css": [],
+  "client/src/styles/theme.css": [],
+  "client/src/vite-env.d.ts": [],
+  "src/index.ts": [
+    "src/modules/alert/alert.service.ts",
+    "src/modules/alert/in-memory-alert.repository.ts",
+    "src/modules/audit/audit.service.ts",
+    "src/modules/audit/in-memory-audit.repository.ts",
+    "src/modules/auth/index.ts",
+    "src/modules/command/command.service.ts",
+    "src/modules/command/in-memory-command.repository.ts",
+    "src/modules/command/mysql-command.repository.ts",
+    "src/modules/device/device.service.ts",
+    "src/modules/device/in-memory-device.repository.ts",
+    "src/modules/http/register-routes.ts",
+    "src/modules/persistence/mysql-access.ts",
+    "src/modules/realtime/socket-io.gateway.ts",
+    "src/modules/realtime/socket.handlers.ts",
+    "src/modules/reliability/telemetry-ingress-guard.ts",
+    "src/modules/spectrum/spectrum-storage.service.ts",
+    "src/modules/telemetry/mysql-telemetry.repository.ts",
+    "src/modules/telemetry/telemetry.service.ts",
+    "src/modules/zone/zone.service.ts",
+    "src/shared/config.ts"
+  ],
+  "src/modules/alert/alert.repository.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/alert/alert.service.ts": [
+    "src/modules/alert/alert.repository.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/alert/in-memory-alert.repository.ts": [
+    "src/modules/alert/alert.repository.ts",
+    "src/modules/persistence/mysql-access.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/audit/audit.repository.ts": [
+    "src/modules/audit/audit.types.ts"
+  ],
+  "src/modules/audit/audit.service.ts": [
+    "src/modules/audit/audit.repository.ts",
+    "src/modules/audit/audit.types.ts"
+  ],
+  "src/modules/audit/audit.types.ts": [],
+  "src/modules/audit/in-memory-audit.repository.ts": [
+    "src/modules/audit/audit.repository.ts",
+    "src/modules/audit/audit.types.ts",
+    "src/modules/persistence/mysql-access.ts"
+  ],
+  "src/modules/auth/auth.config.ts": [
+    "src/modules/auth/auth.service.ts",
+    "src/modules/auth/auth.types.ts",
+    "src/modules/auth/auth.utils.ts",
+    "src/shared/config.ts"
+  ],
+  "src/modules/auth/auth.service.ts": [
+    "src/modules/auth/auth.types.ts",
+    "src/modules/auth/auth.utils.ts"
+  ],
+  "src/modules/auth/auth.types.ts": [],
+  "src/modules/auth/auth.utils.ts": [
+    "src/modules/auth/auth.types.ts"
+  ],
+  "src/modules/auth/index.ts": [
+    "src/modules/auth/auth.config.ts",
+    "src/modules/auth/auth.service.ts"
+  ],
+  "src/modules/command/command.repository.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/command/command.service.ts": [
+    "src/modules/command/command.repository.ts",
+    "src/modules/device/device.service.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/command/in-memory-command.repository.ts": [
+    "src/modules/command/command.repository.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/command/mysql-command.repository.ts": [
+    "src/modules/command/command.repository.ts",
+    "src/modules/persistence/mysql-access.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/device/device.repository.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/device/device.service.test.ts": [
+    "src/modules/device/device.repository.ts",
+    "src/modules/device/device.service.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/device/device.service.ts": [
+    "src/modules/device/device.repository.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/device/in-memory-device.repository.ts": [
+    "src/modules/device/device.repository.ts",
+    "src/modules/persistence/mysql-access.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/http/core.routes.ts": [
+    "src/modules/alert/alert.service.ts",
+    "src/modules/auth/index.ts",
+    "src/modules/device/device.service.ts",
+    "src/modules/realtime/realtime.gateway.ts",
+    "src/shared/config.ts"
+  ],
+  "src/modules/http/register-routes.ts": [
+    "src/modules/alert/alert.service.ts",
+    "src/modules/audit/audit.service.ts",
+    "src/modules/auth/index.ts",
+    "src/modules/command/command.service.ts",
+    "src/modules/device/device.service.ts",
+    "src/modules/http/core.routes.ts",
+    "src/modules/realtime/realtime.gateway.ts",
+    "src/modules/spectrum/spectrum-storage.service.ts",
+    "src/modules/telemetry/telemetry.service.ts",
+    "src/modules/zone/zone.service.ts",
+    "src/shared/config.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/persistence/mysql-access.ts": [
+    "src/modules/persistence/mysql-env.ts",
+    "src/modules/persistence/mysql-schema.ts"
+  ],
+  "src/modules/persistence/mysql-env.ts": [],
+  "src/modules/persistence/mysql-schema.ts": [],
+  "src/modules/realtime/command.handlers.ts": [
+    "src/modules/realtime/socket-handler.types.ts"
+  ],
+  "src/modules/realtime/device-state.handlers.ts": [
+    "src/modules/realtime/socket-handler.types.ts",
+    "src/modules/realtime/socket-payload.utils.ts"
+  ],
+  "src/modules/realtime/realtime.gateway.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/realtime/session.handlers.ts": [
+    "src/modules/realtime/socket-handler.types.ts"
+  ],
+  "src/modules/realtime/socket-handler.types.ts": [
+    "src/modules/alert/alert.service.ts",
+    "src/modules/command/command.service.ts",
+    "src/modules/device/device.service.ts",
+    "src/modules/realtime/realtime.gateway.ts",
+    "src/modules/reliability/telemetry-ingress-guard.ts",
+    "src/modules/spectrum/spectrum-storage.service.ts",
+    "src/modules/telemetry/telemetry.service.ts"
+  ],
+  "src/modules/realtime/socket-io.gateway.ts": [
+    "src/modules/realtime/realtime.gateway.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/realtime/socket-payload.utils.ts": [],
+  "src/modules/realtime/socket.handlers.ts": [
+    "src/modules/realtime/command.handlers.ts",
+    "src/modules/realtime/device-state.handlers.ts",
+    "src/modules/realtime/session.handlers.ts",
+    "src/modules/realtime/socket-handler.types.ts",
+    "src/modules/realtime/spectrum-ingest.handlers.ts",
+    "src/modules/realtime/telemetry-ingest.handlers.ts"
+  ],
+  "src/modules/realtime/spectrum-ingest.handlers.ts": [
+    "src/modules/realtime/socket-handler.types.ts",
+    "src/modules/realtime/socket-payload.utils.ts",
+    "src/modules/realtime/spectrum-message.normalizer.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/realtime/spectrum-message.normalizer.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/realtime/telemetry-ingest.handlers.ts": [
+    "src/modules/realtime/socket-handler.types.ts",
+    "src/modules/realtime/socket-payload.utils.ts"
+  ],
+  "src/modules/reliability/telemetry-ingress-guard.ts": [],
+  "src/modules/spectrum/spectrum-storage.service.ts": [
+    "src/modules/persistence/mysql-access.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/telemetry/mysql-telemetry.repository.ts": [
+    "src/modules/persistence/mysql-access.ts",
+    "src/modules/telemetry/telemetry.repository.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/telemetry/telemetry.repository.ts": [
+    "src/shared/types.ts"
+  ],
+  "src/modules/telemetry/telemetry.service.ts": [
+    "src/modules/device/device.service.ts",
+    "src/modules/telemetry/telemetry.repository.ts",
+    "src/shared/types.ts"
+  ],
+  "src/modules/zone/zone.service.test.ts": [
+    "src/modules/zone/zone.service.ts"
+  ],
+  "src/modules/zone/zone.service.ts": [
+    "src/modules/persistence/mysql-access.ts"
+  ],
+  "src/shared/config.ts": [],
+  "src/shared/types.ts": [],
+  "src/tools/bootstrap-db-schema.ts": [
+    "src/modules/persistence/mysql-access.ts"
+  ]
+}

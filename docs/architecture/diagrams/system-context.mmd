@@ -1,0 +1,15 @@
+flowchart LR
+  Sensor[Sensor Devices]
+  Browser[Browser Dashboard]
+  Server[Fastify + Socket.IO Server :8080]
+  MySQL[(MySQL)]
+  Static[server/public/app]
+  Storage[(Local runtime storage)]
+
+  Sensor -->|Socket.IO telemetry / spectrum / heartbeat| Server
+  Server -->|commands / OTA| Sensor
+  Browser -->|REST API + Socket.IO| Server
+  Server -->|serves app shell| Browser
+  Server --> MySQL
+  Server --> Storage
+  Static --> Server

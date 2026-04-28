@@ -10,4 +10,5 @@ export interface AuditRepository {
   listByActor(actor: string, limit?: number): AuditRecord[];
   listByAction(action: string, limit?: number): AuditRecord[];
   listByTimeRange(from?: string | Date, to?: string | Date, limit?: number): AuditRecord[];
+  deleteByDeviceId(deviceId: string): Promise<number>;
 }

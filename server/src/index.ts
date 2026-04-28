@@ -17,17 +17,8 @@ import { DeviceService } from './modules/device/device.service.js';
 import { MySqlTelemetryRepository } from './modules/telemetry/mysql-telemetry.repository.js';
 import { TelemetryService } from './modules/telemetry/telemetry.service.js';
 import { InMemoryCommandRepository } from './modules/command/in-memory-command.repository.js';
+import { MySqlCommandRepository } from './modules/command/mysql-command.repository.js';
 import { CommandService } from './modules/command/command.service.js';
-import { InMemoryIncidentRepository } from './modules/incident/in-memory-incident.repository.js';
-import { IncidentService } from './modules/incident/incident.service.js';
-import { FleetService, InMemoryFleetRepository } from './modules/fleet/index.js';
-import { GovernanceService, InMemoryGovernanceRepository } from './modules/governance/index.js';
-import { InMemoryRolloutRepository, RolloutService } from './modules/rollout/index.js';
-import {
-  createHealthSnapshot,
-  createObservabilityMetrics,
-  registerObservabilityRoutes,
-} from './modules/observability/index.js';
 import { getSharedMySqlAccess, isMySqlAccessEnabled } from './modules/persistence/mysql-access.js';
 import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
@@ -77,16 +68,15 @@ await app.register(fastifyStatic, {
 
 const mysqlAccess = getSharedMySqlAccess();
 await mysqlAccess?.ensureReady();
+const persistenceMode = mysqlAccess ? 'mysql' : 'in-memory';
 
 const deviceRepository = await InMemoryDeviceRepository.create(mysqlAccess);
 const telemetryRepository = await MySqlTelemetryRepository.create(mysqlAccess);
-const commandRepository = new InMemoryCommandRepository();
+const commandRepository = mysqlAccess
+  ? await MySqlCommandRepository.create(mysqlAccess)
+  : new InMemoryCommandRepository();
 const alertRepository = await InMemoryAlertRepository.create(mysqlAccess);
 const auditRepository = await InMemoryAuditRepository.create(mysqlAccess);
-const incidentRepository = await InMemoryIncidentRepository.create(mysqlAccess);
-const fleetRepository = new InMemoryFleetRepository();
-const governanceRepository = new InMemoryGovernanceRepository();
-const rolloutRepository = new InMemoryRolloutRepository();
 
 const authService = createAuthServiceFromEnv(env);
 const deviceService = new DeviceService(deviceRepository);
@@ -98,17 +88,12 @@ const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
 });
 const alertService = new AlertService(alertRepository);
 const auditService = new AuditService(auditRepository);
-const incidentService = new IncidentService(incidentRepository);
 const zoneService = new ZoneService(mysqlAccess);
-const fleetService = new FleetService(fleetRepository);
-const governanceService = new GovernanceService(governanceRepository, env.GOVERNANCE_APPROVAL_TTL_MINUTES);
-const rolloutService = new RolloutService(rolloutRepository);
 const commandServiceWithTimeout = new CommandService(
   deviceService,
   commandRepository,
   env.COMMAND_TIMEOUT_MS,
 );
-const metrics = createObservabilityMetrics({ service: serviceName });
 const telemetryIngressGuard = new TelemetryIngressGuard({
   dedupeWindowMs: env.TELEMETRY_DEDUPE_WINDOW_MS,
   maxPerDevicePerMinute: env.TELEMETRY_MAX_PER_DEVICE_PER_MINUTE,
@@ -117,51 +102,6 @@ const telemetryIngressGuard = new TelemetryIngressGuard({
 
 const realtimeGateway = new SocketIoGateway(app.server);
 
-const updateRuntimeGauges = () => {
-  const alertSummary = alertService.summarizeAlerts();
-  const governanceSummary = governanceService.summarize();
-  metrics.setGauge('connected_devices', deviceService.countConnected(), {}, 'Connected device sessions');
-  metrics.setGauge('connected_clients', realtimeGateway.connectedClientsCount(), {}, 'Connected Socket.IO clients');
-  metrics.setGauge('active_alerts', alertService.countActiveAlerts(), {}, 'Active alerts');
-  metrics.setGauge(
-    'alert_coalesced_signals_total',
-    alertSummary.coalescedSignals,
-    {},
-    'Coalesced alert signals retained on existing alerts',
-  );
-  metrics.setGauge(
-    'alert_suppressed_signals_total',
-    alertSummary.suppressedSignals,
-    {},
-    'Suppressed alert re-trigger signals',
-  );
-  metrics.setGauge(
-    'alert_flapping_signals_total',
-    alertSummary.flappingSignals,
-    {},
-    'Alert signals classified as flapping',
-  );
-  metrics.setGauge(
-    'mysql_persistence_enabled',
-    isMySqlAccessEnabled() ? 1 : 0,
-    {},
-    'Whether MySQL-backed persistence is configured',
-  );
-  metrics.setGauge(
-    'rollout_running_plans',
-    rolloutService.listPlans({ status: 'running', limit: 10_000 }).length,
-    {},
-    'Running rollout plans',
-  );
-  metrics.setGauge(
-    'governance_pending_approvals',
-    governanceSummary.pending,
-    {},
-    'Governance approvals pending decision',
-  );
-};
-updateRuntimeGauges();
-
 registerRoutes({
   app,
   authService,
@@ -169,12 +109,7 @@ registerRoutes({
   telemetryService,
   alertService,
   auditService,
-  incidentService,
-  fleetService,
-  governanceService,
-  rolloutService,
   commandService: commandServiceWithTimeout,
-  metrics,
   realtimeGateway,
   zoneService,
   spectrumStorageService,
@@ -186,151 +121,33 @@ registerSocketHandlers({
   telemetryService,
   alertService,
   commandService: commandServiceWithTimeout,
-  metrics,
   realtimeGateway,
   telemetryIngressGuard,
   spectrumStorageService,
   deviceAuthToken: env.DEVICE_AUTH_TOKEN,
 });
 
-registerObservabilityRoutes({
-  app,
-  serviceName,
-  metrics,
-  getLiveness: () =>
-    createHealthSnapshot({
-      service: serviceName,
-      kind: 'liveness',
-      checks: [
-        {
-          name: 'process',
-          status: 'healthy',
-          message: 'Fastify process is running',
-          details: {
-            uptimeSec: Math.round(process.uptime()),
-            pid: process.pid,
-          },
-        },
-      ],
-    }),
-  getReadiness: async () => {
-    const checks: Array<{
-      name: string;
-      status: 'healthy' | 'degraded' | 'unhealthy';
-      message: string;
-      details?: Record<string, unknown>;
-    }> = [
-      {
-        name: 'http',
-        status: 'healthy',
-        message: 'HTTP server initialized',
-      },
-      {
-        name: 'telemetry_store',
-        status: 'healthy',
-        message: 'Telemetry file-backed persistence available',
-      },
-    ];
-
-    if (!mysqlAccess) {
-      checks.push({
-        name: 'mysql',
-        status: 'degraded',
-        message: 'MySQL persistence not configured; using local fallback',
-      });
-    } else {
-      try {
-        await mysqlAccess.ensureReady();
-        await mysqlAccess.execute('SELECT 1');
-        checks.push({
-          name: 'mysql',
-          status: 'healthy',
-          message: 'MySQL persistence ready',
-        });
-      } catch (error) {
-        checks.push({
-          name: 'mysql',
-          status: 'unhealthy',
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    return createHealthSnapshot({
-      service: serviceName,
-      kind: 'readiness',
-      checks,
-    });
-  },
-});
-
+let commandTimeoutSweepRunning = false;
 const commandTimeoutSweep = setInterval(() => {
-  const changed = commandServiceWithTimeout.processTimeouts();
-  updateRuntimeGauges();
-  if (changed > 0) {
-    metrics.incCounter('command_timeouts_total', changed, {}, 'Commands marked as timeout');
-    app.log.warn({ count: changed }, 'Command(s) marked as timeout');
+  if (commandTimeoutSweepRunning) {
+    return;
   }
+  commandTimeoutSweepRunning = true;
+  void commandServiceWithTimeout
+    .processTimeouts()
+    .then((changed) => {
+      if (changed > 0) {
+        app.log.warn({ count: changed }, 'Command(s) marked as timeout');
+      }
+    })
+    .catch((error: unknown) => {
+      app.log.error({ err: error }, 'Failed to process command timeouts');
+    })
+    .finally(() => {
+      commandTimeoutSweepRunning = false;
+    });
 }, env.COMMAND_TIMEOUT_SWEEP_MS);
 commandTimeoutSweep.unref();
-
-const runtimeGaugeSweep = setInterval(() => {
-  updateRuntimeGauges();
-}, 5_000);
-runtimeGaugeSweep.unref();
-
-const rolloutEngineSweep = setInterval(() => {
-  void rolloutService.processRunningPlans((deviceId, payload) => {
-    const command = commandServiceWithTimeout.create(deviceId, 'set_config', payload);
-    if (!command) {
-      return {
-        status: 'timeout',
-        reason: 'device_not_connected',
-      } as const;
-    }
-    realtimeGateway.sendCommand(deviceId, command);
-    return {
-      status: 'acked',
-    } as const;
-  }).then((result) => {
-    if (result.dispatched > 0) {
-      metrics.incCounter('command_send_total', result.acked, {}, 'Commands sent from rollout engine');
-      if (result.failed + result.timeout > 0) {
-        metrics.incCounter(
-          'command_send_failed_total',
-          result.failed + result.timeout,
-          {},
-          'Failed rollout command send attempts',
-        );
-      }
-    }
-    if (result.waveCompleted > 0) {
-      metrics.incCounter(
-        'rollout_wave_completed_total',
-        result.waveCompleted,
-        {},
-        'Rollout waves completed by rollout engine',
-      );
-    }
-    if (result.autoStopped > 0) {
-      metrics.incCounter(
-        'rollout_auto_stop_total',
-        result.autoStopped,
-        {},
-        'Rollout executions auto-stopped by gate violations',
-      );
-    }
-    if (result.rollbacks > 0) {
-      metrics.incCounter(
-        'rollout_rollback_total',
-        result.rollbacks,
-        {},
-        'Rollout rollback executions completed',
-      );
-    }
-  });
-}, 1_000);
-rolloutEngineSweep.unref();
 
 let isShuttingDown = false;
 
@@ -341,8 +158,6 @@ const shutdown = async (signal: string) => {
   isShuttingDown = true;
   app.log.info({ signal }, 'Shutting down server...');
   clearInterval(commandTimeoutSweep);
-  clearInterval(runtimeGaugeSweep);
-  clearInterval(rolloutEngineSweep);
   realtimeGateway.close();
   await app.close();
   await mysqlAccess?.close();
@@ -354,6 +169,6 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ port: env.PORT, host: env.HOST });
 app.log.info(
-  { port: env.PORT, host: env.HOST, mysqlPersistence: isMySqlAccessEnabled() },
+  { port: env.PORT, host: env.HOST, mysqlPersistence: isMySqlAccessEnabled(), persistenceMode },
   'Server started',
 );

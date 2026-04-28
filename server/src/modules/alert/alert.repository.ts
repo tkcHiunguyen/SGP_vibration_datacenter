@@ -24,5 +24,6 @@ export interface AlertRepository {
   getLatestAlert(ruleId: string, deviceId: string): AlertRecord | null;
   saveAlert(record: AlertRecord): void;
   updateAlert(record: AlertRecord): void;
+  deleteByDeviceId(deviceId: string): Promise<number>;
   countActiveAlerts(): number;
 }
