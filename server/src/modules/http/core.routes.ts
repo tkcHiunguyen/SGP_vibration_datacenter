@@ -3,6 +3,7 @@ import { env } from '../../shared/config.js';
 import type { AlertService } from '../alert/alert.service.js';
 import type { AuthService } from '../auth/index.js';
 import type { DeviceService } from '../device/device.service.js';
+import type { MySqlPersistenceStatus } from '../persistence/mysql-access.js';
 import type { RealtimeGateway } from '../realtime/realtime.gateway.js';
 
 type RegisterCoreRoutesDeps = {
@@ -11,6 +12,7 @@ type RegisterCoreRoutesDeps = {
   deviceService: DeviceService;
   alertService: AlertService;
   realtimeGateway: RealtimeGateway;
+  persistenceStatus: MySqlPersistenceStatus;
 };
 
 const appShellPaths = [
@@ -48,6 +50,7 @@ export function registerCoreRoutes({
   deviceService,
   alertService,
   realtimeGateway,
+  persistenceStatus,
 }: RegisterCoreRoutesDeps): void {
   const authBypassEnabled = env.AUTH_BYPASS_GATING;
 
@@ -95,6 +98,7 @@ export function registerCoreRoutes({
     connectedDevices: deviceService.countConnected(),
     activeAlerts: alertService.countActiveAlerts(),
     connectedClients: realtimeGateway.connectedClientsCount(),
+    persistence: persistenceStatus,
     now: new Date().toISOString(),
   }));
 

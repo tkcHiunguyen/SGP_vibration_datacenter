@@ -67,6 +67,7 @@ PORT=8080
 HOST=0.0.0.0
 LOG_LEVEL=info
 MYSQL_URL=mysql://root@127.0.0.1:3306/sgp_vibration_datacenter
+DB_FALLBACK_ON_UNAVAILABLE=true
 TELEMETRY_RETENTION_HOURS=168
 SPECTRUM_STORAGE_DIR=storage/spectrum
 ```
@@ -76,6 +77,7 @@ Giải thích các điểm quan trọng:
 - `HOST=0.0.0.0` giúp thiết bị trong cùng LAN truy cập được server qua IP máy chạy backend.
 - Thiết bị thật không dùng `localhost` để gọi server. Với firmware, `localhost` là chính thiết bị. Hãy dùng IP/domain của máy chạy server, ví dụ `http://192.168.1.10:8080`.
 - Nếu chưa cấu hình MySQL, server chạy ở demo/in-memory mode cho kiểm thử nhanh; production/persistent mode cần MySQL để lưu telemetry, metadata, audit và command state sau restart.
+- Nếu có cấu hình MySQL nhưng dịch vụ/database chưa sẵn sàng, mặc định server sẽ fallback sang `in-memory` để dashboard/UI vẫn mở được; đặt `DB_FALLBACK_ON_UNAVAILABLE=false` nếu muốn production fail-fast.
 - Nếu bật `DEVICE_AUTH_TOKEN`, firmware phải gửi đúng token khi handshake Socket.IO.
 
 Tạo database MySQL nếu cần lưu dữ liệu bền vững:
@@ -104,7 +106,7 @@ Chạy từ root repository:
 pnpm install
 ```
 
-Sau khi cài, root `postinstall` sẽ chạy `pnpm db:init`. Nếu MySQL đã được cấu hình, schema sẽ được tạo hoặc cập nhật. Nếu chưa cấu hình MySQL, script sẽ in thông báo skip.
+Sau khi cài, root `postinstall` sẽ chạy `pnpm db:init`. Nếu MySQL đã được cấu hình và sẵn sàng, schema sẽ được tạo hoặc cập nhật. Nếu chưa cấu hình MySQL, hoặc MySQL chưa sẵn sàng trong chế độ fallback mặc định, script sẽ in thông báo skip.
 
 ## Chạy môi trường dev
 
@@ -391,6 +393,7 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 | `MYSQL_URL` | Connection string MySQL khuyến nghị. |
 | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Cấu hình MySQL dạng tách biến. |
 | `DB_AUTO_INIT` | Đặt `false` để tắt tự động khởi tạo schema. |
+| `DB_FALLBACK_ON_UNAVAILABLE` | Mặc định `true`: MySQL không sẵn sàng thì chạy `in-memory` để UI vẫn hoạt động; đặt `false` để fail-fast. |
 | `DEVICE_AUTH_TOKEN` | Token xác thực device Socket.IO client. |
 | `COMMAND_TIMEOUT_MS` | Thời gian chờ ack cho lệnh gửi xuống thiết bị. |
 | `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` | Token role tĩnh cho API/dashboard; giá trị mặc định chỉ nên dùng local. |
@@ -423,6 +426,7 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 ## Xử lý lỗi thường gặp
 
 - `db:init skipped`: chưa cấu hình MySQL. Điều này chấp nhận được khi chỉ chạy local nhanh, nhưng môi trường thật nên cấu hình MySQL.
+- `/health` trả `persistence.mode="in-memory"` và `reason="unavailable"`: server đang chạy degraded vì MySQL/database chưa sẵn sàng; UI vẫn chạy nhưng dữ liệu không bền sau restart.
 - Thiết bị không kết nối được: kiểm tra server đang bind `HOST=0.0.0.0`, firewall cho phép port `8080`, firmware dùng IP/domain thật thay vì `localhost`, và `deviceId` không rỗng.
 - Thiết bị bị `unauthorized`: token firmware gửi lên không khớp `DEVICE_AUTH_TOKEN`.
 - Thiết bị online nhưng dashboard không thấy telemetry: kiểm tra event đang gửi đúng là `device:telemetry`, payload có số hợp lệ, `/health` có connected device count, dashboard không bị filter sai thiết bị/zone.

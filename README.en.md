@@ -67,6 +67,7 @@ PORT=8080
 HOST=0.0.0.0
 LOG_LEVEL=info
 MYSQL_URL=mysql://root@127.0.0.1:3306/sgp_vibration_datacenter
+DB_FALLBACK_ON_UNAVAILABLE=true
 TELEMETRY_RETENTION_HOURS=168
 SPECTRUM_STORAGE_DIR=storage/spectrum
 ```
@@ -76,6 +77,7 @@ Important details:
 - `HOST=0.0.0.0` lets devices on the same LAN reach the backend by the server machine IP.
 - Physical devices must not call `localhost` for the server. On firmware, `localhost` means the device itself. Use the server machine IP or domain, for example `http://192.168.1.10:8080`.
 - Without MySQL, the server runs in demo/in-memory mode for quick checks; production/persistent mode needs MySQL to keep telemetry, metadata, audit, and command state after restarts.
+- If MySQL is configured but the service/database is unavailable, the server falls back to `in-memory` by default so the dashboard/UI can still load; set `DB_FALLBACK_ON_UNAVAILABLE=false` for production fail-fast behavior.
 - If `DEVICE_AUTH_TOKEN` is set, firmware must send the same token during the Socket.IO handshake.
 
 Create the MySQL database when durable persistence is needed:
@@ -104,7 +106,7 @@ Run from the repository root:
 pnpm install
 ```
 
-After installation, the root `postinstall` script runs `pnpm db:init`. If MySQL is configured, the schema is created or updated. If MySQL is not configured, the script prints a skip message.
+After installation, the root `postinstall` script runs `pnpm db:init`. If MySQL is configured and available, the schema is created or updated. If MySQL is not configured, or MySQL is unavailable with the default fallback mode, the script prints a skip message.
 
 ## Run in Development
 
@@ -371,6 +373,7 @@ For production-like environments, configure at least:
 | `MYSQL_URL` | Recommended MySQL connection string. |
 | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Alternative split MySQL config. |
 | `DB_AUTO_INIT` | Set `false` to disable automatic schema initialization. |
+| `DB_FALLBACK_ON_UNAVAILABLE` | Defaults to `true`: run `in-memory` when MySQL is unavailable so the UI still works; set `false` to fail fast. |
 | `DEVICE_AUTH_TOKEN` | Token for device Socket.IO clients. |
 | `COMMAND_TIMEOUT_MS` | Timeout while waiting for device command acknowledgements. |
 | `AUTH_ADMIN_TOKEN`, `AUTH_OPERATOR_TOKEN`, `AUTH_VIEWER_TOKEN` | Static role tokens for API/dashboard; defaults are for local use only. |
@@ -403,6 +406,7 @@ For production-like environments, configure at least:
 ## Troubleshooting
 
 - `db:init skipped`: MySQL is not configured. This is acceptable for quick local checks, but physical deployments should configure MySQL.
+- `/health` returns `persistence.mode="in-memory"` and `reason="unavailable"`: the server is running degraded because MySQL/database is unavailable; the UI still works, but data is not durable after restart.
 - Device cannot connect: verify the server is bound to `HOST=0.0.0.0`, firewall allows port `8080`, firmware uses a real IP/domain instead of `localhost`, and `deviceId` is not empty.
 - Device receives `unauthorized`: the firmware token does not match `DEVICE_AUTH_TOKEN`.
 - Device is online but telemetry is not visible: verify the device emits `device:telemetry`, payload fields are valid numbers, `/health` shows connected devices, and dashboard filters are not hiding the device/zone.

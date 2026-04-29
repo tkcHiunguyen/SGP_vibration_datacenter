@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { AuthService } from '../auth/index.js';
 import { CommandService } from '../command/command.service.js';
 import { DeviceService } from '../device/device.service.js';
+import type { MySqlPersistenceStatus } from '../persistence/mysql-access.js';
 import type { RealtimeGateway } from '../realtime/realtime.gateway.js';
 import { SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
 import { TelemetryService } from '../telemetry/telemetry.service.js';
@@ -27,6 +28,7 @@ type RegisterRoutesDeps = {
   realtimeGateway: RealtimeGateway;
   zoneService: ZoneService;
   spectrumStorageService: SpectrumStorageService;
+  persistenceStatus: MySqlPersistenceStatus;
 };
 
 export function registerRoutes({
@@ -40,6 +42,7 @@ export function registerRoutes({
   realtimeGateway,
   zoneService,
   spectrumStorageService,
+  persistenceStatus,
 }: RegisterRoutesDeps): void {
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
   const deviceCreateSchema = z.object({
@@ -473,7 +476,8 @@ export function registerRoutes({
     authService,
     deviceService,
     alertService,
-      realtimeGateway,
+    realtimeGateway,
+    persistenceStatus,
   });
 
   app.get('/api/devices/last-telemetry', async (request, reply) => {

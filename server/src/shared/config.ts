@@ -3,6 +3,21 @@ import { z } from 'zod';
 
 dotenv.config();
 
+const envBoolean = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  return value;
+}, z.boolean());
+
 const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
@@ -20,6 +35,7 @@ const envSchema = z.object({
   MYSQL_DATABASE: z.string().optional(),
   MYSQL_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
   DB_AUTO_INIT: z.coerce.boolean().default(true),
+  DB_FALLBACK_ON_UNAVAILABLE: envBoolean.default(true),
   DEVICE_AUTH_TOKEN: z.string().optional(),
   AUTH_DEFAULT_ROLE: z.enum(['admin', 'approver', 'release_manager', 'operator', 'viewer']).default('viewer'),
   AUTH_STATIC_TOKENS: z.string().optional(),
@@ -28,20 +44,7 @@ const envSchema = z.object({
   AUTH_RELEASE_MANAGER_TOKEN: z.string().default('release-manager-local-key'),
   AUTH_OPERATOR_TOKEN: z.string().default('operator-local-key'),
   AUTH_VIEWER_TOKEN: z.string().default('viewer-local-key'),
-  AUTH_BYPASS_GATING: z.preprocess((value) => {
-    if (typeof value !== 'string') {
-      return value;
-    }
-
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') {
-      return true;
-    }
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') {
-      return false;
-    }
-    return value;
-  }, z.boolean().default(true)),
+  AUTH_BYPASS_GATING: envBoolean.default(true),
   GOVERNANCE_HIGH_RISK_TARGET_COUNT: z.coerce.number().int().positive().default(200),
   GOVERNANCE_APPROVAL_TTL_MINUTES: z.coerce.number().int().positive().default(60),
   COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),

@@ -89,6 +89,119 @@ export class MySqlAccess {
   }
 }
 
+type MySqlAccessCandidate = Pick<MySqlAccess, 'ensureReady' | 'close'>;
+
+export type MySqlPersistenceStatus =
+  | {
+      mode: 'mysql';
+      configured: true;
+      ready: true;
+    }
+  | {
+      mode: 'in-memory';
+      configured: false;
+      ready: false;
+      reason: 'not_configured';
+    }
+  | {
+      mode: 'in-memory';
+      configured: true;
+      ready: false;
+      reason: 'unavailable';
+      errorCode?: string;
+    };
+
+type MySqlStartupLogger = {
+  warn: (bindings: Record<string, unknown>, message: string) => void;
+};
+
+type ResolveActiveMySqlAccessOptions<TAccess extends MySqlAccessCandidate> = {
+  candidate?: TAccess | null;
+  fallbackOnUnavailable?: boolean;
+  logger?: MySqlStartupLogger;
+};
+
+type ActiveMySqlRuntime<TAccess extends MySqlAccessCandidate> = {
+  access: TAccess | null;
+  status: MySqlPersistenceStatus;
+};
+
+const MYSQL_UNAVAILABLE_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'EAI_AGAIN',
+  'PROTOCOL_CONNECTION_LOST',
+  'ER_BAD_DB_ERROR',
+]);
+
+export function getMySqlErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return undefined;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+export function isMySqlUnavailableError(error: unknown): boolean {
+  const code = getMySqlErrorCode(error);
+  return code ? MYSQL_UNAVAILABLE_ERROR_CODES.has(code) : false;
+}
+
+export async function resolveActiveMySqlAccess<TAccess extends MySqlAccessCandidate = MySqlAccess>({
+  candidate,
+  fallbackOnUnavailable = true,
+  logger,
+}: ResolveActiveMySqlAccessOptions<TAccess> = {}): Promise<ActiveMySqlRuntime<TAccess>> {
+  const mysql = candidate === undefined ? (getSharedMySqlAccess() as TAccess | null) : candidate;
+
+  if (!mysql) {
+    return {
+      access: null,
+      status: {
+        mode: 'in-memory',
+        configured: false,
+        ready: false,
+        reason: 'not_configured',
+      },
+    };
+  }
+
+  try {
+    await mysql.ensureReady();
+    return {
+      access: mysql,
+      status: {
+        mode: 'mysql',
+        configured: true,
+        ready: true,
+      },
+    };
+  } catch (error) {
+    if (!fallbackOnUnavailable || !isMySqlUnavailableError(error)) {
+      throw error;
+    }
+
+    logger?.warn({ err: error }, 'MySQL is unavailable; falling back to in-memory persistence');
+    await mysql.close().catch((closeError: unknown) => {
+      logger?.warn({ err: closeError }, 'Failed to close unavailable MySQL pool');
+    });
+
+    return {
+      access: null,
+      status: {
+        mode: 'in-memory',
+        configured: true,
+        ready: false,
+        reason: 'unavailable',
+        errorCode: getMySqlErrorCode(error),
+      },
+    };
+  }
+}
+
 let sharedAccess: MySqlAccess | null | undefined;
 
 export function getSharedMySqlAccess(): MySqlAccess | null {
@@ -104,8 +217,4 @@ export function getSharedMySqlAccess(): MySqlAccess | null {
 
   sharedAccess = new MySqlAccess(config);
   return sharedAccess;
-}
-
-export function isMySqlAccessEnabled(): boolean {
-  return Boolean(getSharedMySqlAccess());
 }

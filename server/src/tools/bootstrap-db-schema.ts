@@ -1,4 +1,4 @@
-import { getSharedMySqlAccess } from '../modules/persistence/mysql-access.js';
+import { getSharedMySqlAccess, isMySqlUnavailableError } from '../modules/persistence/mysql-access.js';
 
 async function main(): Promise<void> {
   const mysqlAccess = getSharedMySqlAccess();
@@ -17,6 +17,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (process.env.DB_FALLBACK_ON_UNAVAILABLE !== 'false' && isMySqlUnavailableError(error)) {
+    console.warn('[db:init] skipped: MySQL is configured but unavailable. Set DB_FALLBACK_ON_UNAVAILABLE=false to fail instead.');
+    console.warn('[db:init] reason:', error instanceof Error ? error.message : String(error));
+    return;
+  }
+
   console.error('[db:init] failed:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

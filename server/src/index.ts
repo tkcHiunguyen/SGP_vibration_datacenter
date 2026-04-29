@@ -19,7 +19,7 @@ import { TelemetryService } from './modules/telemetry/telemetry.service.js';
 import { InMemoryCommandRepository } from './modules/command/in-memory-command.repository.js';
 import { MySqlCommandRepository } from './modules/command/mysql-command.repository.js';
 import { CommandService } from './modules/command/command.service.js';
-import { getSharedMySqlAccess, isMySqlAccessEnabled } from './modules/persistence/mysql-access.js';
+import { resolveActiveMySqlAccess } from './modules/persistence/mysql-access.js';
 import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
 import { registerSocketHandlers } from './modules/realtime/socket.handlers.js';
@@ -66,9 +66,12 @@ await app.register(fastifyStatic, {
   index: false,
 });
 
-const mysqlAccess = getSharedMySqlAccess();
-await mysqlAccess?.ensureReady();
-const persistenceMode = mysqlAccess ? 'mysql' : 'in-memory';
+const mysqlRuntime = await resolveActiveMySqlAccess({
+  fallbackOnUnavailable: env.DB_FALLBACK_ON_UNAVAILABLE,
+  logger: app.log,
+});
+const mysqlAccess = mysqlRuntime.access;
+const persistenceMode = mysqlRuntime.status.mode;
 
 const deviceRepository = await InMemoryDeviceRepository.create(mysqlAccess);
 const telemetryRepository = await MySqlTelemetryRepository.create(mysqlAccess);
@@ -113,6 +116,7 @@ registerRoutes({
   realtimeGateway,
   zoneService,
   spectrumStorageService,
+  persistenceStatus: mysqlRuntime.status,
 });
 
 registerSocketHandlers({
@@ -169,6 +173,6 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ port: env.PORT, host: env.HOST });
 app.log.info(
-  { port: env.PORT, host: env.HOST, mysqlPersistence: isMySqlAccessEnabled(), persistenceMode },
+  { port: env.PORT, host: env.HOST, mysqlPersistence: Boolean(mysqlAccess), persistenceMode },
   'Server started',
 );
