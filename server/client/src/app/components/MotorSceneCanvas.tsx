@@ -4,16 +4,19 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ViewportGizmo } from "three-viewport-gizmo";
+import { calculateSceneLoadProgress } from "./motorSceneLoading";
 
 const MOTOR_MODEL_URL = `${import.meta.env.BASE_URL}models/electric_motor.glb`;
 const PANORAMA_URL = "/app/panoramas/panorama_datacenter_sharp_8k.jpg";
 const MOTOR_GROUND_Y = 0.47;
+const REFERENCE_RULER_LENGTH_METERS = 4;
 
 type MotorSceneCanvasProps = {
   className?: string;
 };
 
 type SceneAsset = "environment" | "motor";
+type SceneLoadProgress = Record<SceneAsset, number>;
 type RuntimeViewportGizmoOptions = Omit<NonNullable<ConstructorParameters<typeof ViewportGizmo>[2]>, "type"> & {
   type?: "sphere" | "cube" | "rounded-cube";
 };
@@ -175,10 +178,42 @@ function createMotorBase() {
   return base;
 }
 
+function createReferenceRuler() {
+  const ruler = new THREE.Group();
+  ruler.name = "metric_reference_ruler";
+  ruler.position.set(0, 0.07, -2.28);
+
+  const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+  const accentMaterial = new THREE.MeshBasicMaterial({ color: 0x5eead4 });
+  const minorMaterial = new THREE.MeshBasicMaterial({ color: 0x94a3b8 });
+
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(REFERENCE_RULER_LENGTH_METERS, 0.025, 0.025), lineMaterial);
+  rail.position.x = REFERENCE_RULER_LENGTH_METERS / 2;
+  rail.renderOrder = 12;
+  ruler.add(rail);
+
+  for (let meter = 0; meter <= REFERENCE_RULER_LENGTH_METERS; meter += 1) {
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.22, 0.035), accentMaterial);
+    tick.position.x = meter;
+    tick.renderOrder = 13;
+    ruler.add(tick);
+  }
+
+  for (let halfMeter = 0.5; halfMeter < REFERENCE_RULER_LENGTH_METERS; halfMeter += 1) {
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.14, 0.024), minorMaterial);
+    tick.position.x = halfMeter;
+    tick.renderOrder = 13;
+    ruler.add(tick);
+  }
+
+  return ruler;
+}
+
 export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const [loadingText, setLoadingText] = useState("Đang tải cảnh 3D");
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -188,9 +223,11 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
     let active = true;
     let panoramaTexture: THREE.Texture | null = null;
     const loadedAssets = new Set<SceneAsset>();
+    const assetProgress: SceneLoadProgress = { environment: 0, motor: 0 };
     setSceneReady(false);
     setLoadingError(null);
     setLoadingText("Đang khởi tạo cảnh 3D");
+    setLoadingProgress(0);
 
     if (!isWebGLAvailable()) {
       setLoadingError("Trình duyệt hoặc GPU đang chặn WebGL. Hãy reload tab hoặc đóng bớt trang 3D rồi thử lại.");
@@ -228,7 +265,7 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.domElement.style.display = "block";
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
@@ -248,12 +285,22 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
       }
     };
 
+    const updateAssetProgress = (asset: SceneAsset, progress: number) => {
+      if (!active) {
+        return;
+      }
+
+      assetProgress[asset] = progress;
+      setLoadingProgress(calculateSceneLoadProgress(assetProgress));
+    };
+
     const revealSceneWhenReady = () => {
       updateLoadingText("Đang chuẩn bị khung hình");
       renderer.compile(scene, camera);
       renderer.render(scene, camera);
       requestAnimationFrame(() => {
         if (active) {
+          setLoadingProgress(100);
           setSceneReady(true);
         }
       });
@@ -265,6 +312,7 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
       }
 
       loadedAssets.add(asset);
+      updateAssetProgress(asset, 100);
       if (loadedAssets.size === 2) {
         revealSceneWhenReady();
         return;
@@ -306,6 +354,7 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
         (event) => {
           if (event.lengthComputable) {
             const progress = Math.round((event.loaded / event.total) * 100);
+            updateAssetProgress("environment", progress);
             updateLoadingText(`Đang tải môi trường 3D ${progress}%`);
           }
         },
@@ -363,6 +412,7 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
     world.add(grid);
 
     world.add(createMotorBase());
+    world.add(createReferenceRuler());
 
     const axes = new THREE.Group();
     axes.position.set(0, 0.045, 0);
@@ -458,6 +508,7 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
       (event) => {
         if (event.lengthComputable) {
           const progress = Math.round((event.loaded / event.total) * 100);
+          updateAssetProgress("motor", progress);
           updateLoadingText(`Đang tải mô hình motor ${progress}%`);
         }
       },
@@ -518,20 +569,33 @@ export function MotorSceneCanvas({ className }: MotorSceneCanvasProps) {
       ref={mountRef}
       className={["motor-scene-canvas", className].filter(Boolean).join(" ")}
     >
-      <div
-        role="status"
-        aria-live="polite"
-        className={[
-          "motor-scene-loader",
-          sceneReady ? "" : "is-visible",
-          loadingError ? "has-error" : "",
-        ].filter(Boolean).join(" ")}
-      >
+      {(!sceneReady || loadingError) && (
         <div
-          aria-hidden="true"
-          className="motor-scene-loader-spinner"
-        />
-        <div className="motor-scene-loader-text">{loadingError || loadingText}</div>
+          role="status"
+          aria-live="polite"
+          className={[
+            "motor-scene-loader",
+            "is-visible",
+            loadingError ? "has-error" : "",
+          ].filter(Boolean).join(" ")}
+        >
+          <div
+            aria-hidden="true"
+            className="motor-scene-loader-spinner"
+          />
+          <div className="motor-scene-loader-text">{loadingError || loadingText}</div>
+          <div className="motor-scene-loader-progress" aria-hidden="true">
+            <div
+              className="motor-scene-loader-progress-value"
+              style={{ width: `${loadingError ? 100 : loadingProgress}%` }}
+            />
+          </div>
+          <div className="motor-scene-loader-percent">{loadingError ? "Lỗi tải" : `${loadingProgress}%`}</div>
+        </div>
+      )}
+      <div className="motor-scene-scale-reference" aria-label="Thước tham chiếu kích thước thực tế">
+        <span>0 m</span>
+        <span>Thước tham chiếu 4 m</span>
       </div>
     </div>
   );

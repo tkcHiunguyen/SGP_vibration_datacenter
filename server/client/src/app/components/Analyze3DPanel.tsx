@@ -1,8 +1,7 @@
-import { Box } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import type { DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { MotorSceneCanvas } from "./MotorSceneCanvas";
-import { ConsolePage, ConsolePageHeader, ConsolePanel } from "./ui";
+import { ConsolePage, ConsolePanel } from "./ui";
 
 type TelemetryHistoryRequestOptions = {
   limit?: number;
@@ -28,8 +27,6 @@ export function Analyze3DPanel(_: Analyze3DPanelProps) {
         background: C.bg,
       }}
     >
-      <ConsolePageHeader icon={<Box size={16} strokeWidth={2.2} />} title="Mô hình 3D motor" />
-
       <ConsolePanel
         style={{
           background: C.surface,
