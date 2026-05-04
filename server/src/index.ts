@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import multipart from '@fastify/multipart';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { env } from './shared/config.js';
+import { env, listenHosts } from './shared/config.js';
 import { InMemoryAlertRepository } from './modules/alert/in-memory-alert.repository.js';
 import { AlertService } from './modules/alert/alert.service.js';
 import { InMemoryAuditRepository } from './modules/audit/in-memory-audit.repository.js';
@@ -20,6 +20,7 @@ import { InMemoryCommandRepository } from './modules/command/in-memory-command.r
 import { MySqlCommandRepository } from './modules/command/mysql-command.repository.js';
 import { CommandService } from './modules/command/command.service.js';
 import { resolveActiveMySqlAccess } from './modules/persistence/mysql-access.js';
+import { CompositeRealtimeGateway } from './modules/realtime/composite-realtime.gateway.js';
 import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
 import { registerSocketHandlers } from './modules/realtime/socket.handlers.js';
@@ -29,42 +30,69 @@ import { ZoneService } from './modules/zone/zone.service.js';
 
 const serviceName = 'sgp-vibration-datacenter-server';
 const isRunningViaPnpm = (process.env.npm_execpath || '').includes('pnpm');
-const app = Fastify({
-  logger: {
-    level: env.LOG_LEVEL,
-    formatters: {
-      bindings: () => ({}),
-      level: (label) => (isRunningViaPnpm ? {} : { level: label }),
-    },
-    timestamp: false,
-  },
-  disableRequestLogging: true,
-});
 
-await app.register(cors, { origin: true });
-await app.register(helmet, { contentSecurityPolicy: false });
-await app.register(rateLimit, {
-  max: env.RATE_LIMIT_MAX,
-  timeWindow: env.RATE_LIMIT_TIME_WINDOW,
-});
-await app.register(multipart, {
-  limits: {
-    fileSize: 64 * 1024 * 1024,
-    files: 1,
-  },
-});
-await app.register(fastifyStatic, {
-  root: join(process.cwd(), 'public', 'app'),
-  prefix: '/app/',
-});
+type ServerListener = {
+  host: string;
+  app: FastifyInstance;
+};
+
+function createApp(): FastifyInstance {
+  return Fastify({
+    logger: {
+      level: env.LOG_LEVEL,
+      formatters: {
+        bindings: () => ({}),
+        level: (label) => (isRunningViaPnpm ? {} : { level: label }),
+      },
+      timestamp: false,
+    },
+    disableRequestLogging: true,
+  });
+}
+
+async function registerAppPlugins(app: FastifyInstance, otaUploadRoot: string): Promise<void> {
+  await app.register(cors, { origin: true });
+  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(rateLimit, {
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: env.RATE_LIMIT_TIME_WINDOW,
+  });
+  await app.register(multipart, {
+    limits: {
+      fileSize: 64 * 1024 * 1024,
+      files: 1,
+    },
+  });
+  await app.register(fastifyStatic, {
+    root: join(process.cwd(), 'public', 'app'),
+    prefix: '/app/',
+  });
+  await app.register(fastifyStatic, {
+    root: otaUploadRoot,
+    prefix: '/ota-bins/',
+    decorateReply: false,
+    index: false,
+  });
+}
+
+const listeners: ServerListener[] = listenHosts.map((host) => ({
+  host,
+  app: createApp(),
+}));
+const primaryListener = listeners[0];
+if (!primaryListener) {
+  throw new Error('At least one listen host is required');
+}
+const app = primaryListener.app;
+
 const otaUploadRoot = join(process.cwd(), 'uploads', 'ota');
 await mkdir(otaUploadRoot, { recursive: true });
-await app.register(fastifyStatic, {
-  root: otaUploadRoot,
-  prefix: '/ota-bins/',
-  decorateReply: false,
-  index: false,
-});
+for (const listener of listeners) {
+  await registerAppPlugins(listener.app, otaUploadRoot);
+}
+
+const socketGateways = listeners.map((listener) => new SocketIoGateway(listener.app.server));
+const realtimeGateway = new CompositeRealtimeGateway(socketGateways);
 
 const mysqlRuntime = await resolveActiveMySqlAccess({
   fallbackOnUnavailable: env.DB_FALLBACK_ON_UNAVAILABLE,
@@ -103,21 +131,21 @@ const telemetryIngressGuard = new TelemetryIngressGuard({
   maxGlobalPerMinute: env.TELEMETRY_MAX_GLOBAL_PER_MINUTE,
 });
 
-const realtimeGateway = new SocketIoGateway(app.server);
-
-registerRoutes({
-  app,
-  authService,
-  deviceService,
-  telemetryService,
-  alertService,
-  auditService,
-  commandService: commandServiceWithTimeout,
-  realtimeGateway,
-  zoneService,
-  spectrumStorageService,
-  persistenceStatus: mysqlRuntime.status,
-});
+for (const listener of listeners) {
+  registerRoutes({
+    app: listener.app,
+    authService,
+    deviceService,
+    telemetryService,
+    alertService,
+    auditService,
+    commandService: commandServiceWithTimeout,
+    realtimeGateway,
+    zoneService,
+    spectrumStorageService,
+    persistenceStatus: mysqlRuntime.status,
+  });
+}
 
 registerSocketHandlers({
   app,
@@ -163,7 +191,7 @@ const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'Shutting down server...');
   clearInterval(commandTimeoutSweep);
   realtimeGateway.close();
-  await app.close();
+  await Promise.all(listeners.map((listener) => listener.app.close()));
   await mysqlAccess?.close();
   process.exit(0);
 };
@@ -171,8 +199,25 @@ const shutdown = async (signal: string) => {
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-await app.listen({ port: env.PORT, host: env.HOST });
+try {
+  for (const listener of listeners) {
+    await listener.app.listen({ port: env.PORT, host: listener.host });
+  }
+} catch (error) {
+  clearInterval(commandTimeoutSweep);
+  app.log.error({ err: error, port: env.PORT, hosts: listenHosts }, 'Failed to start server');
+  realtimeGateway.close();
+  await Promise.allSettled(listeners.map((listener) => listener.app.close()));
+  await mysqlAccess?.close();
+  throw error;
+}
+
 app.log.info(
-  { port: env.PORT, host: env.HOST, mysqlPersistence: Boolean(mysqlAccess), persistenceMode },
+  {
+    port: env.PORT,
+    hosts: listenHosts,
+    mysqlPersistence: Boolean(mysqlAccess),
+    persistenceMode,
+  },
   'Server started',
 );

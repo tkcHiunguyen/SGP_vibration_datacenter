@@ -22,6 +22,7 @@ const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
+  HOSTS: z.string().optional(),
   OTA_PUBLIC_BASE_URL: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
@@ -58,4 +59,20 @@ const envSchema = z.object({
   SPECTRUM_MATCH_WINDOW_MS: z.coerce.number().int().positive().default(500),
 });
 
+function resolveListenHosts(configuredHosts: string | undefined, fallbackHost: string): string[] {
+  const hosts = configuredHosts
+    ?.split(',')
+    .map((host) => host.trim())
+    .filter(Boolean) ?? [];
+
+  const uniqueHosts = Array.from(new Set(hosts));
+  if (uniqueHosts.length > 0) {
+    return uniqueHosts;
+  }
+
+  const normalizedFallbackHost = fallbackHost.trim();
+  return [normalizedFallbackHost || '0.0.0.0'];
+}
+
 export const env = envSchema.parse(process.env);
+export const listenHosts = resolveListenHosts(env.HOSTS, env.HOST);

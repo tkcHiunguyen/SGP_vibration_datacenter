@@ -8,6 +8,8 @@ import type {
 } from '../../shared/types.js';
 import type { Socket } from 'socket.io';
 
+export const DASHBOARD_ROOM = 'dashboard:live';
+
 export interface RealtimeGateway {
   broadcastTelemetry(message: TelemetryMessage): void;
   broadcastTelemetrySpectrum(message: TelemetrySpectrumMessage): void;

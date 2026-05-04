@@ -9,10 +9,9 @@ import type {
   TelemetryMessage,
   TelemetrySpectrumMessage,
 } from '../../shared/types.js';
-import type { RealtimeGateway } from './realtime.gateway.js';
+import { DASHBOARD_ROOM, type RealtimeGateway } from './realtime.gateway.js';
 
 export class SocketIoGateway implements RealtimeGateway {
-  private static readonly DASHBOARD_ROOM = 'dashboard:live';
   private readonly io: SocketIOServer;
 
   constructor(server: HttpServer) {
@@ -23,15 +22,15 @@ export class SocketIoGateway implements RealtimeGateway {
   }
 
   broadcastTelemetry(message: TelemetryMessage): void {
-    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('telemetry', message);
+    this.io.to(DASHBOARD_ROOM).emit('telemetry', message);
   }
 
   broadcastTelemetrySpectrum(message: TelemetrySpectrumMessage): void {
-    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('telemetry:spectrum', message);
+    this.io.to(DASHBOARD_ROOM).emit('telemetry:spectrum', message);
   }
 
   broadcastAlert(record: AlertRecord): void {
-    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('alert', record);
+    this.io.to(DASHBOARD_ROOM).emit('alert', record);
   }
 
   broadcastDeviceHeartbeat(payload: {
@@ -40,11 +39,11 @@ export class SocketIoGateway implements RealtimeGateway {
     lastHeartbeatAt?: string;
     heartbeat?: DeviceHeartbeat;
   }): void {
-    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('device:heartbeat', payload);
+    this.io.to(DASHBOARD_ROOM).emit('device:heartbeat', payload);
   }
 
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void {
-    this.io.to(SocketIoGateway.DASHBOARD_ROOM).emit('device:metadata', payload);
+    this.io.to(DASHBOARD_ROOM).emit('device:metadata', payload);
   }
 
   sendCommand(deviceId: string, command: DeviceCommand): void {
@@ -79,7 +78,7 @@ export class SocketIoGateway implements RealtimeGateway {
   }
 
   joinDashboardRoom(socket: Socket): void {
-    socket.join(SocketIoGateway.DASHBOARD_ROOM);
+    socket.join(DASHBOARD_ROOM);
   }
 
   connectedClientsCount(): number {
