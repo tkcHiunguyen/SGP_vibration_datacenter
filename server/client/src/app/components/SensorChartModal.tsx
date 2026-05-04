@@ -1,7 +1,14 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight } from "lucide-react";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus } from "lucide-react";
 import type { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
+import {
+  DETAIL_TILE_FETCH_DEBOUNCE_MS,
+  buildTelemetryDetailTileRequests,
+  getTelemetryDetailMode,
+  type TelemetryDetailMode,
+  type TelemetryDetailTileRequest,
+} from "./sensor-chart-modal/telemetry-tiles";
 import type { ToastItem } from "./ui";
 import { ConsoleButton, Modal } from "./ui";
 import {
@@ -36,6 +43,7 @@ import {
   SpectrumNoDataState,
   SpectrumZoomChart,
   TELEMETRY_HISTORY_PRESETS,
+  TELEMETRY_HISTORY_BUCKET_STEPS_MS,
   TEMP_HALF_SPAN_MAX,
   TEMP_HALF_SPAN_MIN,
   TOP_TREND_CHART_HEIGHT,
@@ -86,6 +94,7 @@ import {
   formatTooltipDateTime,
   formatTrendAxisTime,
   getDefaultTrendViewWindowMs,
+  getTelemetryHistoryBucketMs,
   getPrimaryWheelDelta,
   normalizeSpectrumUnit,
   parseAmplitudeArray,
@@ -122,14 +131,407 @@ import type {
   TrendViewport,
 } from "./sensor-chart-modal/chart-parts";
 
+const LazyMotorSceneCanvas = React.lazy(() =>
+  import("./MotorSceneCanvas").then((module) => ({
+    default: module.MotorSceneCanvas,
+  })),
+);
+const PLAYBACK_BASE_STEP_MS = 500;
+const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
+const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
+
+type DetailTileUxPhase = "idle" | "queued" | "loading" | "ready";
+type DetailTileUxState = {
+  phase: DetailTileUxPhase;
+  pendingTiles: number;
+  mode: TelemetryDetailMode | null;
+  loadedAtMs?: number;
+};
+
+type TelemetryResolutionSelection = "auto" | number;
+
 /* ── Main Modal ── */
 type TelemetryHistoryRequestOptions = {
   limit?: number;
+  bucketMs?: number;
   from?: string;
   to?: string;
   force?: boolean;
   replace?: boolean;
 };
+
+type DetailTileCacheEntry = {
+  tile: TelemetryDetailTileRequest;
+  points: DeviceTelemetryPoint[];
+  loadedAtMs: number;
+};
+
+function firstArray(...values: unknown[]): unknown[] {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
+}
+
+function parseTelemetryHistoryPoint(item: unknown): DeviceTelemetryPoint | null {
+  const row = asRecord(item);
+  const body = asRecord(row.payload);
+  const receivedAt = asNonEmptyString(
+    row.receivedAt ?? row.timestamp ?? body.receivedAt ?? body.timestamp,
+  );
+  if (!receivedAt) {
+    return null;
+  }
+
+  return {
+    receivedAt,
+    available: typeof body.available === "boolean" ? body.available : undefined,
+    sampleCount: asFiniteNumber(row.sampleCount ?? row.sample_count ?? body.sampleCount ?? body.sample_count),
+    sampleRateHz: asFiniteNumber(body.sampleRateHz ?? body.sample_rate_hz),
+    lsbPerG: asFiniteNumber(body.lsbPerG ?? body.lsb_per_g),
+    temperature: asFiniteNumber(row.temperature ?? body.temperature),
+    ax: asFiniteNumber(row.ax ?? body.ax),
+    ay: asFiniteNumber(row.ay ?? body.ay),
+    az: asFiniteNumber(row.az ?? body.az),
+    uuid: asNonEmptyString(row.uuid ?? body.uuid),
+    telemetryUuid: asNonEmptyString(row.telemetryUuid ?? row.telemetry_uuid ?? body.telemetryUuid ?? body.telemetry_uuid),
+  };
+}
+
+function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const source = firstArray(data.items, root.items, payload);
+
+  return source
+    .map((item) => parseTelemetryHistoryPoint(item))
+    .filter((item): item is DeviceTelemetryPoint => Boolean(item))
+    .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
+}
+
+function hasDenseTelemetryValue(row: DenseTelemetryRow): boolean {
+  return row.temp !== null || row.ax !== null || row.ay !== null || row.az !== null;
+}
+
+function buildDenseTelemetryRowsFromPoints(
+  points: DeviceTelemetryPoint[],
+  startMs: number,
+  endMs: number,
+): DenseTelemetryRow[] {
+  const safeStartMs = Math.min(startMs, endMs);
+  const safeEndMs = Math.max(startMs, endMs);
+  const makeNullRow = (ts: number): DenseTelemetryRow => ({
+    ts,
+    temp: null,
+    ax: null,
+    ay: null,
+    az: null,
+  });
+
+  const rawRows = points
+    .flatMap((point): DenseTelemetryRow[] => {
+      const sourceTs = Date.parse(point.receivedAt);
+      if (!Number.isFinite(sourceTs) || sourceTs < safeStartMs || sourceTs > safeEndMs) {
+        return [];
+      }
+
+      return [{
+        ts: sourceTs,
+        telemetryUuid: point.telemetryUuid,
+        temp:
+          typeof point.temperature === "number" && Number.isFinite(point.temperature)
+            ? Number(point.temperature.toFixed(2))
+            : null,
+        ax:
+          typeof point.ax === "number" && Number.isFinite(point.ax)
+            ? Number((point.ax * GRAVITY_MS2).toFixed(4))
+            : null,
+        ay:
+          typeof point.ay === "number" && Number.isFinite(point.ay)
+            ? Number((point.ay * GRAVITY_MS2).toFixed(4))
+            : null,
+        az:
+          typeof point.az === "number" && Number.isFinite(point.az)
+            ? Number((point.az * GRAVITY_MS2).toFixed(4))
+            : null,
+      }];
+    })
+    .sort((left, right) => left.ts - right.ts);
+
+  if (rawRows.length === 0) {
+    const safeEnd = safeEndMs > safeStartMs ? safeEndMs : safeStartMs + 1;
+    return [makeNullRow(safeStartMs), makeNullRow(safeEnd)];
+  }
+
+  const byTs = new Map<number, DenseTelemetryRow>();
+  for (const row of rawRows) {
+    byTs.set(row.ts, row);
+  }
+  const uniqueRows = Array.from(byTs.values()).sort((left, right) => left.ts - right.ts);
+
+  const diffs: number[] = [];
+  for (let index = 1; index < uniqueRows.length; index += 1) {
+    const diff = uniqueRows[index].ts - uniqueRows[index - 1].ts;
+    if (Number.isFinite(diff) && diff > 0) {
+      diffs.push(diff);
+    }
+  }
+  const fallbackStepMs = Math.max(1000, Math.round((safeEndMs - safeStartMs) / 240));
+  const typicalStepMs = diffs.length > 0
+    ? (() => {
+        const sortedDiffs = [...diffs].sort((left, right) => left - right);
+        return Math.max(1000, sortedDiffs[Math.floor(sortedDiffs.length / 2)]);
+      })()
+    : fallbackStepMs;
+  const gapThresholdMs = Math.max(2000, Math.round(typicalStepMs * 2));
+
+  const stagedRows: DenseTelemetryRow[] = [makeNullRow(safeStartMs)];
+  let previousTs = safeStartMs;
+
+  for (const row of uniqueRows) {
+    const clampedTs = Math.max(safeStartMs, Math.min(safeEndMs, row.ts));
+    if (clampedTs - previousTs > gapThresholdMs) {
+      const gapStart = Math.min(safeEndMs, previousTs + typicalStepMs);
+      if (gapStart > previousTs && gapStart < clampedTs) {
+        stagedRows.push(makeNullRow(gapStart));
+      }
+
+      const gapEnd = Math.max(safeStartMs, clampedTs - typicalStepMs);
+      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+      if (gapEnd > lastTs && gapEnd < clampedTs) {
+        stagedRows.push(makeNullRow(gapEnd));
+      }
+    }
+
+    stagedRows.push({ ...row, ts: clampedTs });
+    previousTs = clampedTs;
+  }
+
+  if (safeEndMs - previousTs > gapThresholdMs) {
+    const tailGapStart = Math.min(safeEndMs, previousTs + typicalStepMs);
+    const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+    if (tailGapStart > lastTs && tailGapStart < safeEndMs) {
+      stagedRows.push(makeNullRow(tailGapStart));
+    }
+  }
+  stagedRows.push(makeNullRow(safeEndMs));
+
+  const deduped = new Map<number, DenseTelemetryRow>();
+  for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
+    const existing = deduped.get(row.ts);
+    if (!existing || (!hasDenseTelemetryValue(existing) && hasDenseTelemetryValue(row))) {
+      deduped.set(row.ts, row);
+    }
+  }
+
+  return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
+}
+
+function estimateTelemetryGapStepMs(rows: DenseTelemetryRow[], windowMs: number): number {
+  const maxAllowedStepMs = Math.max(1000, Math.round(Math.max(1, windowMs) * TREND_MAX_GAP_STEP_RATIO));
+  const valuedRows = rows.filter(hasDenseTelemetryValue);
+
+  if (valuedRows.length < 2) {
+    return maxAllowedStepMs;
+  }
+
+  const diffs: number[] = [];
+  for (let index = 1; index < valuedRows.length; index += 1) {
+    const diff = valuedRows[index].ts - valuedRows[index - 1].ts;
+    if (Number.isFinite(diff) && diff > 0) {
+      diffs.push(diff);
+    }
+  }
+  if (diffs.length === 0) {
+    return maxAllowedStepMs;
+  }
+  const sortedDiffs = [...diffs].sort((left, right) => left - right);
+  const median = sortedDiffs[Math.floor(sortedDiffs.length / 2)];
+  return Math.max(1000, Math.min(maxAllowedStepMs, Math.round(median)));
+}
+
+type DenseTelemetryBucketAccumulator = {
+  ts: number;
+  telemetryUuid?: string;
+  valueRows: number;
+  tempSum: number;
+  tempCount: number;
+  axSum: number;
+  axCount: number;
+  aySum: number;
+  ayCount: number;
+  azSum: number;
+  azCount: number;
+};
+
+function bucketDenseTelemetryRows(
+  rows: DenseTelemetryRow[],
+  stepMs: number,
+  startMs: number,
+  endMs: number,
+): DenseTelemetryRow[] {
+  const safeStartMs = Math.min(startMs, endMs);
+  const safeEndMs = Math.max(startMs, endMs);
+  const safeStepMs = Math.max(1, Math.floor(Number.isFinite(stepMs) ? stepMs : 1));
+  const makeNullRow = (ts: number): DenseTelemetryRow => ({
+    ts,
+    temp: null,
+    ax: null,
+    ay: null,
+    az: null,
+  });
+
+  const buckets = new Map<number, DenseTelemetryBucketAccumulator>();
+  for (const row of rows) {
+    if (!hasDenseTelemetryValue(row) || row.ts < safeStartMs || row.ts > safeEndMs) {
+      continue;
+    }
+
+    const bucketTs = safeStartMs + Math.floor((row.ts - safeStartMs) / safeStepMs) * safeStepMs;
+    const safeBucketTs = Math.max(safeStartMs, Math.min(safeEndMs, bucketTs));
+    const current = buckets.get(safeBucketTs) ?? {
+      ts: safeBucketTs,
+      telemetryUuid: row.telemetryUuid,
+      valueRows: 0,
+      tempSum: 0,
+      tempCount: 0,
+      axSum: 0,
+      axCount: 0,
+      aySum: 0,
+      ayCount: 0,
+      azSum: 0,
+      azCount: 0,
+    };
+
+    current.valueRows += 1;
+    if (current.telemetryUuid !== row.telemetryUuid) {
+      current.telemetryUuid = undefined;
+    }
+    if (typeof row.temp === "number" && Number.isFinite(row.temp)) {
+      current.tempSum += row.temp;
+      current.tempCount += 1;
+    }
+    if (typeof row.ax === "number" && Number.isFinite(row.ax)) {
+      current.axSum += row.ax;
+      current.axCount += 1;
+    }
+    if (typeof row.ay === "number" && Number.isFinite(row.ay)) {
+      current.aySum += row.ay;
+      current.ayCount += 1;
+    }
+    if (typeof row.az === "number" && Number.isFinite(row.az)) {
+      current.azSum += row.az;
+      current.azCount += 1;
+    }
+
+    buckets.set(safeBucketTs, current);
+  }
+
+  const valueRows = Array.from(buckets.values())
+    .map((bucket): DenseTelemetryRow => ({
+      ts: bucket.ts,
+      telemetryUuid: bucket.valueRows === 1 ? bucket.telemetryUuid : undefined,
+      temp: bucket.tempCount > 0 ? Number((bucket.tempSum / bucket.tempCount).toFixed(2)) : null,
+      ax: bucket.axCount > 0 ? Number((bucket.axSum / bucket.axCount).toFixed(4)) : null,
+      ay: bucket.ayCount > 0 ? Number((bucket.aySum / bucket.ayCount).toFixed(4)) : null,
+      az: bucket.azCount > 0 ? Number((bucket.azSum / bucket.azCount).toFixed(4)) : null,
+    }))
+    .sort((left, right) => left.ts - right.ts);
+
+  if (valueRows.length === 0) {
+    return [makeNullRow(safeStartMs), makeNullRow(safeEndMs > safeStartMs ? safeEndMs : safeStartMs + 1)];
+  }
+
+  const stagedRows: DenseTelemetryRow[] = [makeNullRow(safeStartMs)];
+  let previousTs = safeStartMs;
+  const gapThresholdMs = safeStepMs * 2;
+
+  for (const row of valueRows) {
+    if (row.ts - previousTs > gapThresholdMs) {
+      const gapStart = Math.min(safeEndMs, previousTs + safeStepMs);
+      if (gapStart > previousTs && gapStart < row.ts) {
+        stagedRows.push(makeNullRow(gapStart));
+      }
+
+      const gapEnd = Math.max(safeStartMs, row.ts - safeStepMs);
+      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+      if (gapEnd > lastTs && gapEnd < row.ts) {
+        stagedRows.push(makeNullRow(gapEnd));
+      }
+    }
+
+    stagedRows.push(row);
+    previousTs = row.ts;
+  }
+
+  if (safeEndMs - previousTs > gapThresholdMs) {
+    const tailGapStart = Math.min(safeEndMs, previousTs + safeStepMs);
+    const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+    if (tailGapStart > lastTs && tailGapStart < safeEndMs) {
+      stagedRows.push(makeNullRow(tailGapStart));
+    }
+  }
+  stagedRows.push(makeNullRow(safeEndMs));
+
+  const deduped = new Map<number, DenseTelemetryRow>();
+  for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
+    const existing = deduped.get(row.ts);
+    if (!existing || (!hasDenseTelemetryValue(existing) && hasDenseTelemetryValue(row))) {
+      deduped.set(row.ts, row);
+    }
+  }
+
+  return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
+}
+
+function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySnapshot | null {
+  const ts = Date.parse(point.receivedAt);
+  if (!Number.isFinite(ts)) {
+    return null;
+  }
+
+  return {
+    ts,
+    temp:
+      typeof point.temperature === "number" && Number.isFinite(point.temperature)
+        ? Number(point.temperature.toFixed(2))
+        : undefined,
+    ax:
+      typeof point.ax === "number" && Number.isFinite(point.ax)
+        ? Number((point.ax * GRAVITY_MS2).toFixed(3))
+        : undefined,
+    ay:
+      typeof point.ay === "number" && Number.isFinite(point.ay)
+        ? Number((point.ay * GRAVITY_MS2).toFixed(3))
+        : undefined,
+    az:
+      typeof point.az === "number" && Number.isFinite(point.az)
+        ? Number((point.az * GRAVITY_MS2).toFixed(3))
+        : undefined,
+  };
+}
+
+function formatTelemetryStepMs(stepMs: number): string {
+  const safeStepMs = Math.max(1, Math.round(Number.isFinite(stepMs) ? stepMs : 0));
+  if (safeStepMs < 1000) {
+    return `${safeStepMs}ms`;
+  }
+
+  if (safeStepMs < 60_000) {
+    const seconds = safeStepMs / 1000;
+    return `${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)} giây`;
+  }
+
+  if (safeStepMs < 3_600_000) {
+    const minutes = safeStepMs / 60_000;
+    return `${Number.isInteger(minutes) ? minutes.toFixed(0) : minutes.toFixed(minutes < 10 ? 1 : 0)} phút`;
+  }
+
+  const hours = safeStepMs / 3_600_000;
+  return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(hours < 10 ? 1 : 0)} giờ`;
+}
 
 interface Props {
   sensor: Sensor | null;
@@ -186,6 +588,17 @@ export function SensorChartModal({
   const [clearDataConfirmMounted, setClearDataConfirmMounted] = useState(false);
   const [clearDataConfirmClosing, setClearDataConfirmClosing] = useState(false);
   const [clearingDeviceData, setClearingDeviceData] = useState(false);
+  const [visualizeOpen, setVisualizeOpen] = useState(false);
+  const [playbackRunning, setPlaybackRunning] = useState(false);
+  const [playbackCursorTs, setPlaybackCursorTs] = useState<number | null>(null);
+  const [playbackSpeedIndex, setPlaybackSpeedIndex] = useState(DEFAULT_PLAYBACK_SPEED_INDEX);
+  const [detailTileUx, setDetailTileUx] = useState<DetailTileUxState>({
+    phase: "idle",
+    pendingTiles: 0,
+    mode: null,
+  });
+  const [detailTileVersion, setDetailTileVersion] = useState(0);
+  const [selectedTelemetryStepMs, setSelectedTelemetryStepMs] = useState<TelemetryResolutionSelection>("auto");
   const modalLayout = useChartModalLayout();
   const closeTimerRef = useRef<number | null>(null);
   const spectrumHoverTimerRef = useRef<number | null>(null);
@@ -195,6 +608,12 @@ export function SensorChartModal({
   const dataSettingsSummaryFetchTimerRef = useRef<number | null>(null);
   const dataSummaryLoadedAtRef = useRef<number>(0);
   const clearDataConfirmCloseTimerRef = useRef<number | null>(null);
+  const playbackTimerRef = useRef<number | null>(null);
+  const detailTileFetchTimerRef = useRef<number | null>(null);
+  const detailTileCacheRef = useRef<Set<string>>(new Set());
+  const detailTileInFlightRef = useRef<Set<string>>(new Set());
+  const detailTileEntriesRef = useRef<Map<string, DetailTileCacheEntry>>(new Map());
+  const detailTileRequestSeqRef = useRef(0);
   const autoPresetLoadedSensorIdRef = useRef<string | null>(null);
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -212,11 +631,41 @@ export function SensorChartModal({
     () => Object.values(calendarMonthAvailability).filter((count) => count > 0).length,
     [calendarMonthAvailability],
   );
+  const visualizeOverlay = modalLayout.viewportWidth < 1180;
+  const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
 
   useEffect(() => {
     if (sensor) { const t = setTimeout(() => setVisible(true), 10); return () => clearTimeout(t); }
     else { setVisible(false); }
   }, [sensor]);
+
+  const clearPlaybackTimer = useCallback(() => {
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+  }, []);
+
+  const clearDetailTileFetchTimer = useCallback(() => {
+    if (detailTileFetchTimerRef.current !== null) {
+      window.clearTimeout(detailTileFetchTimerRef.current);
+      detailTileFetchTimerRef.current = null;
+    }
+  }, []);
+
+  const resetDetailTileCache = useCallback(() => {
+    clearDetailTileFetchTimer();
+    detailTileCacheRef.current.clear();
+    detailTileInFlightRef.current.clear();
+    detailTileEntriesRef.current.clear();
+    detailTileRequestSeqRef.current += 1;
+    setDetailTileVersion((version) => version + 1);
+    setDetailTileUx({
+      phase: "idle",
+      pendingTiles: 0,
+      mode: null,
+    });
+  }, [clearDetailTileFetchTimer]);
 
   const handleClose = useCallback(() => {
     if (clearingDeviceData) {
@@ -225,12 +674,16 @@ export function SensorChartModal({
     if (closeTimerRef.current !== null) {
       return;
     }
+    clearPlaybackTimer();
+    setPlaybackRunning(false);
+    setPlaybackCursorTs(null);
+    setVisualizeOpen(false);
     setVisible(false);
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       onClose();
     }, CHART_MODAL_TRANSITION_MS);
-  }, [clearingDeviceData, onClose]);
+  }, [clearPlaybackTimer, clearingDeviceData, onClose]);
 
   const openDataSettings = useCallback(() => {
     if (clearingDeviceData) {
@@ -265,6 +718,18 @@ export function SensorChartModal({
       setDataSettingsMounted(false);
     }, DATA_SETTINGS_MODAL_CLOSE_MS);
   }, [clearingDeviceData, dataSettingsClosing, dataSettingsMounted]);
+
+  const stopPlayback = useCallback(() => {
+    clearPlaybackTimer();
+    setPlaybackRunning(false);
+    setPlaybackCursorTs(null);
+  }, [clearPlaybackTimer]);
+
+  const toggleVisualizeSidebar = useCallback(() => {
+    setCalendarPopoverOpen(false);
+    setTimePresetMenuOpen(false);
+    setVisualizeOpen((open) => !open);
+  }, []);
 
   const openClearDataConfirm = useCallback(() => {
     if (clearingDeviceData) {
@@ -444,6 +909,10 @@ export function SensorChartModal({
         return;
       }
       event.preventDefault();
+      if (visualizeOpen) {
+        setVisualizeOpen(false);
+        return;
+      }
       handleClose();
     };
 
@@ -451,7 +920,7 @@ export function SensorChartModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose]);
+  }, [clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose, visualizeOpen]);
 
   useEffect(() => {
     return () => {
@@ -475,6 +944,14 @@ export function SensorChartModal({
         window.clearTimeout(clearDataConfirmCloseTimerRef.current);
         clearDataConfirmCloseTimerRef.current = null;
       }
+      if (playbackTimerRef.current !== null) {
+        window.clearTimeout(playbackTimerRef.current);
+        playbackTimerRef.current = null;
+      }
+      if (detailTileFetchTimerRef.current !== null) {
+        window.clearTimeout(detailTileFetchTimerRef.current);
+        detailTileFetchTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -494,6 +971,11 @@ export function SensorChartModal({
     setClearDataConfirmMounted(false);
     setClearDataConfirmClosing(false);
     setClearingDeviceData(false);
+    setVisualizeOpen(false);
+    setPlaybackRunning(false);
+    setPlaybackCursorTs(null);
+    setPlaybackSpeedIndex(DEFAULT_PLAYBACK_SPEED_INDEX);
+    setSelectedTelemetryStepMs("auto");
     dataSummaryLoadedAtRef.current = 0;
     lastSpectrumHoverTsRef.current = null;
     if (spectrumHoverTimerRef.current !== null) {
@@ -511,6 +993,10 @@ export function SensorChartModal({
     if (clearDataConfirmCloseTimerRef.current !== null) {
       window.clearTimeout(clearDataConfirmCloseTimerRef.current);
       clearDataConfirmCloseTimerRef.current = null;
+    }
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
     }
     setTimePresetMenuOpen(false);
     setCalendarPopoverOpen(false);
@@ -549,36 +1035,21 @@ export function SensorChartModal({
   }, [calendarPopoverOpen, timePresetMenuOpen]);
 
   const telemetryTimeline = useMemo<HoverTelemetrySnapshot[]>(() => {
-    const points = telemetryPoints
-      .flatMap((point): HoverTelemetrySnapshot[] => {
-        const ts = Date.parse(point.receivedAt);
-        if (!Number.isFinite(ts)) {
-          return [];
-        }
+    const byTs = new Map<number, HoverTelemetrySnapshot>();
+    const addSnapshot = (point: DeviceTelemetryPoint) => {
+      const snapshot = toHoverTelemetrySnapshot(point);
+      if (snapshot) {
+        byTs.set(snapshot.ts, snapshot);
+      }
+    };
 
-        return [{
-          ts,
-          temp:
-            typeof point.temperature === "number" && Number.isFinite(point.temperature)
-              ? Number(point.temperature.toFixed(2))
-              : undefined,
-          ax:
-            typeof point.ax === "number" && Number.isFinite(point.ax)
-              ? Number((point.ax * GRAVITY_MS2).toFixed(3))
-              : undefined,
-          ay:
-            typeof point.ay === "number" && Number.isFinite(point.ay)
-              ? Number((point.ay * GRAVITY_MS2).toFixed(3))
-              : undefined,
-          az:
-            typeof point.az === "number" && Number.isFinite(point.az)
-              ? Number((point.az * GRAVITY_MS2).toFixed(3))
-              : undefined,
-        }];
-      });
+    telemetryPoints.forEach(addSnapshot);
+    detailTileEntriesRef.current.forEach((entry) => {
+      entry.points.forEach(addSnapshot);
+    });
 
-    return points.sort((left, right) => left.ts - right.ts);
-  }, [telemetryPoints]);
+    return Array.from(byTs.values()).sort((left, right) => left.ts - right.ts);
+  }, [detailTileVersion, telemetryPoints]);
 
   const findNearestTelemetrySnapshot = useCallback(
     (targetTs: number): HoverTelemetrySnapshot | null => {
@@ -683,6 +1154,33 @@ export function SensorChartModal({
     [sensor],
   );
 
+  const requestTelemetryDetailTile = useCallback(
+    async (deviceId: string, tile: TelemetryDetailTileRequest): Promise<DeviceTelemetryPoint[]> => {
+      const query = new URLSearchParams({
+        from: new Date(tile.fromMs).toISOString(),
+        to: new Date(Math.max(tile.fromMs, tile.toExclusiveMs - 1)).toISOString(),
+      });
+      if (tile.bucketMs) {
+        query.set("bucketMs", String(tile.bucketMs));
+      }
+      if (tile.limit) {
+        query.set("limit", String(tile.limit));
+      }
+
+      const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/telemetry?${query.toString()}`, {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload) {
+        throw new Error(safeString(asRecord(payload).error || "telemetry_tile_failed"));
+      }
+      return parseTelemetryHistoryPayload(payload);
+    },
+    [],
+  );
+
   const handleTelemetryChartHover = useCallback(
     (state: unknown) => {
       if (spectrumPinnedTarget) {
@@ -777,12 +1275,13 @@ export function SensorChartModal({
         return;
       }
 
+      resetDetailTileCache();
       const now = Date.now();
       setTelemetryWindowAnchorMs(now);
       const options: TelemetryHistoryRequestOptions = {
         from: new Date(now - matchedPreset.windowMs).toISOString(),
         to: new Date(now).toISOString(),
-        limit: matchedPreset.limit,
+        bucketMs: getTelemetryHistoryBucketMs(matchedPreset.windowMs),
         force: true,
         replace: true,
       };
@@ -802,7 +1301,7 @@ export function SensorChartModal({
         setHistoryPresetLoading((current) => (current === preset ? null : current));
       }
     },
-    [onRequestTelemetryHistory, sensor],
+    [onRequestTelemetryHistory, resetDetailTileCache, sensor],
   );
 
   const loadCalendarMonthAvailability = useCallback(
@@ -868,19 +1367,17 @@ export function SensorChartModal({
         return;
       }
 
+      resetDetailTileCache();
       const dayStartMs = localDay.getTime();
       const dayEndExclusiveMs = dayStartMs + DAY_IN_MS;
       const dayEndRequestMs = dayEndExclusiveMs - 1;
-      const oneDayPreset = TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === "1d");
-      const defaultPreset = TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === DEFAULT_HISTORY_PRESET_KEY);
-
       setTimePresetMenuOpen(false);
       setCalendarLoading(true);
       try {
         await onRequestTelemetryHistory(sensor.id, {
           from: new Date(dayStartMs).toISOString(),
           to: new Date(dayEndRequestMs).toISOString(),
-          limit: oneDayPreset?.limit ?? defaultPreset?.limit ?? 1000,
+          bucketMs: getTelemetryHistoryBucketMs(DAY_IN_MS),
           force: true,
           replace: true,
         });
@@ -897,7 +1394,7 @@ export function SensorChartModal({
         setCalendarLoading(false);
       }
     },
-    [controlsBusy, onRequestTelemetryHistory, sensor],
+    [controlsBusy, onRequestTelemetryHistory, resetDetailTileCache, sensor],
   );
 
   const handleToggleCalendarPopover = useCallback(() => {
@@ -953,154 +1450,13 @@ export function SensorChartModal({
     if (!sensor || !activePresetConfig) {
       return [];
     }
+    return buildDenseTelemetryRowsFromPoints(telemetryPoints, telemetryWindowStartMs, telemetryWindowAnchorMs);
+  }, [activePresetConfig, sensor, telemetryPoints, telemetryWindowAnchorMs, telemetryWindowStartMs]);
 
-    const startMs = telemetryWindowStartMs;
-    const endMs = telemetryWindowAnchorMs;
-    const makeNullRow = (ts: number): DenseTelemetryRow => ({
-      ts,
-      temp: null,
-      ax: null,
-      ay: null,
-      az: null,
-    });
-
-    const hasAnyValue = (row: DenseTelemetryRow): boolean =>
-      row.temp !== null || row.ax !== null || row.ay !== null || row.az !== null;
-
-    const rawRows = telemetryPoints
-      .flatMap((point): DenseTelemetryRow[] => {
-        const sourceTs = Date.parse(point.receivedAt);
-        if (!Number.isFinite(sourceTs) || sourceTs < startMs || sourceTs > endMs) {
-          return [];
-        }
-
-        return [{
-          ts: sourceTs,
-          telemetryUuid: point.telemetryUuid,
-          temp:
-            typeof point.temperature === "number" && Number.isFinite(point.temperature)
-              ? Number(point.temperature.toFixed(2))
-              : null,
-          ax:
-            typeof point.ax === "number" && Number.isFinite(point.ax)
-              ? Number((point.ax * GRAVITY_MS2).toFixed(4))
-              : null,
-          ay:
-            typeof point.ay === "number" && Number.isFinite(point.ay)
-              ? Number((point.ay * GRAVITY_MS2).toFixed(4))
-              : null,
-          az:
-            typeof point.az === "number" && Number.isFinite(point.az)
-              ? Number((point.az * GRAVITY_MS2).toFixed(4))
-              : null,
-        }];
-      })
-      .sort((left, right) => left.ts - right.ts);
-
-    if (rawRows.length === 0) {
-      const safeEnd = endMs > startMs ? endMs : startMs + 1;
-      return [makeNullRow(startMs), makeNullRow(safeEnd)];
-    }
-
-    // De-duplicate by timestamp while keeping the latest payload for that instant.
-    const byTs = new Map<number, DenseTelemetryRow>();
-    for (const row of rawRows) {
-      byTs.set(row.ts, row);
-    }
-    const uniqueRows = Array.from(byTs.values()).sort((left, right) => left.ts - right.ts);
-
-    const diffs: number[] = [];
-    for (let index = 1; index < uniqueRows.length; index += 1) {
-      const diff = uniqueRows[index].ts - uniqueRows[index - 1].ts;
-      if (Number.isFinite(diff) && diff > 0) {
-        diffs.push(diff);
-      }
-    }
-    const fallbackStepMs = Math.max(1000, Math.round((endMs - startMs) / 240));
-    const typicalStepMs = diffs.length > 0
-      ? (() => {
-          const sortedDiffs = [...diffs].sort((left, right) => left - right);
-          return Math.max(1000, sortedDiffs[Math.floor(sortedDiffs.length / 2)]);
-        })()
-      : fallbackStepMs;
-    const gapThresholdMs = Math.max(2000, Math.round(typicalStepMs * 2));
-
-    const stagedRows: DenseTelemetryRow[] = [makeNullRow(startMs)];
-    let previousTs = startMs;
-
-    for (const row of uniqueRows) {
-      const clampedTs = Math.max(startMs, Math.min(endMs, row.ts));
-      if (clampedTs - previousTs > gapThresholdMs) {
-        const gapStart = Math.min(endMs, previousTs + typicalStepMs);
-        if (gapStart > previousTs && gapStart < clampedTs) {
-          stagedRows.push(makeNullRow(gapStart));
-        }
-
-        const gapEnd = Math.max(startMs, clampedTs - typicalStepMs);
-        const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-        if (gapEnd > lastTs && gapEnd < clampedTs) {
-          stagedRows.push(makeNullRow(gapEnd));
-        }
-      }
-
-      stagedRows.push({ ...row, ts: clampedTs });
-      previousTs = clampedTs;
-    }
-
-    if (endMs - previousTs > gapThresholdMs) {
-      const tailGapStart = Math.min(endMs, previousTs + typicalStepMs);
-      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-      if (tailGapStart > lastTs && tailGapStart < endMs) {
-        stagedRows.push(makeNullRow(tailGapStart));
-      }
-    }
-    stagedRows.push(makeNullRow(endMs));
-
-    const deduped = new Map<number, DenseTelemetryRow>();
-    for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
-      const existing = deduped.get(row.ts);
-      if (!existing || (!hasAnyValue(existing) && hasAnyValue(row))) {
-        deduped.set(row.ts, row);
-      }
-    }
-
-    return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
-  }, [
-    activePresetConfig,
-    sensor,
-    telemetryPoints,
-    telemetryWindowAnchorMs,
-    telemetryWindowStartMs,
-  ]);
-  const telemetryGapStepMs = useMemo(() => {
-    const loadedWindowMs = Math.max(1, telemetryWindowAnchorMs - telemetryWindowStartMs);
-    const maxAllowedStepMs = Math.max(1000, Math.round(loadedWindowMs * TREND_MAX_GAP_STEP_RATIO));
-    const valuedRows = timelineTelemetryData.filter(
-      (row) =>
-        (typeof row.temp === "number" && Number.isFinite(row.temp))
-        || (typeof row.ax === "number" && Number.isFinite(row.ax))
-        || (typeof row.ay === "number" && Number.isFinite(row.ay))
-        || (typeof row.az === "number" && Number.isFinite(row.az)),
-    );
-
-    if (valuedRows.length < 2) {
-      return maxAllowedStepMs;
-    }
-
-    const diffs: number[] = [];
-    for (let index = 1; index < valuedRows.length; index += 1) {
-      const diff = valuedRows[index].ts - valuedRows[index - 1].ts;
-      if (Number.isFinite(diff) && diff > 0) {
-        diffs.push(diff);
-      }
-    }
-    if (diffs.length === 0) {
-      return maxAllowedStepMs;
-    }
-    const sortedDiffs = [...diffs].sort((left, right) => left - right);
-    const median = sortedDiffs[Math.floor(sortedDiffs.length / 2)];
-    return Math.max(1000, Math.min(maxAllowedStepMs, Math.round(median)));
-  }, [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData]);
+  const telemetryGapStepMs = useMemo(
+    () => estimateTelemetryGapStepMs(timelineTelemetryData, telemetryWindowAnchorMs - telemetryWindowStartMs),
+    [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData],
+  );
 
   const tempData = useMemo(
     () =>
@@ -1125,26 +1481,6 @@ export function SensorChartModal({
     return [Number((center - tempHalfSpan).toFixed(2)), Number((center + tempHalfSpan).toFixed(2))];
   }, [tempData, tempHalfSpan]);
 
-  const accelData = useMemo(
-    () => {
-      const rawRows = timelineTelemetryData.map((row) => ({
-        ts: row.ts,
-        ax: row.ax,
-        ay: row.ay,
-        az: row.az,
-        telemetryUuid: row.telemetryUuid,
-      }));
-      if (accelTrendMode === "instant") {
-        return rawRows;
-      }
-      const rmsWindowMs = Math.min(
-        ACCEL_RMS_MAX_WINDOW_MS,
-        Math.max(ACCEL_RMS_MIN_WINDOW_MS, telemetryGapStepMs * ACCEL_RMS_TARGET_SAMPLES),
-      );
-      return buildRollingRmsAccelRows(timelineTelemetryData, rmsWindowMs);
-    },
-    [accelTrendMode, telemetryGapStepMs, timelineTelemetryData],
-  );
   const hoverSpectrumBusy = hoverSpectrumDebouncing || hoverSpectrumLoading;
   const hoverTelemetrySummaryLabel = useMemo(() => {
     if (!hoverTelemetrySnapshot) {
@@ -1424,21 +1760,136 @@ export function SensorChartModal({
     setTrendPanning(active);
   }, []);
 
+  const trendDetailMode = useMemo(
+    () => getTelemetryDetailMode(
+      Math.max(1, trendVisibleWindow.endMs - trendVisibleWindow.startMs),
+      loadedTrendWindowMs,
+    ),
+    [loadedTrendWindowMs, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+
+  const detailTelemetryData = useMemo<DenseTelemetryRow[]>(() => {
+    if (!trendDetailMode) {
+      return [];
+    }
+
+    const pointsByKey = new Map<string, DeviceTelemetryPoint>();
+    detailTileEntriesRef.current.forEach((entry) => {
+      if (entry.tile.mode !== trendDetailMode) {
+        return;
+      }
+      if (entry.tile.toExclusiveMs <= trendVisibleWindow.startMs || entry.tile.fromMs >= trendVisibleWindow.endMs) {
+        return;
+      }
+
+      for (const point of entry.points) {
+        const ts = Date.parse(point.receivedAt);
+        if (!Number.isFinite(ts) || ts < trendVisibleWindow.startMs || ts > trendVisibleWindow.endMs) {
+          continue;
+        }
+        const key = point.telemetryUuid || `${point.receivedAt}|${point.ax ?? ""}|${point.ay ?? ""}|${point.az ?? ""}|${point.temperature ?? ""}`;
+        pointsByKey.set(key, point);
+      }
+    });
+
+    if (pointsByKey.size === 0) {
+      return [];
+    }
+
+    return buildDenseTelemetryRowsFromPoints(
+      Array.from(pointsByKey.values()),
+      trendVisibleWindow.startMs,
+      trendVisibleWindow.endMs,
+    );
+  }, [detailTileVersion, trendDetailMode, trendVisibleWindow.endMs, trendVisibleWindow.startMs]);
+
+  const hasDetailTelemetryData = useMemo(
+    () => detailTelemetryData.some(hasDenseTelemetryValue),
+    [detailTelemetryData],
+  );
+  const detailLayerActive = Boolean(
+    trendDetailMode
+    && detailTileUx.phase === "ready"
+    && detailTileUx.mode === trendDetailMode
+    && hasDetailTelemetryData,
+  );
+  const activeTelemetryData = detailLayerActive ? detailTelemetryData : timelineTelemetryData;
+  const activeTelemetryGapStepMs = detailLayerActive
+    ? estimateTelemetryGapStepMs(detailTelemetryData, trendVisibleWindow.endMs - trendVisibleWindow.startMs)
+    : telemetryGapStepMs;
+  const manualTelemetryStepMs = selectedTelemetryStepMs === "auto" ? null : selectedTelemetryStepMs;
+
+  useEffect(() => {
+    if (typeof selectedTelemetryStepMs !== "number") {
+      return;
+    }
+    if (selectedTelemetryStepMs < activeTelemetryGapStepMs) {
+      setSelectedTelemetryStepMs("auto");
+    }
+  }, [activeTelemetryGapStepMs, selectedTelemetryStepMs]);
+
+  const displayTelemetryStepMs = manualTelemetryStepMs ?? activeTelemetryGapStepMs;
+  const displayTelemetryData = useMemo(
+    () => manualTelemetryStepMs
+      ? bucketDenseTelemetryRows(
+          activeTelemetryData,
+          manualTelemetryStepMs,
+          trendVisibleWindow.startMs,
+          trendVisibleWindow.endMs,
+        )
+      : activeTelemetryData,
+    [
+      activeTelemetryData,
+      manualTelemetryStepMs,
+      trendVisibleWindow.endMs,
+      trendVisibleWindow.startMs,
+    ],
+  );
+  const activeTempData = useMemo(
+    () =>
+      displayTelemetryData.map((row) => ({
+        ts: row.ts,
+        temp: row.temp,
+        telemetryUuid: row.telemetryUuid,
+      })),
+    [displayTelemetryData],
+  );
+  const activeAccelData = useMemo(
+    () => {
+      const rawRows = displayTelemetryData.map((row) => ({
+        ts: row.ts,
+        ax: row.ax,
+        ay: row.ay,
+        az: row.az,
+        telemetryUuid: row.telemetryUuid,
+      }));
+      if (accelTrendMode === "instant") {
+        return rawRows;
+      }
+      const rmsWindowMs = Math.min(
+        ACCEL_RMS_MAX_WINDOW_MS,
+        Math.max(ACCEL_RMS_MIN_WINDOW_MS, displayTelemetryStepMs * ACCEL_RMS_TARGET_SAMPLES),
+      );
+      return buildRollingRmsAccelRows(displayTelemetryData, rmsWindowMs);
+    },
+    [accelTrendMode, displayTelemetryData, displayTelemetryStepMs],
+  );
+
   const tempVisible = useMemo(
     () =>
-      tempData.filter(
+      activeTempData.filter(
         (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
       ),
-    [tempData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+    [activeTempData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
   const tempGapRangesAll = useMemo(() => {
     return buildNullGapRanges(
-      tempData,
+      activeTempData,
       (row) => typeof row.temp === "number" && Number.isFinite(row.temp),
       (row) => row.ts,
-      telemetryGapStepMs,
+      displayTelemetryStepMs,
     );
-  }, [telemetryGapStepMs, tempData]);
+  }, [displayTelemetryStepMs, activeTempData]);
   const tempGapRanges = useMemo(
     () => clipGapRangesToWindow(tempGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
     [tempGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
@@ -1446,27 +1897,68 @@ export function SensorChartModal({
   const tempDisplayData = tempVisible;
   const accelVisible = useMemo(
     () =>
-      accelData.filter(
+      activeAccelData.filter(
         (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
       ),
-    [accelData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+    [activeAccelData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
   const accelGapRangesAll = useMemo(() => {
     return buildNullGapRanges(
-      accelData,
+      activeAccelData,
       (row) =>
         (typeof row.ax === "number" && Number.isFinite(row.ax))
         || (typeof row.ay === "number" && Number.isFinite(row.ay))
         || (typeof row.az === "number" && Number.isFinite(row.az)),
       (row) => row.ts,
-      telemetryGapStepMs,
+      displayTelemetryStepMs,
     );
-  }, [accelData, telemetryGapStepMs]);
+  }, [activeAccelData, displayTelemetryStepMs]);
   const accelGapRanges = useMemo(
     () => clipGapRangesToWindow(accelGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
     [accelGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
   const accelDisplayData = accelVisible;
+  const playbackRows = useMemo(
+    () =>
+      displayTelemetryData.filter(
+        (row) =>
+          row.ts >= trendVisibleWindow.startMs
+          && row.ts <= trendVisibleWindow.endMs
+          && (
+            (typeof row.temp === "number" && Number.isFinite(row.temp))
+            || (typeof row.ax === "number" && Number.isFinite(row.ax))
+            || (typeof row.ay === "number" && Number.isFinite(row.ay))
+            || (typeof row.az === "number" && Number.isFinite(row.az))
+          ),
+      ),
+    [displayTelemetryData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const playbackSpeedMultiplier = PLAYBACK_SPEED_OPTIONS[playbackSpeedIndex] ?? 1;
+  const playbackStepDelayMs = Math.max(80, Math.round(PLAYBACK_BASE_STEP_MS / playbackSpeedMultiplier));
+  const playbackSpeedLabel = `${playbackSpeedMultiplier}x`;
+  const playbackDelayLabel = `${(playbackStepDelayMs / 1000).toFixed(playbackStepDelayMs % 1000 === 0 ? 0 : 2)}s/điểm`;
+  const playbackCanStart = playbackRows.length > 0;
+  const handleStartPlayback = useCallback(() => {
+    if (playbackRows.length === 0) {
+      stopPlayback();
+      return;
+    }
+    clearPlaybackTimer();
+    setPlaybackCursorTs((currentTs) => {
+      const currentIndex = typeof currentTs === "number"
+        ? playbackRows.findIndex((row) => row.ts === currentTs)
+        : -1;
+      const nextIndex = currentIndex >= 0 && currentIndex < playbackRows.length - 1 ? currentIndex : 0;
+      return playbackRows[nextIndex]?.ts ?? null;
+    });
+    setPlaybackRunning(true);
+  }, [clearPlaybackTimer, playbackRows, stopPlayback]);
+  const handleDecreasePlaybackSpeed = useCallback(() => {
+    setPlaybackSpeedIndex((current) => Math.max(0, current - 1));
+  }, []);
+  const handleIncreasePlaybackSpeed = useCallback(() => {
+    setPlaybackSpeedIndex((current) => Math.min(PLAYBACK_SPEED_OPTIONS.length - 1, current + 1));
+  }, []);
   const accelTrendYDomain = useMemo<[number, number]>(() => {
     if (accelTrendMode !== "rms") {
       return [-accelAmplitudeLimit, accelAmplitudeLimit];
@@ -1527,13 +2019,184 @@ export function SensorChartModal({
     trendVisibleWindow.endMs,
     trendVisibleWindow.startMs,
   ]);
+
+  const detailModeLabel = trendDetailMode === "raw"
+    ? "Raw tile"
+    : trendDetailMode === "bucket-10s"
+      ? "Bucket 10s"
+      : "";
+  const detailTileStatusLabel = detailTileUx.phase === "queued"
+    ? `Chuẩn bị tải ${detailTileUx.pendingTiles} tile`
+    : detailTileUx.phase === "loading"
+      ? `Đang tải ${detailTileUx.pendingTiles} tile`
+      : detailLayerActive
+        ? `Chi tiết vùng đang xem · ${detailModeLabel}`
+        : trendDetailMode && detailTileUx.phase === "ready"
+          ? `Tile đã cache · ${detailModeLabel}`
+          : trendDetailMode
+            ? `Chế độ tile · ${detailModeLabel}`
+            : "";
+  const telemetryStepLabel = `${formatTelemetryStepMs(displayTelemetryStepMs)}/điểm`;
+  const detailTileStatusTone = detailTileUx.phase === "queued" || detailTileUx.phase === "loading"
+    ? "loading"
+    : detailLayerActive
+      ? "ready"
+      : "idle";
+
+  useEffect(() => {
+    const targetSensorId = sensor?.id;
+    if (!targetSensorId || telemetryLoading || trendPanning || controlsBusy) {
+      clearDetailTileFetchTimer();
+      return;
+    }
+    if (!trendDetailMode) {
+      clearDetailTileFetchTimer();
+      setDetailTileUx((current) => current.phase === "idle" && current.mode === null
+        ? current
+        : { phase: "idle", pendingTiles: 0, mode: null });
+      return;
+    }
+
+    const candidateTiles = buildTelemetryDetailTileRequests({
+      deviceId: targetSensorId,
+      visibleStartMs: trendVisibleWindow.startMs,
+      visibleEndMs: trendVisibleWindow.endMs,
+      loadedStartMs: telemetryWindowStartMs,
+      loadedEndMs: telemetryWindowAnchorMs,
+      cachedKeys: new Set([
+        ...detailTileCacheRef.current,
+        ...detailTileInFlightRef.current,
+      ]),
+    });
+    if (candidateTiles.length === 0) {
+      clearDetailTileFetchTimer();
+      setDetailTileUx({
+        phase: "ready",
+        pendingTiles: 0,
+        mode: trendDetailMode,
+        loadedAtMs: Date.now(),
+      });
+      return;
+    }
+
+    setDetailTileUx({
+      phase: "queued",
+      pendingTiles: candidateTiles.length,
+      mode: trendDetailMode,
+    });
+    clearDetailTileFetchTimer();
+    const requestSeq = detailTileRequestSeqRef.current + 1;
+    detailTileRequestSeqRef.current = requestSeq;
+    detailTileFetchTimerRef.current = window.setTimeout(() => {
+      detailTileFetchTimerRef.current = null;
+      setDetailTileUx({
+        phase: "loading",
+        pendingTiles: candidateTiles.length,
+        mode: trendDetailMode,
+      });
+      void (async () => {
+        for (let index = 0; index < candidateTiles.length; index += 1) {
+          const tile = candidateTiles[index];
+          if (!tile) {
+            continue;
+          }
+          if (requestSeq !== detailTileRequestSeqRef.current) {
+            return;
+          }
+          if (detailTileCacheRef.current.has(tile.cacheKey) || detailTileInFlightRef.current.has(tile.cacheKey)) {
+            continue;
+          }
+
+          detailTileInFlightRef.current.add(tile.cacheKey);
+          try {
+            const points = await requestTelemetryDetailTile(targetSensorId, tile);
+            if (requestSeq !== detailTileRequestSeqRef.current) {
+              return;
+            }
+            detailTileEntriesRef.current.set(tile.cacheKey, {
+              tile,
+              points,
+              loadedAtMs: Date.now(),
+            });
+            detailTileCacheRef.current.add(tile.cacheKey);
+            setDetailTileVersion((version) => version + 1);
+          } catch {
+            detailTileCacheRef.current.delete(tile.cacheKey);
+            detailTileEntriesRef.current.delete(tile.cacheKey);
+          } finally {
+            detailTileInFlightRef.current.delete(tile.cacheKey);
+            if (requestSeq === detailTileRequestSeqRef.current) {
+              const remainingTiles = Math.max(0, candidateTiles.length - index - 1);
+              setDetailTileUx({
+                phase: remainingTiles > 0 ? "loading" : "ready",
+                pendingTiles: remainingTiles,
+                mode: trendDetailMode,
+                loadedAtMs: remainingTiles > 0 ? undefined : Date.now(),
+              });
+            }
+          }
+        }
+      })();
+    }, DETAIL_TILE_FETCH_DEBOUNCE_MS);
+
+    return () => {
+      clearDetailTileFetchTimer();
+    };
+  }, [
+    clearDetailTileFetchTimer,
+    controlsBusy,
+    requestTelemetryDetailTile,
+    sensor?.id,
+    telemetryLoading,
+    telemetryWindowAnchorMs,
+    telemetryWindowStartMs,
+    trendDetailMode,
+    trendPanning,
+    trendVisibleWindow.endMs,
+    trendVisibleWindow.startMs,
+  ]);
   const activePresetLabel = activePresetConfig?.label ?? DEFAULT_HISTORY_PRESET_KEY;
+
+  useEffect(() => {
+    clearPlaybackTimer();
+    if (!playbackRunning) {
+      return;
+    }
+    if (playbackRows.length === 0) {
+      stopPlayback();
+      return;
+    }
+
+    playbackTimerRef.current = window.setTimeout(() => {
+      playbackTimerRef.current = null;
+      const currentIndex = typeof playbackCursorTs === "number"
+        ? playbackRows.findIndex((row) => row.ts === playbackCursorTs)
+        : -1;
+      const nextIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+      if (nextIndex >= playbackRows.length) {
+        stopPlayback();
+        return;
+      }
+      setPlaybackCursorTs(playbackRows[nextIndex]?.ts ?? null);
+    }, playbackStepDelayMs);
+
+    return () => {
+      clearPlaybackTimer();
+    };
+  }, [clearPlaybackTimer, playbackCursorTs, playbackRows, playbackRunning, playbackStepDelayMs, stopPlayback]);
+
+  useEffect(() => {
+    if (!visualizeOpen) {
+      stopPlayback();
+    }
+  }, [stopPlayback, visualizeOpen]);
 
   useEffect(() => {
     if (!sensor) {
       autoPresetLoadedSensorIdRef.current = null;
       return;
     }
+    resetDetailTileCache();
     setTelemetryWindowAnchorMs(Date.now());
     setTempHalfSpan(5);
     setAccelAmplitudeLimit(ACCEL_LIMIT_MS2);
@@ -1550,7 +2213,10 @@ export function SensorChartModal({
     setCalendarAvailabilityError("");
     setHistoryPresetLoading(null);
     setCalendarLoading(false);
-  }, [sensor?.id]);
+    setPlaybackRunning(false);
+    setPlaybackCursorTs(null);
+    setPlaybackSpeedIndex(DEFAULT_PLAYBACK_SPEED_INDEX);
+  }, [resetDetailTileCache, sensor?.id]);
 
   useEffect(() => {
     if (!sensor || !onRequestTelemetryHistory) {
@@ -2076,6 +2742,34 @@ export function SensorChartModal({
 
             <button
               type="button"
+              onClick={toggleVisualizeSidebar}
+              aria-pressed={visualizeOpen ? "true" : "false"}
+              title={visualizeOpen ? "Ẩn mô hình 3D" : "Mở mô hình 3D"}
+              style={{
+                height: 32,
+                borderRadius: 999,
+                border: `1px solid ${visualizeOpen ? C.primary : C.border}`,
+                padding: "0 12px",
+                background: visualizeOpen
+                  ? `linear-gradient(135deg, ${C.primaryBg}, ${C.surface})`
+                  : C.surface,
+                color: visualizeOpen ? C.primary : C.textBase,
+                fontSize: "0.66rem",
+                fontWeight: 800,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                boxShadow: visualizeOpen ? `0 0 0 1px ${C.primary}22, 0 8px 18px ${C.primary}18` : "none",
+                transition: "border-color 0.14s ease, background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease",
+              }}
+            >
+              <Box size={13} strokeWidth={2.2} />
+              <span>Visualize</span>
+            </button>
+
+            <button
+              type="button"
               disabled={trendAtLatest}
               onClick={handleResetTrendViewToLatest}
               style={{
@@ -2125,20 +2819,46 @@ export function SensorChartModal({
           </div>
         </div>
 
-        {/* Scrollable content */}
         <div
-          data-ux="chart-modal-scroll"
           style={{
             flex: "1 1 auto",
             minHeight: 0,
-            overflowY: "auto",
-            padding: modalLayout.contentPadding,
-            overscrollBehavior: "contain",
-            scrollbarGutter: "stable",
+            position: "relative",
+            display: "flex",
+            alignItems: "stretch",
+            overflow: "hidden",
+            background: C.surface,
           }}
         >
+          {/* Scrollable content */}
+          <div
+            data-ux="chart-modal-scroll"
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              minHeight: 0,
+              overflowY: "auto",
+              padding: modalLayout.contentPadding,
+              overscrollBehavior: "contain",
+              scrollbarGutter: "stable",
+            }}
+          >
           <style>{`
             @keyframes chartSpin { to { transform: rotate(360deg); } }
+            @keyframes detailTilePulse {
+              0%, 100% { opacity: 0.45; transform: scale(0.85); }
+              50% { opacity: 1; transform: scale(1.18); }
+            }
+            @keyframes visualizeSidebarIn {
+              from {
+                opacity: 0;
+                transform: translateX(18px);
+              }
+              to {
+                opacity: 1;
+                transform: translateX(0);
+              }
+            }
             @keyframes calendarPopoverIn {
               from {
                 opacity: 0;
@@ -2308,6 +3028,7 @@ export function SensorChartModal({
                     timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
                     yDomain={tempDomain}
                     pinnedTarget={spectrumPinnedTarget}
+                    playheadTimestampMs={playbackCursorTs}
                     gridColor={gridColor}
                     axisLabelColor={chartTextStyle.fill}
                     C={C}
@@ -2399,6 +3120,7 @@ export function SensorChartModal({
                     timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
                     yDomain={accelTrendYDomain}
                     pinnedTarget={spectrumPinnedTarget}
+                    playheadTimestampMs={playbackCursorTs}
                     gridColor={gridColor}
                     axisLabelColor={chartTextStyle.fill}
                     C={C}
@@ -2428,6 +3150,98 @@ export function SensorChartModal({
                 <span style={{ color: C.textMuted, fontSize: "0.66rem" }}>
                   {`${activePresetLabel} · kéo hoặc resize để đổi vùng đang xem`}
                 </span>
+                <label
+                  title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
+                  style={{
+                    marginLeft: "auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    minHeight: 22,
+                    padding: "0 8px",
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    color: C.textMuted,
+                    fontSize: "0.61rem",
+                    fontWeight: 800,
+                    letterSpacing: "0.01em",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <span>Độ phân giải</span>
+                  <select
+                    value={selectedTelemetryStepMs === "auto" ? "auto" : String(selectedTelemetryStepMs)}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.value;
+                      setSelectedTelemetryStepMs(nextValue === "auto" ? "auto" : Number(nextValue));
+                    }}
+                    style={{
+                      height: 20,
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      color: C.textBright,
+                      fontSize: "0.61rem",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <option value="auto">Tự động ({formatTelemetryStepMs(activeTelemetryGapStepMs)}/điểm)</option>
+                    {TELEMETRY_HISTORY_BUCKET_STEPS_MS.map((stepMs) => (
+                      <option
+                        key={stepMs}
+                        value={stepMs}
+                        disabled={stepMs < activeTelemetryGapStepMs}
+                      >
+                        {formatTelemetryStepMs(stepMs)}/điểm
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {detailTileStatusLabel ? (
+                  <span
+                    title="Giống bản đồ: tổng quan dùng lớp overview, zoom nhỏ dùng tile chi tiết và cache lân cận"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      minHeight: 22,
+                      padding: "0 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${detailTileStatusTone === "ready" ? C.success + "66" : detailTileStatusTone === "loading" ? C.primary + "77" : C.border}`,
+                      background: detailTileStatusTone === "ready"
+                        ? C.success + "16"
+                        : detailTileStatusTone === "loading"
+                          ? C.primaryBg
+                          : C.surface,
+                      color: detailTileStatusTone === "ready"
+                        ? C.success
+                        : detailTileStatusTone === "loading"
+                          ? C.primary
+                          : C.textMuted,
+                      fontSize: "0.61rem",
+                      fontWeight: 800,
+                      letterSpacing: "0.01em",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: detailTileStatusTone === "ready"
+                          ? C.success
+                          : detailTileStatusTone === "loading"
+                            ? C.primary
+                            : C.textMuted,
+                        animation: detailTileStatusTone === "loading" ? "detailTilePulse 1s ease-in-out infinite" : undefined,
+                      }}
+                    />
+                    {detailTileStatusLabel}
+                  </span>
+                ) : null}
               </div>
               <div
                 style={{
@@ -2765,6 +3579,230 @@ export function SensorChartModal({
 
             </div>
           </div>
+          </div>
+
+          {visualizeOpen && visualizeOverlay ? (
+            <button
+              type="button"
+              aria-label="Đóng mô hình 3D"
+              onClick={() => setVisualizeOpen(false)}
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 12,
+                border: "none",
+                background: "rgba(2, 6, 23, 0.42)",
+                cursor: "pointer",
+              }}
+            />
+          ) : null}
+
+          {visualizeOpen ? (
+            <aside
+              aria-label="Mô hình 3D motor"
+              style={{
+                position: visualizeOverlay ? "absolute" : "relative",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 14,
+                flex: visualizeOverlay ? "0 0 auto" : `0 0 ${visualizeSidebarWidth}`,
+                width: visualizeSidebarWidth,
+                minWidth: visualizeOverlay ? 0 : 420,
+                maxWidth: "100%",
+                borderLeft: `1px solid ${C.border}`,
+                background: `linear-gradient(180deg, ${C.card} 0%, ${C.surface} 46%, #080d16 100%)`,
+                boxShadow: visualizeOverlay
+                  ? "-24px 0 60px rgba(0, 0, 0, 0.46)"
+                  : "-12px 0 28px rgba(0, 0, 0, 0.22)",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                animation: "visualizeSidebarIn 180ms cubic-bezier(0.2, 0.85, 0.25, 1)",
+              }}
+            >
+              <div
+                style={{
+                  flex: "1 1 auto",
+                  minHeight: 0,
+                  position: "relative",
+                  padding: 12,
+                  background: "radial-gradient(circle at 50% 0%, rgba(94, 234, 212, 0.13), transparent 34%)",
+                }}
+              >
+                <React.Suspense
+                  fallback={(
+                    <div
+                      style={{
+                        height: "100%",
+                        minHeight: 360,
+                        borderRadius: 10,
+                        border: "1px solid rgba(148, 163, 184, 0.2)",
+                        background: "#080d16",
+                        color: "#94a3b8",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.72rem",
+                        fontWeight: 800,
+                      }}
+                    >
+                      Đang mở môi trường 3D...
+                    </div>
+                  )}
+                >
+                  <LazyMotorSceneCanvas className="motor-scene-canvas--modal-sidebar" />
+                </React.Suspense>
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 24,
+                    left: 24,
+                    zIndex: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    padding: 6,
+                    borderRadius: 999,
+                    border: "1px solid rgba(148, 163, 184, 0.28)",
+                    background: "rgba(8, 13, 22, 0.82)",
+                    boxShadow: "0 14px 28px rgba(0, 0, 0, 0.32)",
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={handleStartPlayback}
+                    disabled={!playbackCanStart}
+                    title={playbackCanStart ? "Chạy playhead theo vùng brush đang chọn" : "Không có điểm dữ liệu trong vùng brush"}
+                    style={{
+                      height: 30,
+                      borderRadius: 999,
+                      border: "1px solid rgba(248, 113, 113, 0.58)",
+                      padding: "0 12px",
+                      background: playbackRunning ? "rgba(239, 68, 68, 0.22)" : "rgba(239, 68, 68, 0.15)",
+                      color: playbackCanStart ? "#fecaca" : "rgba(254, 202, 202, 0.48)",
+                      cursor: playbackCanStart ? "pointer" : "not-allowed",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: "0.68rem",
+                      fontWeight: 900,
+                      letterSpacing: "0.02em",
+                      opacity: playbackCanStart ? 1 : 0.62,
+                    }}
+                  >
+                    <Play size={13} strokeWidth={2.4} fill="currentColor" />
+                    Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDecreasePlaybackSpeed}
+                    disabled={playbackSpeedIndex === 0}
+                    aria-label="Giảm tốc playback"
+                    title="Giảm tốc"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 999,
+                      border: "1px solid rgba(148, 163, 184, 0.26)",
+                      background: "rgba(15, 23, 42, 0.64)",
+                      color: playbackSpeedIndex === 0 ? "rgba(148, 163, 184, 0.42)" : "#e2e8f0",
+                      cursor: playbackSpeedIndex === 0 ? "not-allowed" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Minus size={13} strokeWidth={2.5} />
+                  </button>
+                  <div
+                    title={playbackDelayLabel}
+                    style={{
+                      minWidth: 58,
+                      color: "#e2e8f0",
+                      fontSize: "0.64rem",
+                      fontWeight: 900,
+                      textAlign: "center",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    <div>{playbackSpeedLabel}</div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.54rem", fontWeight: 800 }}>{playbackDelayLabel}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleIncreasePlaybackSpeed}
+                    disabled={playbackSpeedIndex === PLAYBACK_SPEED_OPTIONS.length - 1}
+                    aria-label="Tăng tốc playback"
+                    title="Tăng tốc"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 999,
+                      border: "1px solid rgba(148, 163, 184, 0.26)",
+                      background: "rgba(15, 23, 42, 0.64)",
+                      color: playbackSpeedIndex === PLAYBACK_SPEED_OPTIONS.length - 1 ? "rgba(148, 163, 184, 0.42)" : "#e2e8f0",
+                      cursor: playbackSpeedIndex === PLAYBACK_SPEED_OPTIONS.length - 1 ? "not-allowed" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Plus size={13} strokeWidth={2.5} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopPlayback}
+                    disabled={!playbackRunning && playbackCursorTs === null}
+                    title="Dừng và xoá đường đỏ khỏi chart"
+                    style={{
+                      height: 30,
+                      borderRadius: 999,
+                      border: "1px solid rgba(148, 163, 184, 0.26)",
+                      padding: "0 10px",
+                      background: "rgba(15, 23, 42, 0.64)",
+                      color: !playbackRunning && playbackCursorTs === null ? "rgba(148, 163, 184, 0.42)" : "#e2e8f0",
+                      cursor: !playbackRunning && playbackCursorTs === null ? "not-allowed" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: "0.64rem",
+                      fontWeight: 900,
+                    }}
+                  >
+                    <Square size={11} strokeWidth={2.5} />
+                    Stop
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Đóng mô hình 3D"
+                  onClick={() => setVisualizeOpen(false)}
+                  style={{
+                    position: "absolute",
+                    top: 24,
+                    right: 24,
+                    zIndex: 6,
+                    width: 32,
+                    height: 32,
+                    borderRadius: 999,
+                    border: "1px solid rgba(148, 163, 184, 0.28)",
+                    background: "rgba(8, 13, 22, 0.82)",
+                    color: "#cbd5e1",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 14px 28px rgba(0, 0, 0, 0.32)",
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  <X size={15} strokeWidth={2.5} />
+                </button>
+              </div>
+            </aside>
+          ) : null}
         </div>
 	      </div>
 

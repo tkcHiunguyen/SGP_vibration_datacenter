@@ -15,14 +15,22 @@ type TelemetryRow = {
   id: number;
   device_id: string;
   received_at: string | Date;
-  temperature: number | null;
-  vibration: number | null;
-  ax: number | null;
-  ay: number | null;
-  az: number | null;
-  sample_count: number | null;
+  temperature: number | string | null;
+  vibration: number | string | null;
+  ax: number | string | null;
+  ay: number | string | null;
+  az: number | string | null;
+  sample_count: number | string | bigint | null;
   telemetry_uuid: string | null;
 };
+
+type TelemetryBucketRow = TelemetryRow & {
+  bucket_started_ms: number | string | bigint | null;
+  bucket_ended_ms: number | string | bigint | null;
+};
+
+const DEFAULT_HISTORY_LIMIT = 200;
+const MAX_HISTORY_LIMIT = 12_000;
 
 type CountRow = {
   total: number;
@@ -51,15 +59,51 @@ function toIsoTimestamp(value: string | Date): string {
   return normalized.endsWith('Z') ? normalized : `${normalized}Z`;
 }
 
+function toFiniteNumber(value: number | string | bigint | null | undefined): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === 'bigint') {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : undefined;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : undefined;
+  }
+
+  return undefined;
+}
+
+function normalizeHistoryLimit(limit?: number): number {
+  return Math.max(1, Math.min(Math.floor(limit ?? DEFAULT_HISTORY_LIMIT), MAX_HISTORY_LIMIT));
+}
+
+function normalizeExplicitHistoryLimit(limit?: number): number | undefined {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) {
+    return undefined;
+  }
+
+  return normalizeHistoryLimit(limit);
+}
+
 function toPayload(row: TelemetryRow): TelemetryPayload {
   const payload: TelemetryPayload = {};
+  const temperature = toFiniteNumber(row.temperature);
+  const vibration = toFiniteNumber(row.vibration);
+  const ax = toFiniteNumber(row.ax);
+  const ay = toFiniteNumber(row.ay);
+  const az = toFiniteNumber(row.az);
+  const sampleCount = toFiniteNumber(row.sample_count);
 
-  if (typeof row.temperature === 'number') payload.temperature = row.temperature;
-  if (typeof row.vibration === 'number') payload.vibration = row.vibration;
-  if (typeof row.ax === 'number') payload.ax = row.ax;
-  if (typeof row.ay === 'number') payload.ay = row.ay;
-  if (typeof row.az === 'number') payload.az = row.az;
-  if (typeof row.sample_count === 'number') payload.sample_count = row.sample_count;
+  if (temperature !== undefined) payload.temperature = temperature;
+  if (vibration !== undefined) payload.vibration = vibration;
+  if (ax !== undefined) payload.ax = ax;
+  if (ay !== undefined) payload.ay = ay;
+  if (az !== undefined) payload.az = az;
+  if (sampleCount !== undefined) payload.sample_count = sampleCount;
   if (typeof row.telemetry_uuid === 'string' && row.telemetry_uuid.trim()) {
     payload.telemetry_uuid = row.telemetry_uuid;
     payload.telemetryUuid = row.telemetry_uuid;
@@ -88,36 +132,35 @@ function parseIsoTimestamp(value?: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function bucketMessages(messages: TelemetryMessage[], bucketMs: number): TelemetryHistoryPoint[] {
-  const buckets = new Map<number, TelemetryHistoryPoint>();
-
-  for (const message of messages) {
-    const timestamp = Date.parse(message.receivedAt);
-    if (Number.isNaN(timestamp)) {
-      continue;
-    }
-
-    const bucketStart = Math.floor(timestamp / bucketMs) * bucketMs;
-    const existing = buckets.get(bucketStart);
-    if (!existing) {
-      buckets.set(bucketStart, {
-        ...message,
-        bucketStartedAt: new Date(bucketStart).toISOString(),
-        bucketEndedAt: new Date(bucketStart + bucketMs).toISOString(),
-        sampleCount: 1,
-      });
-      continue;
-    }
-
-    buckets.set(bucketStart, {
-      ...message,
-      bucketStartedAt: existing.bucketStartedAt,
-      bucketEndedAt: existing.bucketEndedAt,
-      sampleCount: (existing.sampleCount ?? 1) + 1,
-    });
+function toBucketBoundaryIso(value: number | string | bigint | null | undefined): string | undefined {
+  const timestampMs = toFiniteNumber(value);
+  if (timestampMs === undefined) {
+    return undefined;
   }
 
-  return [...buckets.values()].sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  return new Date(timestampMs).toISOString();
+}
+
+function toHistoryPoint(row: TelemetryRow): TelemetryHistoryPoint {
+  return {
+    deviceId: row.device_id,
+    receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
+    payload: toPayload(row),
+  };
+}
+
+function toBucketHistoryPoint(row: TelemetryBucketRow): TelemetryHistoryPoint {
+  const point = toHistoryPoint(row);
+  const sampleCount = toFiniteNumber(row.sample_count);
+  const bucketStartedAt = toBucketBoundaryIso(row.bucket_started_ms);
+  const bucketEndedAt = toBucketBoundaryIso(row.bucket_ended_ms);
+
+  return {
+    ...point,
+    bucketStartedAt,
+    bucketEndedAt,
+    sampleCount,
+  };
 }
 
 export class MySqlTelemetryRepository implements TelemetryRepository {
@@ -150,7 +193,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     const fromTimestamp = parseIsoTimestamp(query.from);
     const toTimestamp = parseIsoTimestamp(query.to);
-    const limit = Math.max(1, Math.min(query.limit ?? 200, 2000));
+    const limit = normalizeHistoryLimit(query.limit);
+    const explicitBucketLimit = normalizeExplicitHistoryLimit(query.limit);
     const bucketMs = query.bucketMs && query.bucketMs > 0 ? Math.floor(query.bucketMs) : undefined;
 
     const where: string[] = ['device_id = ?'];
@@ -174,40 +218,75 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     );
     const totalMatched = Number(countRows[0]?.total ?? 0);
 
-    const rows = bucketMs
-      ? await this.mysql.query<TelemetryRow>(
-          `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
-                  sample_count, telemetry_uuid
-             FROM device_datas
-             WHERE ${whereSql}
-             ORDER BY received_at ASC`,
-          params,
-        )
-      : await this.mysql.query<TelemetryRow>(
-          `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
-                  sample_count, telemetry_uuid
-             FROM device_datas
-             WHERE ${whereSql}
-             ORDER BY received_at DESC
-             LIMIT ?`,
-          [...params, limit],
-        );
+    if (bucketMs) {
+      const bucketUs = bucketMs * 1000;
+      const bucketRows = await this.mysql.query<TelemetryBucketRow>(
+        `SELECT
+           MIN(id) AS id,
+           device_id,
+           MIN(received_at) AS received_at,
+           AVG(temperature) AS temperature,
+           AVG(vibration) AS vibration,
+           AVG(ax) AS ax,
+           AVG(ay) AS ay,
+           AVG(az) AS az,
+           COUNT(*) AS sample_count,
+           NULL AS telemetry_uuid,
+           bucket_index * ? AS bucket_started_ms,
+           (bucket_index + 1) * ? AS bucket_ended_ms
+         FROM (
+           SELECT
+             id,
+             device_id,
+             received_at,
+             temperature,
+             vibration,
+             ax,
+             ay,
+             az,
+             FLOOR(TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', received_at) / ?) AS bucket_index
+           FROM device_datas
+           WHERE ${whereSql}
+         ) AS bucketed
+         GROUP BY device_id, bucket_index
+         ORDER BY bucket_index ${explicitBucketLimit ? 'DESC' : 'ASC'}
+         ${explicitBucketLimit ? 'LIMIT ?' : ''}`,
+        explicitBucketLimit
+          ? [bucketMs, bucketMs, bucketUs, ...params, explicitBucketLimit]
+          : [bucketMs, bucketMs, bucketUs, ...params],
+      );
 
-    const messages: TelemetryMessage[] = rows
-      .map((row) => ({
-        deviceId: row.device_id,
-        receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
-        payload: toPayload(row),
-      }))
-      .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+      const items = bucketRows
+        .map((row) => toBucketHistoryPoint(row))
+        .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
+      const returnedRawSamples = items.reduce((total, item) => total + (item.sampleCount ?? 0), 0);
 
-    const points = bucketMs ? bucketMessages(messages, bucketMs) : messages;
-    const sliced = points.slice(-limit);
+      return {
+        items,
+        totalMatched,
+        truncated: explicitBucketLimit !== undefined && totalMatched > returnedRawSamples,
+        bucketMs,
+      };
+    }
+
+    const rows = await this.mysql.query<TelemetryRow>(
+      `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+              sample_count, telemetry_uuid
+         FROM device_datas
+         WHERE ${whereSql}
+         ORDER BY received_at DESC
+         LIMIT ?`,
+      [...params, limit],
+    );
+
+    const items = rows
+      .map((row) => toHistoryPoint(row))
+      .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
 
     return {
-      items: sliced,
+      items,
       totalMatched,
-      truncated: points.length > sliced.length,
+      truncated: totalMatched > items.length,
       bucketMs,
     };
   }

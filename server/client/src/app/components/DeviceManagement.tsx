@@ -404,6 +404,62 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
   );
 }
 
+const UNASSIGNED_ZONE_LABEL = "Chưa gán";
+
+type ZoneDeviceGroup = {
+  key: string;
+  label: string;
+  devices: Sensor[];
+  total: number;
+  online: number;
+  abnormal: number;
+};
+
+function normalizeZoneLabel(value?: string): string {
+  const trimmed = value?.trim() || "";
+  return trimmed && trimmed !== "--" ? trimmed : "";
+}
+
+function getSensorZoneLabel(sensor: Sensor): string {
+  return normalizeZoneLabel(sensor.zoneCode) || normalizeZoneLabel(sensor.zone) || UNASSIGNED_ZONE_LABEL;
+}
+
+function getSensorZoneKey(sensor: Sensor): string {
+  return getSensorZoneLabel(sensor).toLocaleLowerCase("vi-VN");
+}
+
+function groupSensorsByZone(sensors: Sensor[]): ZoneDeviceGroup[] {
+  const groups = new Map<string, ZoneDeviceGroup>();
+
+  sensors.forEach((sensor) => {
+    const label = getSensorZoneLabel(sensor);
+    const key = getSensorZoneKey(sensor);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label,
+        devices: [],
+        total: 0,
+        online: 0,
+        abnormal: 0,
+      });
+    }
+
+    const group = groups.get(key)!;
+    group.devices.push(sensor);
+    group.total += 1;
+    if (sensor.online) {
+      group.online += 1;
+    }
+    if (sensor.status === "abnormal") {
+      group.abnormal += 1;
+    }
+  });
+
+  return Array.from(groups.values());
+}
+
 function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: () => void }) {
   const { C } = useTheme();
   const [mountFrame, setMountFrame] = useState(false);
@@ -718,10 +774,14 @@ export function DeviceManagement({
     { key: "abnormal", label: "Đang cảnh báo",   count: abnormal },
   ];
 
-  const displayed = useMemo(() => {
-    let list = visibleSensors.filter(s => {
+  const baseFilteredSensors = useMemo(() => {
+    return visibleSensors.filter(s => {
       const q = search.toLowerCase();
-      const matchSearch = s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.zone.toLowerCase().includes(q);
+      const matchSearch =
+        s.name.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q) ||
+        s.zone.toLowerCase().includes(q) ||
+        s.zoneCode.toLowerCase().includes(q);
       const matchFilter =
         filter === "all" ? true :
         filter === "online"   ? s.online :
@@ -729,6 +789,10 @@ export function DeviceManagement({
         s.status === "abnormal";
       return matchSearch && matchFilter;
     });
+  }, [visibleSensors, search, filter]);
+
+  const displayed = useMemo(() => {
+    let list = [...baseFilteredSensors];
 
     switch (sort) {
       case "status":
@@ -745,14 +809,14 @@ export function DeviceManagement({
         list = [...list].sort((a, b) => a.name.localeCompare(b.name, "vi"));
         break;
       case "zone":
-        list = [...list].sort((a, b) => a.zone.localeCompare(b.zone, "vi"));
+        list = [...list].sort((a, b) => getSensorZoneLabel(a).localeCompare(getSensorZoneLabel(b), "vi"));
         break;
       case "device-id":
         list = [...list].sort((a, b) => a.id.localeCompare(b.id, "vi"));
         break;
     }
     return list;
-  }, [visibleSensors, search, filter, sort]);
+  }, [baseFilteredSensors, sort]);
 
   useEffect(() => {
     if (!didMountRef.current) {
@@ -767,6 +831,11 @@ export function DeviceManagement({
   const pageStart = (currentPage - 1) * pageSize;
   const pageEnd = pageStart + pageSize;
   const pagedDevices = displayed.slice(pageStart, pageEnd);
+  const shouldGroupByZone = sort === "zone";
+  const pagedZoneGroups = useMemo(
+    () => shouldGroupByZone ? groupSensorsByZone(pagedDevices) : [],
+    [pagedDevices, shouldGroupByZone],
+  );
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1152,7 +1221,7 @@ export function DeviceManagement({
         }}
       >
         <div style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-          Bộ lọc nhanh
+          Trạng thái vận hành
         </div>
         <div style={{ color: C.textMuted, fontSize: "0.72rem", fontWeight: 600, textAlign: "right" }}>
           Hiển thị {pagedDevices.length} / {displayed.length} thiết bị
@@ -1208,35 +1277,108 @@ export function DeviceManagement({
         </div>
       ) : (
         <>
-          <div
-            data-ux="device-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-              gap: 10,
-            }}
-          >
-            {pagedDevices.map((sensor, idx) => (
-              <DeviceCard
-                key={sensor.id}
-                sensor={sensor}
-                idx={idx}
-                exiting={exitingDeviceIds.has(sensor.id)}
-                onInfo={(target) => openDeviceInfo(target, "view")}
-                onChart={(target) => {
-                  closeContextMenu();
-                  setChartSensor(target);
-                }}
-                onOpenWeb={(target) => {
-                  closeContextMenu();
-                  setWebSensor(target);
-                }}
-                onContextMenu={openDeviceContextMenu}
-                onPrepareInfo={loadDeviceInfoModal}
-                onPrepareChart={loadSensorChartModal}
-              />
-            ))}
-          </div>
+          {shouldGroupByZone ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {pagedZoneGroups.map((zoneGroup) => (
+                <section key={zoneGroup.key} data-ux="device-zone-section" data-zone={zoneGroup.label}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      marginBottom: 8,
+                      padding: "0 2px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <MapPin size={13} color={C.primary} strokeWidth={2.2} />
+                      <h3
+                        style={{
+                          color: C.textBright,
+                          fontSize: "0.82rem",
+                          fontWeight: 800,
+                          margin: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {zoneGroup.label}
+                      </h3>
+                      <span style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650 }}>
+                        {zoneGroup.total} thiết bị
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650 }}>
+                      <span style={{ color: C.success }}>{zoneGroup.online} online</span>
+                      {zoneGroup.abnormal > 0 && <span style={{ color: C.danger }}>{zoneGroup.abnormal} cảnh báo</span>}
+                    </div>
+                  </div>
+
+                  <div
+                    data-ux="device-grid"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    {zoneGroup.devices.map((sensor, idx) => (
+                      <DeviceCard
+                        key={sensor.id}
+                        sensor={sensor}
+                        idx={idx}
+                        exiting={exitingDeviceIds.has(sensor.id)}
+                        onInfo={(target) => openDeviceInfo(target, "view")}
+                        onChart={(target) => {
+                          closeContextMenu();
+                          setChartSensor(target);
+                        }}
+                        onOpenWeb={(target) => {
+                          closeContextMenu();
+                          setWebSensor(target);
+                        }}
+                        onContextMenu={openDeviceContextMenu}
+                        onPrepareInfo={loadDeviceInfoModal}
+                        onPrepareChart={loadSensorChartModal}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div
+              data-ux="device-grid"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              {pagedDevices.map((sensor, idx) => (
+                <DeviceCard
+                  key={sensor.id}
+                  sensor={sensor}
+                  idx={idx}
+                  exiting={exitingDeviceIds.has(sensor.id)}
+                  onInfo={(target) => openDeviceInfo(target, "view")}
+                  onChart={(target) => {
+                    closeContextMenu();
+                    setChartSensor(target);
+                  }}
+                  onOpenWeb={(target) => {
+                    closeContextMenu();
+                    setWebSensor(target);
+                  }}
+                  onContextMenu={openDeviceContextMenu}
+                  onPrepareInfo={loadDeviceInfoModal}
+                  onPrepareChart={loadSensorChartModal}
+                />
+              ))}
+            </div>
+          )}
 
           <div
             style={{

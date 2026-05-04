@@ -218,16 +218,36 @@ export const TELEMETRY_HISTORY_PRESETS: Array<{
   key: HistoryPresetKey;
   label: string;
   windowMs: number;
-  limit: number;
 }> = [
-  { key: "1h", label: "1 giờ", windowMs: 60 * 60 * 1000, limit: 800 },
-  { key: "6h", label: "6 giờ", windowMs: 6 * 60 * 60 * 1000, limit: 1000 },
-  { key: "12h", label: "12 giờ", windowMs: 12 * 60 * 60 * 1000, limit: 1400 },
-  { key: "1d", label: "1 ngày", windowMs: 24 * 60 * 60 * 1000, limit: 1800 },
-  { key: "3d", label: "3 ngày", windowMs: 3 * 24 * 60 * 60 * 1000, limit: 2400 },
-  { key: "1w", label: "1 tuần", windowMs: 7 * 24 * 60 * 60 * 1000, limit: 3000 },
-  { key: "1m", label: "1 tháng", windowMs: 30 * 24 * 60 * 60 * 1000, limit: 3600 },
+  { key: "1h", label: "1 giờ", windowMs: 60 * 60 * 1000 },
+  { key: "6h", label: "6 giờ", windowMs: 6 * 60 * 60 * 1000 },
+  { key: "12h", label: "12 giờ", windowMs: 12 * 60 * 60 * 1000 },
+  { key: "1d", label: "1 ngày", windowMs: 24 * 60 * 60 * 1000 },
+  { key: "3d", label: "3 ngày", windowMs: 3 * 24 * 60 * 60 * 1000 },
+  { key: "1w", label: "1 tuần", windowMs: 7 * 24 * 60 * 60 * 1000 },
+  { key: "1m", label: "1 tháng", windowMs: 30 * 24 * 60 * 60 * 1000 },
 ];
+
+const TELEMETRY_HISTORY_BUCKET_TARGET_POINTS = 2_400;
+export const TELEMETRY_HISTORY_BUCKET_STEPS_MS = [
+  10_000,
+  15_000,
+  30_000,
+  60_000,
+  120_000,
+  300_000,
+  600_000,
+  900_000,
+  1_800_000,
+  3_600_000,
+] as const;
+
+export function getTelemetryHistoryBucketMs(windowMs: number): number {
+  const safeWindowMs = Math.max(1, Math.floor(windowMs));
+  const targetStepMs = Math.ceil(safeWindowMs / TELEMETRY_HISTORY_BUCKET_TARGET_POINTS);
+  return TELEMETRY_HISTORY_BUCKET_STEPS_MS.find((stepMs) => stepMs >= targetStepMs)
+    ?? TELEMETRY_HISTORY_BUCKET_STEPS_MS[TELEMETRY_HISTORY_BUCKET_STEPS_MS.length - 1];
+}
 
 export function getDefaultTrendViewWindowMs(
   _presetKey: HistoryPresetKey | null | undefined,
@@ -1573,6 +1593,7 @@ export function TelemetryTrendChart({
   timeDomain,
   yDomain,
   pinnedTarget,
+  playheadTimestampMs = null,
   showLegend = false,
   gridColor,
   axisLabelColor,
@@ -1596,6 +1617,7 @@ export function TelemetryTrendChart({
   timeDomain?: [number, number];
   yDomain: [number, number];
   pinnedTarget?: SpectrumHoverTarget | null;
+  playheadTimestampMs?: number | null;
   showLegend?: boolean;
   gridColor: string;
   axisLabelColor: string;
@@ -1847,6 +1869,15 @@ export function TelemetryTrendChart({
       }),
     [innerHeight, margin.top, yDomain],
   );
+  const playheadX = useMemo(() => {
+    if (typeof playheadTimestampMs !== "number" || !Number.isFinite(playheadTimestampMs)) {
+      return null;
+    }
+    if (playheadTimestampMs < domainMin || playheadTimestampMs > domainMax) {
+      return null;
+    }
+    return xScale(new Date(playheadTimestampMs));
+  }, [domainMax, domainMin, playheadTimestampMs, xScale]);
 
   const findNearestDataRow = useCallback(
     (targetTs: number): TrendRow | null => {
@@ -2206,6 +2237,27 @@ export function TelemetryTrendChart({
                   stroke="#94a3b8"
                   strokeDasharray="4 4"
                 />
+              ) : null}
+
+              {playheadX !== null ? (
+                <g pointerEvents="none">
+                  <line
+                    x1={playheadX}
+                    x2={playheadX}
+                    y1={margin.top}
+                    y2={margin.top + innerHeight}
+                    stroke="#ef4444"
+                    strokeWidth={2.4}
+                  />
+                  <circle
+                    cx={playheadX}
+                    cy={margin.top + 7}
+                    r={4.5}
+                    fill="#ef4444"
+                    stroke={C.surface}
+                    strokeWidth={1.5}
+                  />
+                </g>
               ) : null}
             </g>
           </Group>

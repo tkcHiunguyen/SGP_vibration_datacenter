@@ -5,12 +5,6 @@ import { UnderDevelopment } from "./UnderDevelopment";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import type { ToastItem } from "./ui";
 
-const Analyze3DPanel = lazy(() =>
-  import("./Analyze3DPanel").then((module) => ({
-    default: module.Analyze3DPanel,
-  })),
-);
-
 const ZoneManagement = lazy(() =>
   import("./ZoneManagement").then((module) => ({
     default: module.ZoneManagement,
@@ -101,15 +95,6 @@ export function MainPanel({
       ) : activeNav === "Update Center" ? (
         <Suspense fallback={panelFallback}>
           <OtaManagement />
-        </Suspense>
-      ) : activeNav === "Phân tích" ? (
-        <Suspense fallback={panelFallback}>
-          <Analyze3DPanel
-            sensors={sensors}
-            telemetryByDevice={telemetryByDevice}
-            telemetryLoadingByDevice={telemetryLoadingByDevice}
-            onRequestTelemetryHistory={onRequestTelemetryHistory}
-          />
         </Suspense>
       ) : (
         <UnderDevelopment page={activeNav} />

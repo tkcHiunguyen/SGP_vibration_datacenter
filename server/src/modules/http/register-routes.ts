@@ -78,7 +78,7 @@ export function registerRoutes({
   const telemetryHistoryQuerySchema = z.object({
     from: z.string().optional(),
     to: z.string().optional(),
-    limit: z.coerce.number().int().positive().max(1000).optional(),
+    limit: z.coerce.number().int().positive().max(12_000).optional(),
     bucketMs: z.coerce.number().int().positive().max(86_400_000).optional(),
   });
 
@@ -767,7 +767,7 @@ export function registerRoutes({
         deviceId,
         from: query.from,
         to: query.to,
-        limit: query.limit ?? 200,
+        limit: query.limit,
         bucketMs: query.bucketMs,
       }),
     };

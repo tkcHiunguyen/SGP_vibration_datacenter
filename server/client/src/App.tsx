@@ -24,7 +24,6 @@ const NAV_TO_PATH: Record<string, string> = {
   "Tổng quan": "/dashboard",
   "Update Center": "/ota",
   "Quản lý khu vực": "/zones",
-  "Phân tích": "/analytics",
   "Cảm biến": "/sensors",
   "Cài đặt": "/settings",
 };
@@ -33,7 +32,6 @@ const SIDEBAR_NAV_ORDER = [
   "Tổng quan",
   "Update Center",
   "Quản lý khu vực",
-  "Phân tích",
   "Cảm biến",
   "Cài đặt",
 ] as const;
@@ -84,9 +82,6 @@ function navFromPathname(pathname: string): string {
     case "/zones":
     case "/app/zones":
       return "Quản lý khu vực";
-    case "/analytics":
-    case "/app/analytics":
-      return "Phân tích";
     case "/sensors":
     case "/app/sensors":
       return "Cảm biến";
@@ -109,7 +104,9 @@ type ApiResult<T> = {
 };
 
 const TELEMETRY_VISIBLE_POINTS = 100;
-const TELEMETRY_HISTORY_MAX_POINTS = 1000;
+const TELEMETRY_HISTORY_RAW_MAX_POINTS = 12_000;
+const TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS = 60_000;
+const TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS = 10_000;
 const SPECTRUM_HISTORY_BUFFER_SIZE = 120;
 const SPECTRUM_FLUSH_INTERVAL_MS = 120;
 const TOAST_DURATION_MS = 10_000;
@@ -117,6 +114,7 @@ const TOAST_EXIT_MS = 260;
 
 type TelemetryHistoryRequestOptions = {
   limit?: number;
+  bucketMs?: number;
   from?: string;
   to?: string;
   force?: boolean;
@@ -195,6 +193,23 @@ function asNumber(value: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function getBucketRetentionLimit(bucketMs: number | undefined, from: string, to: string): number {
+  if (!bucketMs) {
+    return TELEMETRY_VISIBLE_POINTS;
+  }
+
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs < fromMs) {
+    return TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS;
+  }
+
+  return Math.max(
+    TELEMETRY_VISIBLE_POINTS,
+    Math.ceil((toMs - fromMs + 1) / bucketMs) + 4,
+  );
 }
 
 function asSpectrumAxis(value: unknown): SpectrumAxis | undefined {
@@ -721,15 +736,22 @@ export default function App() {
       return;
     }
 
+    const requestedLimitValue = asNumber(options?.limit);
+    const requestedBucketMsValue = asNumber(options?.bucketMs);
+    const bucketMs = typeof requestedBucketMsValue === "number" && requestedBucketMsValue > 0
+      ? Math.max(1_000, Math.floor(requestedBucketMsValue))
+      : undefined;
+    const hasExplicitLimit = typeof requestedLimitValue === "number" && requestedLimitValue > 0;
     const requestedLimit = Math.max(
       1,
       Math.min(
-        Math.floor(asNumber(options?.limit) ?? TELEMETRY_VISIBLE_POINTS),
-        1000,
+        Math.floor(requestedLimitValue ?? TELEMETRY_VISIBLE_POINTS),
+        TELEMETRY_HISTORY_RAW_MAX_POINTS,
       ),
     );
     const from = safeString(options?.from).trim();
     const to = safeString(options?.to).trim();
+    const bucketRetentionLimit = getBucketRetentionLimit(bucketMs, from, to);
     const force = options?.force === true;
     const replace = options?.replace === true;
 
@@ -750,12 +772,24 @@ export default function App() {
     });
 
     const currentRetention = telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_VISIBLE_POINTS;
+    const unboundedBucketRequest = Boolean(bucketMs && !hasExplicitLimit);
+    const appendDetailRequest = force && !replace;
     const nextRetention = replace
-      ? Math.min(TELEMETRY_HISTORY_MAX_POINTS, Math.max(1, requestedLimit))
-      : Math.min(
-          TELEMETRY_HISTORY_MAX_POINTS,
-          Math.max(TELEMETRY_VISIBLE_POINTS, currentRetention, requestedLimit),
-        );
+      ? unboundedBucketRequest
+        ? bucketRetentionLimit
+        : Math.min(TELEMETRY_HISTORY_RAW_MAX_POINTS, Math.max(1, requestedLimit))
+      : appendDetailRequest
+        ? Math.min(
+            TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS,
+            Math.max(
+              TELEMETRY_VISIBLE_POINTS,
+              currentRetention + (unboundedBucketRequest ? bucketRetentionLimit : requestedLimit),
+            ),
+          )
+        : Math.min(
+            TELEMETRY_HISTORY_RAW_MAX_POINTS,
+            Math.max(TELEMETRY_VISIBLE_POINTS, currentRetention, requestedLimit),
+          );
     telemetryRetentionByDeviceRef.current.set(targetDeviceId, nextRetention);
 
     const pendingBefore = telemetryPendingCountRef.current.get(targetDeviceId) || 0;
@@ -763,7 +797,12 @@ export default function App() {
     setTelemetryLoadingByDevice((previous) => ({ ...previous, [targetDeviceId]: true }));
 
     const query = new URLSearchParams();
-    query.set("limit", String(requestedLimit));
+    if (hasExplicitLimit || !bucketMs) {
+      query.set("limit", String(requestedLimit));
+    }
+    if (bucketMs) {
+      query.set("bucketMs", String(bucketMs));
+    }
     if (from) {
       query.set("from", from);
     }
