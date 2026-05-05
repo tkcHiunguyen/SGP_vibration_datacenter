@@ -38,5 +38,17 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, '../public/app'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/three/')) {
+            return 'vendor-three';
+          }
+          if (id.includes('/src/app/components/MotorSceneCanvas') || id.includes('/src/app/components/ThreeDPage')) {
+            return 'app-3d';
+          }
+        },
+      },
+    },
   },
 });

@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Clock3,
   Cpu,
+  Hash,
   Loader2,
   MapPin,
   PencilLine,
@@ -15,12 +16,13 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { Sensor } from "../data/sensors";
+import type { DeviceAxisLabels, DeviceAxisKey, Sensor } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
 import { ConsoleButton } from "./ui/Button";
 import { FormFieldShell, FormInput, FormSelect } from "./ui/Form";
 import { ConfirmModal, Modal } from "./ui/Modal";
 import type { ToastItem } from "./ui";
+import { DEVICE_AXIS_DIRECTION_LABELS, formatDeviceZoneOptionLabel } from "./device-display";
 
 interface DeviceInfoModalProps {
   sensor: Sensor | null;
@@ -49,6 +51,12 @@ type DetailSection = {
 };
 
 type NotifyMessage = Omit<ToastItem, "id">;
+
+const DEFAULT_DEVICE_AXIS_LABELS: Record<DeviceAxisKey, string> = {
+  ax: "X",
+  ay: "Y",
+  az: "Z",
+};
 
 type DeviceDeletionImpact = {
   deviceId: string;
@@ -114,6 +122,10 @@ function formatByteSize(value: number): string {
   }
 
   return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[unitIndex]}`;
+}
+
+function getDeviceAxisLabel(axisLabels: DeviceAxisLabels | undefined, axis: DeviceAxisKey): string {
+  return axisLabels?.[axis] || DEFAULT_DEVICE_AXIS_LABELS[axis];
 }
 
 function parseDeviceDeletionImpact(value: unknown, fallbackSensor: Sensor): DeviceDeletionImpact {
@@ -410,7 +422,7 @@ function EditDeviceModal({
                 <option value="">Không chọn khu vực</option>
                 {zones.map((zone) => (
                   <option key={zone.id} value={zone.code}>
-                    {zone.code} - {zone.name}
+                    {formatDeviceZoneOptionLabel(zone)}
                   </option>
                 ))}
               </FormSelect>
@@ -531,9 +543,18 @@ export function DeviceInfoModal({
     {
       title: "Thông tin chung",
       items: [
+        { icon: <Hash size={14} />, label: "Mã thiết bị", value: sensor.id },
         { icon: <Server size={14} />, label: "UUID", value: sensor.uuid },
         { icon: <MapPin size={14} />, label: "Site", value: sensor.site },
         { icon: <MapPin size={14} />, label: "Zone", value: sensor.zone },
+      ],
+    },
+    {
+      title: "Nhãn trục cảm biến",
+      items: [
+        { icon: <Activity size={14} />, label: DEVICE_AXIS_DIRECTION_LABELS.ax, value: getDeviceAxisLabel(sensor.axisLabels, "ax") },
+        { icon: <Activity size={14} />, label: DEVICE_AXIS_DIRECTION_LABELS.ay, value: getDeviceAxisLabel(sensor.axisLabels, "ay") },
+        { icon: <Activity size={14} />, label: DEVICE_AXIS_DIRECTION_LABELS.az, value: getDeviceAxisLabel(sensor.axisLabels, "az") },
       ],
     },
     {

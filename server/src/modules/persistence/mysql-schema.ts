@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS devices (
   site VARCHAR(128) NULL,
   zone VARCHAR(64) NULL,
   firmware_version VARCHAR(128) NULL,
+  axis_label_ax VARCHAR(64) NULL,
+  axis_label_ay VARCHAR(64) NULL,
+  axis_label_az VARCHAR(64) NULL,
   notes TEXT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
@@ -166,6 +169,48 @@ SET @normalize_devices_zone_column_sql := IF(
 PREPARE normalize_devices_zone_column_stmt FROM @normalize_devices_zone_column_sql;
 EXECUTE normalize_devices_zone_column_stmt;
 DEALLOCATE PREPARE normalize_devices_zone_column_stmt;
+
+SET @has_devices_axis_label_ax := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'axis_label_ax'
+);
+SET @add_devices_axis_label_ax_sql := IF(
+  @has_devices_axis_label_ax = 0,
+  'ALTER TABLE devices ADD COLUMN axis_label_ax VARCHAR(64) NULL AFTER firmware_version',
+  'SELECT 1'
+);
+PREPARE add_devices_axis_label_ax_stmt FROM @add_devices_axis_label_ax_sql;
+EXECUTE add_devices_axis_label_ax_stmt;
+DEALLOCATE PREPARE add_devices_axis_label_ax_stmt;
+
+SET @has_devices_axis_label_ay := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'axis_label_ay'
+);
+SET @add_devices_axis_label_ay_sql := IF(
+  @has_devices_axis_label_ay = 0,
+  'ALTER TABLE devices ADD COLUMN axis_label_ay VARCHAR(64) NULL AFTER axis_label_ax',
+  'SELECT 1'
+);
+PREPARE add_devices_axis_label_ay_stmt FROM @add_devices_axis_label_ay_sql;
+EXECUTE add_devices_axis_label_ay_stmt;
+DEALLOCATE PREPARE add_devices_axis_label_ay_stmt;
+
+SET @has_devices_axis_label_az := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'axis_label_az'
+);
+SET @add_devices_axis_label_az_sql := IF(
+  @has_devices_axis_label_az = 0,
+  'ALTER TABLE devices ADD COLUMN axis_label_az VARCHAR(64) NULL AFTER axis_label_ay',
+  'SELECT 1'
+);
+PREPARE add_devices_axis_label_az_stmt FROM @add_devices_axis_label_az_sql;
+EXECUTE add_devices_axis_label_az_stmt;
+DEALLOCATE PREPARE add_devices_axis_label_az_stmt;
 
 SET @has_idx_devices_archived_at := (
   SELECT COUNT(*)

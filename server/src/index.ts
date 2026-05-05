@@ -110,7 +110,10 @@ const alertRepository = await InMemoryAlertRepository.create(mysqlAccess);
 const auditRepository = await InMemoryAuditRepository.create(mysqlAccess);
 
 const authService = createAuthServiceFromEnv(env);
-const deviceService = new DeviceService(deviceRepository);
+const zoneService = new ZoneService(mysqlAccess);
+const deviceService = new DeviceService(deviceRepository, {
+  resolveSocketZone: (zone) => zoneService.resolveExistingCode(zone),
+});
 const telemetryService = new TelemetryService(telemetryRepository, deviceService);
 const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
   baseDir: env.SPECTRUM_STORAGE_DIR,
@@ -119,7 +122,6 @@ const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
 });
 const alertService = new AlertService(alertRepository);
 const auditService = new AuditService(auditRepository);
-const zoneService = new ZoneService(mysqlAccess);
 const commandServiceWithTimeout = new CommandService(
   deviceService,
   commandRepository,

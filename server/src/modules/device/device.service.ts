@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
-import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+
+const AXIS_LABEL_KEYS = ['ax', 'ay', 'az'] as const;
 
 type RegisterDeviceInput = {
   deviceId: string;
@@ -9,6 +11,7 @@ type RegisterDeviceInput = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  axisLabels?: DeviceAxisLabels;
   notes?: string;
 };
 
@@ -19,7 +22,14 @@ type SocketMetadataInput = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  axisLabels?: DeviceAxisLabels;
   notes?: string;
+};
+
+type SocketZoneResolver = (zone: string) => Promise<string | undefined> | string | undefined;
+
+type DeviceServiceOptions = {
+  resolveSocketZone?: SocketZoneResolver;
 };
 
 type DeviceListItem = {
@@ -46,7 +56,10 @@ type ZoneAssignmentClearResult = {
 };
 
 export class DeviceService {
-  constructor(private readonly repository: DeviceRepository) {}
+  constructor(
+    private readonly repository: DeviceRepository,
+    private readonly options: DeviceServiceOptions = {},
+  ) {}
 
   register(input: RegisterDeviceInput): DeviceMetadata {
     const now = new Date().toISOString();
@@ -60,6 +73,7 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
+      axisLabels: this.resolveAxisLabels(input, existing?.axisLabels),
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -80,6 +94,7 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
+      axisLabels: this.resolveAxisLabels(input, existing?.axisLabels),
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -114,6 +129,9 @@ export class DeviceService {
     }
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
+      metadata.axisLabels = this.normalizeAxisLabels(input.axisLabels);
     }
     if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
       metadata.notes = this.normalizeOptionalText(input.notes);
@@ -154,6 +172,9 @@ export class DeviceService {
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
     }
+    if (Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
+      metadata.axisLabels = this.normalizeAxisLabels(input.axisLabels);
+    }
     if (Object.prototype.hasOwnProperty.call(input, 'notes')) {
       metadata.notes = this.normalizeOptionalText(input.notes);
     }
@@ -166,13 +187,17 @@ export class DeviceService {
     return metadata;
   }
 
-  upsertFromSocket(deviceId: string, input: SocketMetadataInput): { metadata: DeviceMetadata | null; updated: boolean } {
+  async upsertFromSocket(
+    deviceId: string,
+    input: SocketMetadataInput,
+  ): Promise<{ metadata: DeviceMetadata | null; updated: boolean }> {
     const existing = this.repository.getMetadata(deviceId);
-    const normalized = this.normalizeSocketMetadata(input);
 
     if (!existing) {
       return { metadata: null, updated: false };
     }
+
+    const normalized = await this.normalizeSocketMetadata(input);
 
     const next: DeviceMetadata = {
       ...existing,
@@ -188,6 +213,7 @@ export class DeviceService {
       next.site !== existing.site ||
       next.zone !== existing.zone ||
       next.firmwareVersion !== existing.firmwareVersion ||
+      !this.axisLabelsEqual(next.axisLabels, existing.axisLabels) ||
       next.notes !== existing.notes;
 
     if (!hasChanged) {
@@ -386,7 +412,7 @@ export class DeviceService {
     return normalized ? normalized : undefined;
   }
 
-  private normalizeSocketMetadata(input: SocketMetadataInput): UpdateDeviceInput {
+  private async normalizeSocketMetadata(input: SocketMetadataInput): Promise<UpdateDeviceInput> {
     const normalized: UpdateDeviceInput = {};
 
     const uuid = this.normalizeOptionalText(input.uuid);
@@ -406,12 +432,19 @@ export class DeviceService {
 
     const zone = this.normalizeOptionalText(input.zone);
     if (zone !== undefined) {
-      normalized.zone = zone;
+      const resolvedZone = await this.resolveSocketZone(zone);
+      if (resolvedZone !== undefined) {
+        normalized.zone = resolvedZone;
+      }
     }
 
     const firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
     if (firmwareVersion !== undefined) {
       normalized.firmwareVersion = firmwareVersion;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
+      normalized.axisLabels = this.normalizeAxisLabels(input.axisLabels);
     }
 
     const notes = this.normalizeOptionalText(input.notes);
@@ -422,12 +455,56 @@ export class DeviceService {
     return normalized;
   }
 
+  private async resolveSocketZone(zone: string): Promise<string | undefined> {
+    if (!this.options.resolveSocketZone) {
+      return zone;
+    }
+
+    try {
+      return this.normalizeOptionalText(await this.options.resolveSocketZone(zone));
+    } catch (error) {
+      console.error('[device-service] socket zone lookup failed', error);
+      return undefined;
+    }
+  }
+
   private normalizeOptionalText(value?: string): string | undefined {
     if (value === undefined) {
       return undefined;
     }
     const normalized = value.trim();
     return normalized ? normalized : undefined;
+  }
+
+  private resolveAxisLabels(
+    input: { axisLabels?: DeviceAxisLabels },
+    fallback?: DeviceAxisLabels,
+  ): DeviceAxisLabels | undefined {
+    if (!Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
+      return fallback;
+    }
+
+    return this.normalizeAxisLabels(input.axisLabels);
+  }
+
+  private normalizeAxisLabels(axisLabels?: DeviceAxisLabels): DeviceAxisLabels | undefined {
+    if (!axisLabels) {
+      return undefined;
+    }
+
+    const normalized: DeviceAxisLabels = {};
+    for (const axis of AXIS_LABEL_KEYS) {
+      const label = this.normalizeOptionalText(axisLabels[axis]);
+      if (label !== undefined) {
+        normalized[axis] = label;
+      }
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private axisLabelsEqual(left?: DeviceAxisLabels, right?: DeviceAxisLabels): boolean {
+    return AXIS_LABEL_KEYS.every((axis) => left?.[axis] === right?.[axis]);
   }
 
   private normalizeHeartbeat(heartbeat?: DeviceHeartbeat): DeviceHeartbeat | undefined {

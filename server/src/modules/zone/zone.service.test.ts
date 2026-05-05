@@ -79,3 +79,16 @@ test('zone summary returns total, described count and latest update', async () =
   assert.equal(summary.updatedToday, 2);
   assert.ok(summary.latestUpdatedAt);
 });
+
+test('resolveExistingCode returns only existing zone codes', async () => {
+  const service = new ZoneService(null);
+
+  const created = await service.create({
+    name: 'Rollout',
+  });
+
+  assert.equal(created.code, 'ROLLOUT');
+  assert.equal(await service.resolveExistingCode('ROLLOUT'), 'ROLLOUT');
+  assert.equal(await service.resolveExistingCode('rollout'), 'ROLLOUT');
+  assert.equal(await service.resolveExistingCode('missing-zone'), undefined);
+});

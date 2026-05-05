@@ -22,7 +22,7 @@ const deviceMetadataSchema = z.object({
   version_firmware: z.string().trim().max(128).optional(),
   name: z.string().trim().max(256).optional(),
   site: z.string().trim().max(128).optional(),
-  zone: z.string().trim().max(128).optional(),
+  zone: z.string().trim().max(64).optional(),
   firmwareVersion: z.string().trim().max(128).optional(),
   notes: z.string().trim().max(1024).optional(),
 });
@@ -60,7 +60,7 @@ export function registerDeviceStateHandlers(
     }
   });
 
-  socket.on('device:metadata', (rawPayload: unknown) => {
+  socket.on('device:metadata', async (rawPayload: unknown) => {
     logPayload('[device:metadata]', rawPayload);
 
     let candidate = rawPayload;
@@ -104,7 +104,7 @@ export function registerDeviceStateHandlers(
       return;
     }
 
-    const result = deviceService.upsertFromSocket(deviceId, normalizedMetadata);
+    const result = await deviceService.upsertFromSocket(deviceId, normalizedMetadata);
     if (!result.updated) {
       if (!result.metadata) {
         app.log.debug(

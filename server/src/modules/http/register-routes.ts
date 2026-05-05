@@ -45,6 +45,13 @@ export function registerRoutes({
   persistenceStatus,
 }: RegisterRoutesDeps): void {
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
+  const deviceAxisLabelsSchema = z
+    .object({
+      ax: z.string().optional(),
+      ay: z.string().optional(),
+      az: z.string().optional(),
+    })
+    .optional();
   const deviceCreateSchema = z.object({
     deviceId: z.string().min(1),
     uuid: z.string().optional(),
@@ -52,6 +59,7 @@ export function registerRoutes({
     site: z.string().optional(),
     zone: z.string().optional(),
     firmwareVersion: z.string().optional(),
+    axisLabels: deviceAxisLabelsSchema,
     notes: z.string().optional(),
   });
 
@@ -61,6 +69,7 @@ export function registerRoutes({
     site: z.string().optional(),
     zone: z.string().optional(),
     firmwareVersion: z.string().optional(),
+    axisLabels: deviceAxisLabelsSchema,
     notes: z.string().optional(),
   });
 

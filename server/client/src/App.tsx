@@ -451,6 +451,7 @@ function DashboardShell({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onSensorUpdated,
   toasts,
   onDismissToast,
   signalAlerts,
@@ -462,6 +463,7 @@ function DashboardShell({
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastMessage, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onSensorUpdated: (sensor: Sensor) => void;
   toasts: ToastMessage[];
   onDismissToast: (toastId: number) => void;
   signalAlerts: SignalAlert[];
@@ -597,6 +599,7 @@ function DashboardShell({
           onRequestTelemetryHistory={onRequestTelemetryHistory}
           onNotify={onNotify}
           onDeviceDataCleared={onDeviceDataCleared}
+          onSensorUpdated={onSensorUpdated}
         />
       </div>
       <ToastStack items={toasts} onDismiss={onDismissToast} />
@@ -888,6 +891,26 @@ export default function App() {
     }));
   }, []);
 
+  const updateInventoryDeviceFromSensor = useCallback((updatedSensor: Sensor): void => {
+    setInventoryDevices((current) =>
+      current.map((device) => {
+        if (device.deviceId !== updatedSensor.id) {
+          return device;
+        }
+
+        return {
+          ...device,
+          metadata: {
+            ...(device.metadata ?? {}),
+            name: updatedSensor.name,
+            zone: updatedSensor.zoneCode || undefined,
+            axisLabels: updatedSensor.axisLabels,
+          },
+        };
+      }),
+    );
+  }, []);
+
   async function loadDeviceInventory(): Promise<void> {
     setLoadingInventory(true);
     const result = await requestJson<unknown>("/api/devices?limit=500");
@@ -1150,6 +1173,7 @@ export default function App() {
         onRequestTelemetryHistory={requestTelemetryHistory}
         onNotify={showToast}
         onDeviceDataCleared={clearDeviceChartData}
+        onSensorUpdated={updateInventoryDeviceFromSensor}
         toasts={toasts}
         onDismissToast={dismissToast}
         signalAlerts={signalAlerts}

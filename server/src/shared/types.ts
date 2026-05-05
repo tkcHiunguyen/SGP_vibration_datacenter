@@ -102,6 +102,8 @@ export type DeviceHeartbeat = {
   uptimeSec?: number;
 };
 
+export type DeviceAxisLabels = Partial<Record<'ax' | 'ay' | 'az', string>>;
+
 export type DeviceMetadata = {
   deviceId: string;
   uuid?: string;
@@ -109,6 +111,7 @@ export type DeviceMetadata = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  axisLabels?: DeviceAxisLabels;
   notes?: string;
   createdAt: string;
   updatedAt: string;

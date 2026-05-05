@@ -33,6 +33,7 @@ interface MainPanelProps {
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastItem, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onSensorUpdated?: (sensor: Sensor) => void;
 }
 
 export function MainPanel({
@@ -44,6 +45,7 @@ export function MainPanel({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onSensorUpdated,
 }: MainPanelProps) {
   const { C } = useTheme();
 
@@ -76,6 +78,7 @@ export function MainPanel({
             onRequestTelemetryHistory={onRequestTelemetryHistory}
             onNotify={onNotify}
             onDeviceDataCleared={onDeviceDataCleared}
+            onSensorUpdated={onSensorUpdated}
           />
         </div>
       ) : activeNav === "Quản lý khu vực" ? (

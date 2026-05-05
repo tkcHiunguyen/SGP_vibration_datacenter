@@ -1,5 +1,5 @@
 import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
-import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +11,9 @@ type DeviceMetadataRow = {
   site: string | null;
   zone: string | null;
   firmware_version: string | null;
+  axis_label_ax: string | null;
+  axis_label_ay: string | null;
+  axis_label_az: string | null;
   notes: string | null;
   created_at: string | Date;
   updated_at: string | Date;
@@ -50,6 +53,30 @@ function createTotalRows(impact: Omit<DeviceDeletionImpact, 'totalRows'>): numbe
     impact.alertRows +
     impact.auditLogRows
   );
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
+function createAxisLabels(row: DeviceMetadataRow): DeviceAxisLabels | undefined {
+  const axisLabels: DeviceAxisLabels = {};
+  const ax = normalizeOptionalText(row.axis_label_ax);
+  const ay = normalizeOptionalText(row.axis_label_ay);
+  const az = normalizeOptionalText(row.axis_label_az);
+
+  if (ax) {
+    axisLabels.ax = ax;
+  }
+  if (ay) {
+    axisLabels.ay = ay;
+  }
+  if (az) {
+    axisLabels.az = az;
+  }
+
+  return Object.keys(axisLabels).length > 0 ? axisLabels : undefined;
 }
 
 export class InMemoryDeviceRepository implements DeviceRepository {
@@ -276,15 +303,20 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     await this.mysql.execute(
       `
         INSERT INTO devices (
-          device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
+          device_id, uuid, name, site, zone, firmware_version,
+          axis_label_ax, axis_label_ay, axis_label_az,
+          notes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           uuid = VALUES(uuid),
           name = VALUES(name),
           site = VALUES(site),
           zone = VALUES(zone),
           firmware_version = VALUES(firmware_version),
+          axis_label_ax = VALUES(axis_label_ax),
+          axis_label_ay = VALUES(axis_label_ay),
+          axis_label_az = VALUES(axis_label_az),
           notes = VALUES(notes),
           created_at = VALUES(created_at),
           updated_at = VALUES(updated_at)
@@ -296,6 +328,9 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata.site ?? null,
         metadata.zone ?? null,
         metadata.firmwareVersion ?? null,
+        metadata.axisLabels?.ax ?? null,
+        metadata.axisLabels?.ay ?? null,
+        metadata.axisLabels?.az ?? null,
         metadata.notes ?? null,
         metadata.createdAt,
         metadata.updatedAt,
@@ -372,7 +407,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
 
     const metadataRows = await this.mysql.query<DeviceMetadataRow>(
       `
-        SELECT device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
+        SELECT
+          device_id, uuid, name, site, zone, firmware_version,
+          axis_label_ax, axis_label_ay, axis_label_az,
+          notes, created_at, updated_at
         FROM devices
         ORDER BY device_id ASC
       `,
@@ -385,6 +423,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         site: row.site ?? undefined,
         zone: row.zone ?? undefined,
         firmwareVersion: row.firmware_version ?? undefined,
+        axisLabels: createAxisLabels(row),
         notes: row.notes ?? undefined,
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
@@ -434,9 +473,11 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     await this.mysql.execute(
       `
         INSERT INTO devices (
-          device_id, uuid, name, site, zone, firmware_version, notes, created_at, updated_at
+          device_id, uuid, name, site, zone, firmware_version,
+          axis_label_ax, axis_label_ay, axis_label_az,
+          notes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           updated_at = VALUES(updated_at)
       `,
@@ -447,6 +488,9 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata?.site ?? null,
         metadata?.zone ?? null,
         metadata?.firmwareVersion ?? null,
+        metadata?.axisLabels?.ax ?? null,
+        metadata?.axisLabels?.ay ?? null,
+        metadata?.axisLabels?.az ?? null,
         metadata?.notes ?? null,
         createdAt,
         updatedAt,

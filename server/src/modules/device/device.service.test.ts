@@ -144,6 +144,24 @@ test('registerStrict persists metadata and returns saved device', async () => {
   assert.equal(repository.getMetadata('ESP-001')?.firmwareVersion, '1.0.6');
 });
 
+test('updateStrict persists per-device axis labels and trims empty labels', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository);
+
+  await service.registerStrict({ deviceId: 'ESP-AXIS', name: 'Axis target' });
+
+  const updated = await service.updateStrict('ESP-AXIS', {
+    axisLabels: {
+      ax: '  Motor ngang  ',
+      ay: '',
+      az: 'Motor dọc',
+    },
+  });
+
+  assert.deepEqual(updated?.axisLabels, { ax: 'Motor ngang', az: 'Motor dọc' });
+  assert.deepEqual(repository.getMetadata('ESP-AXIS')?.axisLabels, { ax: 'Motor ngang', az: 'Motor dọc' });
+});
+
 test('updateStrict bubbles persistence failures instead of reporting fake success', async () => {
   const repository = new FakeDeviceRepository();
   const service = new DeviceService(repository);
@@ -167,6 +185,40 @@ test('updateStrict bubbles persistence failures instead of reporting fake succes
   assert.equal(repository.getMetadata('ESP-002')?.name, 'Old Name');
 });
 
+test('upsertFromSocket ignores unknown zone from device metadata', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository, {
+    resolveSocketZone: async () => undefined,
+  });
+
+  await service.registerStrict({ deviceId: 'ESP-ZONE-UNKNOWN', name: 'Zone test', zone: 'ZONE_A' });
+
+  const result = await service.upsertFromSocket('ESP-ZONE-UNKNOWN', {
+    zone: 'rollout',
+  });
+
+  assert.equal(result.updated, false);
+  assert.equal(result.metadata?.zone, 'ZONE_A');
+  assert.equal(repository.getMetadata('ESP-ZONE-UNKNOWN')?.zone, 'ZONE_A');
+});
+
+test('upsertFromSocket uses resolved existing zone code from device metadata', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository, {
+    resolveSocketZone: async (zone) => (zone === 'rollout' ? 'ROLLOUT' : undefined),
+  });
+
+  await service.registerStrict({ deviceId: 'ESP-ZONE-KNOWN', name: 'Zone test' });
+
+  const result = await service.upsertFromSocket('ESP-ZONE-KNOWN', {
+    zone: 'rollout',
+  });
+
+  assert.equal(result.updated, true);
+  assert.equal(result.metadata?.zone, 'ROLLOUT');
+  assert.equal(repository.getMetadata('ESP-ZONE-KNOWN')?.zone, 'ROLLOUT');
+});
+
 test('clearZoneAssignments removes zone for all devices in target zone', async () => {
   const repository = new FakeDeviceRepository();
   const service = new DeviceService(repository);
@@ -182,6 +234,64 @@ test('clearZoneAssignments removes zone for all devices in target zone', async (
   assert.equal(repository.getMetadata('ESP-A')?.zone, undefined);
   assert.equal(repository.getMetadata('ESP-B')?.zone, undefined);
   assert.equal(repository.getMetadata('ESP-C')?.zone, 'ZONE_Y');
+});
+
+test('repository loads and writes per-device axis label columns', async () => {
+  const executed: Array<{ sql: string; params: unknown[] }> = [];
+  const mysql = {
+    async query<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
+      if (!sql.includes('FROM devices')) {
+        return [];
+      }
+      assert.equal(sql.includes('axis_label_ax'), true);
+      assert.equal(sql.includes('axis_label_ay'), true);
+      assert.equal(sql.includes('axis_label_az'), true);
+      const rows = [
+        {
+          device_id: 'ESP-AXIS-SQL',
+          uuid: 'axis-sql-uuid',
+          name: 'Axis SQL',
+          site: null,
+          zone: null,
+          firmware_version: null,
+          axis_label_ax: 'Motor ngang',
+          axis_label_ay: null,
+          axis_label_az: 'Motor dọc',
+          notes: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-02T00:00:00.000Z',
+        },
+      ];
+      return rows as unknown as T[];
+    },
+    async execute(sql: string, params: unknown[] = []): Promise<number> {
+      executed.push({ sql, params });
+      return 1;
+    },
+  } as unknown as MySqlAccess;
+
+  const repository = await InMemoryDeviceRepository.create(mysql);
+
+  assert.deepEqual(repository.getMetadata('ESP-AXIS-SQL')?.axisLabels, {
+    ax: 'Motor ngang',
+    az: 'Motor dọc',
+  });
+
+  await repository.upsertMetadata({
+    deviceId: 'ESP-AXIS-SQL',
+    uuid: 'axis-sql-uuid',
+    name: 'Axis SQL',
+    axisLabels: { ax: 'Ngang', ay: 'Tâm', az: 'Dọc' },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-03T00:00:00.000Z',
+  });
+
+  const upsert = executed.find((entry) => entry.sql.includes('INSERT INTO devices'));
+  assert.ok(upsert);
+  assert.equal(upsert.sql.includes('axis_label_ax'), true);
+  assert.equal(upsert.sql.includes('axis_label_ay'), true);
+  assert.equal(upsert.sql.includes('axis_label_az'), true);
+  assert.deepEqual(upsert.params.slice(6, 9), ['Ngang', 'Tâm', 'Dọc']);
 });
 
 test('repository loads device rows without legacy archive or sensor version columns', async () => {

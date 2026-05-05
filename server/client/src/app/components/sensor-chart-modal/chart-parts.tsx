@@ -6,7 +6,7 @@ import { Group } from "@visx/group";
 import { scaleLinear, scaleTime } from "@visx/scale";
 import { LinePath } from "@visx/shape";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import type { DeviceSpectrumPoint, SpectrumAxis } from "../../data/sensors";
+import type { DeviceAxisKey, DeviceSpectrumPoint, SpectrumAxis } from "../../data/sensors";
 
 export const GRAVITY_MS2 = 9.80665;
 export const ACCEL_LIMIT_MS2 = 8 * GRAVITY_MS2;
@@ -56,6 +56,12 @@ export const VIBRATION_AXIS_LABELS = {
   ay: "Axial",
   az: "Radial V",
 } as const;
+
+export const FFT_AXIS_DISPLAY_ORDER: readonly { deviceAxis: DeviceAxisKey; spectrumAxis: SpectrumAxis }[] = [
+  { deviceAxis: "ax", spectrumAxis: "x" },
+  { deviceAxis: "ay", spectrumAxis: "y" },
+  { deviceAxis: "az", spectrumAxis: "z" },
+] as const;
 
 export type ChartModalLayout = {
   viewportWidth: number;
@@ -212,7 +218,7 @@ export function useNonPassiveWheelBlock(ref: React.RefObject<HTMLElement | null>
 }
 
 export type HistoryPresetKey = "1h" | "6h" | "12h" | "1d" | "3d" | "1w" | "1m";
-export const DEFAULT_HISTORY_PRESET_KEY: HistoryPresetKey = "12h";
+export const DEFAULT_HISTORY_PRESET_KEY: HistoryPresetKey = "1h";
 
 export const TELEMETRY_HISTORY_PRESETS: Array<{
   key: HistoryPresetKey;
@@ -791,6 +797,7 @@ export type TrendViewport = {
 };
 
 export type AccelTrendMode = "instant" | "rms";
+export const DEFAULT_ACCEL_TREND_MODE: AccelTrendMode = "rms";
 
 export type HoverTelemetrySnapshot = {
   ts: number;

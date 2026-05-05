@@ -270,6 +270,41 @@ export class ZoneService {
     return row ? toZoneRecord(row) : null;
   }
 
+  async resolveExistingCode(value?: string | null): Promise<string | undefined> {
+    const rawCode = normalizeOptionalText(value);
+    if (!rawCode) {
+      return undefined;
+    }
+
+    const normalizedCode = normalizeZoneCode(rawCode);
+    const candidates = Array.from(
+      new Set([rawCode, normalizedCode].filter((code): code is string => Boolean(code))),
+    );
+
+    if (!this.mysql) {
+      const match = [...this.fallback.values()].find((zone) => candidates.includes(zone.code));
+      return match?.code;
+    }
+
+    for (const candidate of candidates) {
+      const rows = await this.mysql.query<{ code: string }>(
+        `
+          SELECT code
+          FROM zones
+          WHERE code = ?
+          LIMIT 1
+        `,
+        [candidate],
+      );
+      const row = rows[0];
+      if (row) {
+        return row.code;
+      }
+    }
+
+    return undefined;
+  }
+
   async create(input: ZoneCreateInput): Promise<ZoneRecord> {
     const name = normalizeOptionalText(input.name);
     if (!name) {

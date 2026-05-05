@@ -1,6 +1,6 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus } from "lucide-react";
-import type { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine } from "lucide-react";
+import type { DeviceAxisKey, DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
 import {
   DETAIL_TILE_FETCH_DEBOUNCE_MS,
@@ -10,7 +10,8 @@ import {
   type TelemetryDetailTileRequest,
 } from "./sensor-chart-modal/telemetry-tiles";
 import type { ToastItem } from "./ui";
-import { ConsoleButton, Modal } from "./ui";
+import { ConsoleButton, FormFieldShell, FormInput, Modal } from "./ui";
+import { buildDeviceAxisLabelUpdate, DEVICE_AXIS_DIRECTION_LABELS } from "./device-display";
 import {
   ACCEL_LIMIT_MAX_MS2,
   ACCEL_LIMIT_MIN_MS2,
@@ -28,6 +29,8 @@ import {
   DATA_SETTINGS_SUMMARY_FETCH_DELAY_MS,
   DAY_IN_MS,
   DEFAULT_HISTORY_PRESET_KEY,
+  DEFAULT_ACCEL_TREND_MODE,
+  FFT_AXIS_DISPLAY_ORDER,
   DEFAULT_SPECTRUM_SAMPLE_RATE_HZ,
   DEFAULT_SPECTRUM_SOURCE_SAMPLES,
   EMPTY_SPECTRUM_POINTS,
@@ -540,9 +543,18 @@ interface Props {
   spectrumPoints?: DeviceSpectrumPoint[];
   onRequestTelemetryHistory?: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify?: (message: Omit<ToastItem, "id">) => void;
+  onSensorUpdated?: (sensor: Sensor) => void;
   onDeviceDataCleared?: (deviceId: string) => void;
   onClose: () => void;
 }
+
+const FFT_AXIS_COLORS: Record<DeviceAxisKey, string> = {
+  ax: "#f87171",
+  ay: "#60a5fa",
+  az: "#a78bfa",
+};
+
+type FftAxisDisplayItem = (typeof FFT_AXIS_DISPLAY_ORDER)[number];
 
 export function SensorChartModal({
   sensor,
@@ -551,6 +563,7 @@ export function SensorChartModal({
   spectrumPoints = [],
   onRequestTelemetryHistory,
   onNotify,
+  onSensorUpdated,
   onDeviceDataCleared,
   onClose,
 }: Props) {
@@ -558,7 +571,7 @@ export function SensorChartModal({
   const [visible, setVisible] = useState(false);
   const [tempHalfSpan, setTempHalfSpan] = useState(5);
   const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_LIMIT_MS2);
-  const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>("instant");
+  const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>(DEFAULT_ACCEL_TREND_MODE);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
   const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(DEFAULT_HISTORY_PRESET_KEY);
@@ -588,6 +601,10 @@ export function SensorChartModal({
   const [clearDataConfirmMounted, setClearDataConfirmMounted] = useState(false);
   const [clearDataConfirmClosing, setClearDataConfirmClosing] = useState(false);
   const [clearingDeviceData, setClearingDeviceData] = useState(false);
+  const [axisRenameTarget, setAxisRenameTarget] = useState<DeviceAxisKey | null>(null);
+  const [axisRenameDraft, setAxisRenameDraft] = useState("");
+  const [axisRenameSaving, setAxisRenameSaving] = useState(false);
+  const [axisRenameError, setAxisRenameError] = useState("");
   const [visualizeOpen, setVisualizeOpen] = useState(false);
   const [playbackRunning, setPlaybackRunning] = useState(false);
   const [playbackCursorTs, setPlaybackCursorTs] = useState<number | null>(null);
@@ -630,6 +647,14 @@ export function SensorChartModal({
   const calendarDaysWithDataCount = useMemo(
     () => Object.values(calendarMonthAvailability).filter((count) => count > 0).length,
     [calendarMonthAvailability],
+  );
+  const vibrationAxisLabels = useMemo(
+    () => ({
+      ax: sensor?.axisLabels?.ax || VIBRATION_AXIS_LABELS.ax,
+      ay: sensor?.axisLabels?.ay || VIBRATION_AXIS_LABELS.ay,
+      az: sensor?.axisLabels?.az || VIBRATION_AXIS_LABELS.az,
+    }),
+    [sensor?.axisLabels?.ax, sensor?.axisLabels?.ay, sensor?.axisLabels?.az],
   );
   const visualizeOverlay = modalLayout.viewportWidth < 1180;
   const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
@@ -684,6 +709,74 @@ export function SensorChartModal({
       onClose();
     }, CHART_MODAL_TRANSITION_MS);
   }, [clearPlaybackTimer, clearingDeviceData, onClose]);
+
+  const openAxisRenameModal = useCallback(
+    (axis: DeviceAxisKey) => {
+      if (!sensor || axisRenameSaving) {
+        return;
+      }
+      setCalendarPopoverOpen(false);
+      setTimePresetMenuOpen(false);
+      setAxisRenameTarget(axis);
+      setAxisRenameDraft(vibrationAxisLabels[axis]);
+      setAxisRenameError("");
+    },
+    [axisRenameSaving, sensor, vibrationAxisLabels],
+  );
+
+  const closeAxisRenameModal = useCallback(() => {
+    if (axisRenameSaving) {
+      return;
+    }
+    setAxisRenameTarget(null);
+    setAxisRenameDraft("");
+    setAxisRenameError("");
+  }, [axisRenameSaving]);
+
+  const saveAxisRename = useCallback(async () => {
+    if (!sensor || !axisRenameTarget || axisRenameSaving) {
+      return;
+    }
+
+    const nextAxisLabels = buildDeviceAxisLabelUpdate(sensor.axisLabels, axisRenameTarget, axisRenameDraft);
+    setAxisRenameSaving(true);
+    setAxisRenameError("");
+
+    try {
+      const response = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}`, {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ axisLabels: nextAxisLabels ?? {} }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(safeString(asRecord(body).error || "axis_label_update_failed"));
+      }
+
+      const updatedSensor: Sensor = {
+        ...sensor,
+        axisLabels: nextAxisLabels,
+      };
+      const axisDirectionLabel = DEVICE_AXIS_DIRECTION_LABELS[axisRenameTarget];
+      onSensorUpdated?.(updatedSensor);
+      onNotify?.({
+        type: "success",
+        title: "Đã đổi tên trục",
+        text: `${sensor.name || sensor.id}: ${axisDirectionLabel} → ${axisRenameDraft.trim() || "mặc định"}`,
+      });
+      setAxisRenameTarget(null);
+      setAxisRenameDraft("");
+    } catch (error) {
+      const message = `Không đổi được tên trục: ${safeString(error)}`;
+      setAxisRenameError(message);
+      onNotify?.({ type: "warning", title: "Đổi tên trục thất bại", text: message });
+    } finally {
+      setAxisRenameSaving(false);
+    }
+  }, [axisRenameDraft, axisRenameSaving, axisRenameTarget, onNotify, onSensorUpdated, sensor]);
 
   const openDataSettings = useCallback(() => {
     if (clearingDeviceData) {
@@ -902,7 +995,7 @@ export function SensorChartModal({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (clearDataConfirmMounted || clearingDeviceData || dataSettingsMounted) {
+      if (axisRenameTarget || clearDataConfirmMounted || clearingDeviceData || dataSettingsMounted) {
         return;
       }
       if (event.key !== "Escape") {
@@ -920,7 +1013,7 @@ export function SensorChartModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose, visualizeOpen]);
+  }, [axisRenameTarget, clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose, visualizeOpen]);
 
   useEffect(() => {
     return () => {
@@ -1490,14 +1583,14 @@ export function SensorChartModal({
       hoverTelemetrySnapshot.temp,
       2,
       "°C",
-    )} · ${VIBRATION_AXIS_LABELS.ax} ${formatOptionalValue(
+    )} · ${vibrationAxisLabels.ax} ${formatOptionalValue(
       hoverTelemetrySnapshot.ax,
       2,
-    )} · ${VIBRATION_AXIS_LABELS.ay} ${formatOptionalValue(
+    )} · ${vibrationAxisLabels.ay} ${formatOptionalValue(
       hoverTelemetrySnapshot.ay,
       2,
-    )} · ${VIBRATION_AXIS_LABELS.az} ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`;
-  }, [hoverTelemetrySnapshot]);
+    )} · ${vibrationAxisLabels.az} ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`;
+  }, [hoverTelemetrySnapshot, vibrationAxisLabels]);
   const spectrumPinned = spectrumPinnedTarget !== null;
   const shouldUseHoverSpectrumState =
     hoverSpectrumBusy || spectrumPinned || hoverTelemetrySnapshot !== null || hoverSpectrumPoints !== null;
@@ -2200,7 +2293,7 @@ export function SensorChartModal({
     setTelemetryWindowAnchorMs(Date.now());
     setTempHalfSpan(5);
     setAccelAmplitudeLimit(ACCEL_LIMIT_MS2);
-    setAccelTrendMode("instant");
+    setAccelTrendMode(DEFAULT_ACCEL_TREND_MODE);
     setTrendViewWindow(null);
     setTrendPanning(false);
     setActiveHistoryPreset(DEFAULT_HISTORY_PRESET_KEY);
@@ -2233,6 +2326,142 @@ export function SensorChartModal({
 
   const chartTextStyle = { fill: C.textMuted, fontSize: 10 };
   const gridColor = C.border + "44";
+  const fftRenderByAxis = {
+    x: fftRenderX,
+    y: fftRenderY,
+    z: fftRenderZ,
+  } satisfies Record<SpectrumAxis, typeof fftRenderX>;
+
+  const renderFftAxisLabelButton = (axis: DeviceAxisKey) => {
+    const color = FFT_AXIS_COLORS[axis];
+    const directionLabel = DEVICE_AXIS_DIRECTION_LABELS[axis];
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openAxisRenameModal(axis);
+        }}
+        disabled={axisRenameSaving}
+        title={`Đổi tên ${directionLabel}`}
+        aria-label={`Đổi tên ${directionLabel}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          maxWidth: "100%",
+          minWidth: 0,
+          border: `1px solid ${color}38`,
+          borderRadius: 999,
+          background: `${color}12`,
+          color,
+          fontSize: "0.68rem",
+          fontWeight: 800,
+          lineHeight: 1,
+          padding: "4px 7px",
+          cursor: axisRenameSaving ? "wait" : "pointer",
+          opacity: axisRenameSaving ? 0.68 : 1,
+          transition: "transform 0.14s ease, border-color 0.14s ease, background 0.14s ease",
+        }}
+      >
+        <span aria-hidden="true">■</span>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {vibrationAxisLabels[axis]}
+        </span>
+        <PencilLine size={10} strokeWidth={2.3} aria-hidden="true" />
+      </button>
+    );
+  };
+
+  const renderFftAxisCard = ({ deviceAxis, spectrumAxis }: FftAxisDisplayItem) => {
+    const color = FFT_AXIS_COLORS[deviceAxis];
+    const data = fftRenderByAxis[spectrumAxis];
+    const peak = spectrumPeakByAxis[spectrumAxis];
+
+    return (
+      <div
+        key={deviceAxis}
+        style={{
+          position: "relative",
+          background: C.card,
+          border: `1px solid ${C.cardBorder}`,
+          borderRadius: 10,
+          padding: modalLayout.fftCardPadding,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
+          {renderFftAxisLabelButton(deviceAxis)}
+          <div
+            style={{
+              color: C.textMuted,
+              fontSize: "0.62rem",
+              fontWeight: 600,
+              minWidth: 0,
+              maxWidth: "72%",
+              textAlign: "right",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {hoverSpectrumBusy ? SPECTRUM_LOADING_LABEL : formatPeakSummary(peak.frequencyHz, peak.amplitude, spectrumUnitByAxis[spectrumAxis])}
+          </div>
+        </div>
+        <div style={{ position: "relative" }}>
+          <SpectrumZoomChart
+            data={data}
+            color={color}
+            axisLabelColor={chartTextStyle.fill}
+            gridColor={gridColor}
+            maxHz={spectrumMaxHzByAxis[spectrumAxis]}
+            yMax={spectrumFixedYMax}
+            C={C}
+            height={modalLayout.spectrumHeight}
+          />
+          {hoverSpectrumBusy ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: 8,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            >
+              <SpectrumLoadingState C={C} accentColor={color} overlay />
+            </div>
+          ) : data.length === 0 ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: 8,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            >
+              <SpectrumNoDataState C={C} accentColor={color} />
+            </div>
+          ) : null}
+        </div>
+        <div
+          style={{
+            textAlign: "right",
+            color: C.textMuted,
+            fontSize: "0.58rem",
+            paddingRight: 6,
+            marginTop: -2,
+            minHeight: modalLayout.fftAxisFooterHeight,
+            lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
+            visibility: hoverSpectrumBusy || data.length === 0 ? "hidden" : "visible",
+          }}
+        >
+          Hz
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -3108,9 +3337,9 @@ export function SensorChartModal({
                     data={accelDisplayData}
                     hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
                     series={[
-                      { key: "ax", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.ax} RMS` : VIBRATION_AXIS_LABELS.ax, color: "#f87171", strokeWidth: 1.8 },
-                      { key: "ay", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.ay} RMS` : VIBRATION_AXIS_LABELS.ay, color: "#60a5fa", strokeWidth: 1.8 },
-                      { key: "az", name: accelTrendMode === "rms" ? `${VIBRATION_AXIS_LABELS.az} RMS` : VIBRATION_AXIS_LABELS.az, color: "#a78bfa", strokeWidth: 1.8 },
+                      { key: "ax", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.ax} RMS` : vibrationAxisLabels.ax, color: "#f87171", strokeWidth: 1.8 },
+                      { key: "ay", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.ay} RMS` : vibrationAxisLabels.ay, color: "#60a5fa", strokeWidth: 1.8 },
+                      { key: "az", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.az} RMS` : vibrationAxisLabels.az, color: "#a78bfa", strokeWidth: 1.8 },
                     ]}
                     gapSegmentsBySeries={{
                       ax: accelGapRanges,
@@ -3285,7 +3514,7 @@ export function SensorChartModal({
                 <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
                 <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Phổ tần số FFT</span>
                 <span style={{ color: C.textMuted, fontSize: "0.68rem" }}>
-                  ({VIBRATION_AXIS_LABELS.ax} / {VIBRATION_AXIS_LABELS.ay} / {VIBRATION_AXIS_LABELS.az})
+                  ({vibrationAxisLabels.ax} / {vibrationAxisLabels.ay} / {vibrationAxisLabels.az})
                 </span>
               </div>
               {hoverTelemetrySnapshot ? (
@@ -3320,260 +3549,7 @@ export function SensorChartModal({
                 }}
               >
 
-                {/* FFT ngang */}
-                <div style={{
-                  position: "relative",
-                  background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: modalLayout.fftCardPadding,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
-                    <div style={{ color: "#f87171", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ {VIBRATION_AXIS_LABELS.ax}
-                    </div>
-                    <div
-                      style={{
-                        color: C.textMuted,
-                        fontSize: "0.62rem",
-                        fontWeight: 600,
-                        minWidth: 0,
-                        maxWidth: "72%",
-                        textAlign: "right",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {hoverSpectrumBusy
-                        ? SPECTRUM_LOADING_LABEL
-                        : formatPeakSummary(
-                            spectrumPeakByAxis.x.frequencyHz,
-                            spectrumPeakByAxis.x.amplitude,
-                            spectrumUnitByAxis.x,
-                          )}
-                    </div>
-                  </div>
-                  <div style={{ position: "relative" }}>
-                    <SpectrumZoomChart
-                      data={fftRenderX}
-                      color="#f87171"
-                      axisLabelColor={chartTextStyle.fill}
-                      gridColor={gridColor}
-                      maxHz={spectrumMaxHzByAxis.x}
-                      yMax={spectrumFixedYMax}
-                      C={C}
-                      height={modalLayout.spectrumHeight}
-                    />
-                    {hoverSpectrumBusy ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumLoadingState C={C} accentColor="#f87171" overlay />
-                      </div>
-                    ) : fftRenderX.length === 0 ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumNoDataState C={C} accentColor="#f87171" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div
-                    style={{
-                      textAlign: "right",
-                      color: C.textMuted,
-                      fontSize: "0.58rem",
-                      paddingRight: 6,
-                      marginTop: -2,
-                      minHeight: modalLayout.fftAxisFooterHeight,
-                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
-                      visibility: hoverSpectrumBusy || fftRenderX.length === 0 ? "hidden" : "visible",
-                    }}
-                  >
-                    Hz
-                  </div>
-                </div>
-
-                {/* FFT đứng */}
-                <div style={{
-                  position: "relative",
-                  background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: modalLayout.fftCardPadding,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
-                    <div style={{ color: "#60a5fa", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ {VIBRATION_AXIS_LABELS.ay}
-                    </div>
-                    <div
-                      style={{
-                        color: C.textMuted,
-                        fontSize: "0.62rem",
-                        fontWeight: 600,
-                        minWidth: 0,
-                        maxWidth: "72%",
-                        textAlign: "right",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {hoverSpectrumBusy
-                        ? SPECTRUM_LOADING_LABEL
-                        : formatPeakSummary(
-                            spectrumPeakByAxis.y.frequencyHz,
-                            spectrumPeakByAxis.y.amplitude,
-                            spectrumUnitByAxis.y,
-                          )}
-                    </div>
-                  </div>
-                  <div style={{ position: "relative" }}>
-                    <SpectrumZoomChart
-                      data={fftRenderY}
-                      color="#60a5fa"
-                      axisLabelColor={chartTextStyle.fill}
-                      gridColor={gridColor}
-                      maxHz={spectrumMaxHzByAxis.y}
-                      yMax={spectrumFixedYMax}
-                      C={C}
-                      height={modalLayout.spectrumHeight}
-                    />
-                    {hoverSpectrumBusy ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumLoadingState C={C} accentColor="#60a5fa" overlay />
-                      </div>
-                    ) : fftRenderY.length === 0 ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumNoDataState C={C} accentColor="#60a5fa" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div
-                    style={{
-                      textAlign: "right",
-                      color: C.textMuted,
-                      fontSize: "0.58rem",
-                      paddingRight: 6,
-                      marginTop: -2,
-                      minHeight: modalLayout.fftAxisFooterHeight,
-                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
-                      visibility: hoverSpectrumBusy || fftRenderY.length === 0 ? "hidden" : "visible",
-                    }}
-                  >
-                    Hz
-                  </div>
-                </div>
-
-                {/* FFT dọc trục */}
-                <div style={{
-                  position: "relative",
-                  background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-                  padding: modalLayout.fftCardPadding,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
-                    <div style={{ color: "#a78bfa", fontSize: "0.68rem", fontWeight: 700 }}>
-                      ■ {VIBRATION_AXIS_LABELS.az}
-                    </div>
-                    <div
-                      style={{
-                        color: C.textMuted,
-                        fontSize: "0.62rem",
-                        fontWeight: 600,
-                        minWidth: 0,
-                        maxWidth: "72%",
-                        textAlign: "right",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {hoverSpectrumBusy
-                        ? SPECTRUM_LOADING_LABEL
-                        : formatPeakSummary(
-                            spectrumPeakByAxis.z.frequencyHz,
-                            spectrumPeakByAxis.z.amplitude,
-                            spectrumUnitByAxis.z,
-                          )}
-                    </div>
-                  </div>
-                  <div style={{ position: "relative" }}>
-                    <SpectrumZoomChart
-                      data={fftRenderZ}
-                      color="#a78bfa"
-                      axisLabelColor={chartTextStyle.fill}
-                      gridColor={gridColor}
-                      maxHz={spectrumMaxHzByAxis.z}
-                      yMax={spectrumFixedYMax}
-                      C={C}
-                      height={modalLayout.spectrumHeight}
-                    />
-                    {hoverSpectrumBusy ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumLoadingState C={C} accentColor="#a78bfa" overlay />
-                      </div>
-                    ) : fftRenderZ.length === 0 ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          pointerEvents: "none",
-                        }}
-                      >
-                        <SpectrumNoDataState C={C} accentColor="#a78bfa" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div
-                    style={{
-                      textAlign: "right",
-                      color: C.textMuted,
-                      fontSize: "0.58rem",
-                      paddingRight: 6,
-                      marginTop: -2,
-                      minHeight: modalLayout.fftAxisFooterHeight,
-                      lineHeight: `${modalLayout.fftAxisFooterHeight}px`,
-                      visibility: hoverSpectrumBusy || fftRenderZ.length === 0 ? "hidden" : "visible",
-                    }}
-                  >
-                    Hz
-                  </div>
-                </div>
+                {FFT_AXIS_DISPLAY_ORDER.map(renderFftAxisCard)}
 
               </div>
 
@@ -3969,6 +3945,55 @@ export function SensorChartModal({
 	          <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>Chưa có dữ liệu thống kê.</div>
 	        )}
 	      </Modal>
+
+      <Modal
+        open={Boolean(axisRenameTarget)}
+        onClose={closeAxisRenameModal}
+        title={`Đổi tên ${axisRenameTarget ? DEVICE_AXIS_DIRECTION_LABELS[axisRenameTarget] : "trục"}`}
+        width={420}
+        zIndex={96}
+        disableClose={axisRenameSaving}
+        footer={
+          <>
+            <ConsoleButton variant="neutral" size="sm" onClick={closeAxisRenameModal} disabled={axisRenameSaving}>
+              Huỷ
+            </ConsoleButton>
+            <ConsoleButton variant="primary" size="sm" onClick={() => void saveAxisRename()} disabled={axisRenameSaving}>
+              {axisRenameSaving ? "Đang lưu..." : "Lưu tên trục"}
+            </ConsoleButton>
+          </>
+        }
+      >
+        <div style={{ display: "grid", gap: 10 }}>
+          <FormFieldShell icon={<PencilLine size={14} strokeWidth={2.1} />} style={{ minHeight: 40 }}>
+            <FormInput
+              value={axisRenameDraft}
+              onChange={(event) => {
+                setAxisRenameDraft(event.target.value);
+                if (axisRenameError) {
+                  setAxisRenameError("");
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || axisRenameSaving) {
+                  return;
+                }
+                event.preventDefault();
+                void saveAxisRename();
+              }}
+              onDoubleClick={(event) => event.currentTarget.select()}
+              placeholder={axisRenameTarget ? vibrationAxisLabels[axisRenameTarget] : "Tên trục"}
+              autoFocus
+              disabled={axisRenameSaving}
+              maxLength={48}
+              aria-label="Tên trục cảm biến"
+            />
+          </FormFieldShell>
+          {axisRenameError ? (
+            <div style={{ color: C.warning, fontSize: "0.7rem", lineHeight: 1.45 }}>{axisRenameError}</div>
+          ) : null}
+        </div>
+      </Modal>
 
       <Modal
         open={clearDataConfirmMounted}

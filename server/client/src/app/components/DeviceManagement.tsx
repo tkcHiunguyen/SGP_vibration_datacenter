@@ -1,12 +1,18 @@
 import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import {
-  Info, Search, AlertTriangle, CheckCircle2,
+  Info, Search, AlertTriangle,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight,
-  Activity, Cpu, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink, PencilLine, Trash2,
+  Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink, PencilLine, Trash2,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { ConsoleStatCard, type ToastItem } from "./ui";
 import { useTheme } from "../context/ThemeContext";
+import {
+  buildDeviceTelemetrySummary,
+  DEFAULT_DEVICE_SORT,
+  getLatestDeviceTelemetryPoint,
+  type DeviceSortKey,
+} from "./device-display";
 
 const loadDeviceInfoModal = () =>
   import("./DeviceInfoModal").then((module) => ({
@@ -31,6 +37,7 @@ function DeviceCard({
   onContextMenu,
   onPrepareInfo,
   onPrepareChart,
+  telemetryPoint,
   exiting,
 }: {
   sensor: Sensor;
@@ -41,6 +48,7 @@ function DeviceCard({
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>, sensor: Sensor) => void;
   onPrepareInfo?: () => void;
   onPrepareChart?: () => void;
+  telemetryPoint?: DeviceTelemetryPoint | null;
   exiting?: boolean;
 }) {
   const { C } = useTheme();
@@ -52,6 +60,7 @@ function DeviceCard({
   const isAbnormal = sensor.status === "abnormal";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
+  const telemetrySummary = buildDeviceTelemetrySummary(telemetryPoint, sensor.axisLabels);
   const cardAnimation = exiting
     ? "cardOut 260ms cubic-bezier(0.22, 0.78, 0.3, 1) both"
     : "cardIn 0.3s ease both";
@@ -117,12 +126,23 @@ function DeviceCard({
         animation: isOnline && isAbnormal ? "stripPulse 2s ease-in-out infinite" : "none",
       }} />
 
-      <div style={{ padding: "12px 13px 13px", display: "flex", flexDirection: "column", flex: 1 }}>
-        {/* ID + info btn */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ color: C.textDim, fontSize: "0.6rem", letterSpacing: "0.09em", textTransform: "uppercase", fontWeight: 600 }}>
-            {sensor.id}
-          </span>
+      <div style={{ padding: "9px 11px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 7 }}>
+        {/* Name + info btn */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div
+            title={sensor.name}
+            style={{
+              color: C.textBright,
+              fontSize: "0.82rem",
+              fontWeight: 750,
+              lineHeight: 1.25,
+              flex: "1 0 auto",
+              whiteSpace: "nowrap",
+              overflow: "visible",
+            }}
+          >
+            {sensor.name}
+          </div>
           <div style={{ position: "relative" }}>
             <button
               onClick={(e) => { e.stopPropagation(); onInfo(sensor); }}
@@ -171,52 +191,63 @@ function DeviceCard({
           </div>
         </div>
 
-        {/* Name */}
-        <div style={{ color: C.textBright, fontSize: "0.84rem", fontWeight: 700, lineHeight: 1.3, marginBottom: 3 }}>
-          {sensor.name}
+        <div style={{ color: C.textMuted, fontSize: "0.66rem", minWidth: 0, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+          {sensor.zone}
         </div>
 
-        {/* Zone + Firmware */}
+        <div
+          aria-label="Giá trị telemetry hiện tại"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            minWidth: 0,
+            overflow: "hidden",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {telemetrySummary.map((item, itemIndex) => (
+            <React.Fragment key={item.label}>
+              {itemIndex > 0 ? (
+                <span style={{ color: C.border, fontSize: "0.52rem", flexShrink: 0 }}>•</span>
+              ) : null}
+              <span
+                title={`${item.label} ${item.value}`.trim()}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 2,
+                  minWidth: 0,
+                  flexShrink: 1,
+                }}
+              >
+                <span style={{ color: C.textMuted, fontSize: "0.52rem", fontWeight: 800, letterSpacing: "0.02em", flexShrink: 0 }}>
+                  {item.label}
+                </span>
+                <span style={{ color: C.textBright, fontSize: "0.54rem", fontWeight: 800, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {item.value}
+                </span>
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             gap: 8,
-            marginBottom: 10,
-          }}
-        >
-          <div style={{ color: C.textMuted, fontSize: "0.67rem", minWidth: 0, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-            {sensor.zone}
-          </div>
-          <div style={{
-            display: "inline-flex", alignItems: "center", gap: 4,
-            padding: "2px 6px", borderRadius: 5,
-            background: C.surface, border: `1px solid ${C.border}`,
-            color: C.textBase, fontSize: "0.62rem", fontWeight: 500,
-            flexShrink: 0,
-          }}>
-            <Cpu size={9} strokeWidth={2} />
-            {sensor.firmwareVersion}
-          </div>
-        </div>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
             color: C.textMuted,
             fontSize: "0.62rem",
-            marginBottom: 8,
+            minWidth: 0,
           }}
         >
-          <Radio size={10} strokeWidth={2} />
-          IP: {sensor.ipAddress}
-        </div>
-
-        {/* Bottom row: web access + online status */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto" }}>
-          <div style={{ position: "relative" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <Radio size={10} strokeWidth={2} />
+            IP: {sensor.ipAddress}
+          </div>
+          <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -228,8 +259,8 @@ function DeviceCard({
               onMouseLeave={() => setWebHovered(false)}
               disabled={!hasWebTarget}
               style={{
-                width: 26,
-                height: 26,
+                width: 24,
+                height: 24,
                 borderRadius: 8,
                 border: `1px solid ${hasWebTarget ? C.cardBorder : C.border}`,
                 background: hasWebTarget ? C.surface : "transparent",
@@ -266,38 +297,6 @@ function DeviceCard({
               {hasWebTarget ? "Truy cập thiết bị" : "Thiết bị chưa có IP"}
             </div>
           </div>
-
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
-            {/* Online/Offline */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <div style={{
-                width: 6, height: 6, borderRadius: "50%",
-                background: isOnline ? C.success : "#4b5563",
-                boxShadow: isOnline ? `0 0 5px ${C.success}88` : "none",
-                animation: isOnline ? "dotPulse 2.5s ease-in-out infinite" : "none",
-              }} />
-              <span style={{ color: isOnline ? C.success : "#4b5563", fontSize: "0.64rem", fontWeight: 600 }}>
-                {isOnline ? "Trực tuyến" : "Ngoại tuyến"}
-              </span>
-            </div>
-
-            {/* Normal/Abnormal */}
-            {isOnline && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 3,
-                padding: "2px 6px", borderRadius: 20,
-                background: isAbnormal ? C.dangerBg : C.primaryBg,
-                border: `1px solid ${isAbnormal ? C.danger + "30" : C.primary + "30"}`,
-              }}>
-                {isAbnormal
-                  ? <AlertTriangle  size={9} color={C.danger}  strokeWidth={2} />
-                  : <CheckCircle2   size={9} color={C.primary} strokeWidth={2} />}
-                <span style={{ color: isAbnormal ? C.danger : C.primary, fontSize: "0.6rem", fontWeight: 600 }}>
-                  {isAbnormal ? "Bất thường" : "Bình thường"}
-                </span>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
@@ -329,7 +328,7 @@ function DeviceCard({
 }
 
 /* ── Sort dropdown ── */
-type SortKey = "status" | "zone" | "name-az" | "device-id";
+type SortKey = DeviceSortKey;
 const SORT_OPTIONS: { key: SortKey; label: string; icon: React.ReactNode }[] = [
   { key: "status",    label: "Trạng thái",   icon: <CircleDot size={11} strokeWidth={2} /> },
   { key: "zone",      label: "Khu vực",      icon: <MapPin size={11} strokeWidth={2} /> },
@@ -670,6 +669,7 @@ interface DeviceManagementProps {
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastItem, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onSensorUpdated?: (sensor: Sensor) => void;
 }
 
 const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
@@ -699,6 +699,7 @@ export function DeviceManagement({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onSensorUpdated,
 }: DeviceManagementProps) {
   const { C } = useTheme();
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
@@ -716,7 +717,7 @@ export function DeviceManagement({
   const [hiddenDeviceIds, setHiddenDeviceIds] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [sort, setSort]     = useState<SortKey>("status");
+  const [sort, setSort]     = useState<SortKey>(DEFAULT_DEVICE_SORT);
   const [sortIconHovered, setSortIconHovered] = useState(false);
   const [page, setPage] = useState(() => readStoredNumber(STORAGE_PAGE_KEY, 1));
   const [pageSize, setPageSize] = useState(() => {
@@ -761,6 +762,14 @@ export function DeviceManagement({
     () => sensors.filter((sensor) => !hiddenDeviceIds.has(sensor.id)),
     [sensors, hiddenDeviceIds],
   );
+
+  const latestTelemetryByDevice = useMemo(() => {
+    const next: Record<string, DeviceTelemetryPoint | null> = {};
+    for (const [deviceId, points] of Object.entries(telemetryByDevice)) {
+      next[deviceId] = getLatestDeviceTelemetryPoint(points);
+    }
+    return next;
+  }, [telemetryByDevice]);
 
   const total    = visibleSensors.length;
   const online   = visibleSensors.filter(s => s.online).length;
@@ -1320,8 +1329,8 @@ export function DeviceManagement({
                     data-ux="device-grid"
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-                      gap: 10,
+                      gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+                      gap: 8,
                     }}
                   >
                     {zoneGroup.devices.map((sensor, idx) => (
@@ -1329,6 +1338,7 @@ export function DeviceManagement({
                         key={sensor.id}
                         sensor={sensor}
                         idx={idx}
+                        telemetryPoint={latestTelemetryByDevice[sensor.id]}
                         exiting={exitingDeviceIds.has(sensor.id)}
                         onInfo={(target) => openDeviceInfo(target, "view")}
                         onChart={(target) => {
@@ -1353,8 +1363,8 @@ export function DeviceManagement({
               data-ux="device-grid"
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-                gap: 10,
+                gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+                gap: 8,
               }}
             >
               {pagedDevices.map((sensor, idx) => (
@@ -1362,6 +1372,7 @@ export function DeviceManagement({
                   key={sensor.id}
                   sensor={sensor}
                   idx={idx}
+                  telemetryPoint={latestTelemetryByDevice[sensor.id]}
                   exiting={exitingDeviceIds.has(sensor.id)}
                   onInfo={(target) => openDeviceInfo(target, "view")}
                   onChart={(target) => {
@@ -1579,7 +1590,10 @@ export function DeviceManagement({
               setSelectedSensor(null);
               setSelectedSensorMode("view");
             }}
-            onSensorUpdated={(updated) => setSelectedSensor(updated)}
+            onSensorUpdated={(updated) => {
+              setSelectedSensor(updated);
+              onSensorUpdated?.(updated);
+            }}
             onSensorDeleted={(deviceId) => {
               markDeviceExiting(deviceId);
               setSelectedSensor(null);
@@ -1598,6 +1612,11 @@ export function DeviceManagement({
             spectrumPoints={spectrumByDevice[chartSensor.id] || []}
             onRequestTelemetryHistory={onRequestTelemetryHistory}
             onNotify={onNotify}
+            onSensorUpdated={(updated) => {
+              setChartSensor(updated);
+              setSelectedSensor((current) => (current?.id === updated.id ? updated : current));
+              onSensorUpdated?.(updated);
+            }}
             onDeviceDataCleared={onDeviceDataCleared}
             onClose={() => setChartSensor(null)}
           />

@@ -1,5 +1,8 @@
 type SensorStatus = "normal" | "abnormal";
 
+export type DeviceAxisKey = "ax" | "ay" | "az";
+export type DeviceAxisLabels = Partial<Record<DeviceAxisKey, string>>;
+
 interface VibrationPoint {
   time: string;
   value: number;
@@ -26,6 +29,7 @@ export interface Sensor {
   lastHeartbeatAt: string;
   signal: string;
   uptime: string;
+  axisLabels?: DeviceAxisLabels;
   vibration1h: VibrationPoint[];
   vibration5h: VibrationPoint[];
 }
@@ -36,6 +40,7 @@ interface DeviceMetadata {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  axisLabels?: DeviceAxisLabels;
 }
 
 interface DeviceHeartbeat {
@@ -158,6 +163,22 @@ function deriveInstallDate(device: DeviceListItem): string {
   return new Date(parsed).toLocaleDateString("vi-VN");
 }
 
+function normalizeAxisLabels(axisLabels?: DeviceAxisLabels): DeviceAxisLabels | undefined {
+  if (!axisLabels) {
+    return undefined;
+  }
+
+  const normalized: DeviceAxisLabels = {};
+  (["ax", "ay", "az"] as const).forEach((axis) => {
+    const label = axisLabels[axis]?.trim();
+    if (label) {
+      normalized[axis] = label;
+    }
+  });
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
   return devices.map((device) => {
     const id = device.deviceId;
@@ -194,6 +215,7 @@ export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
           ? `${device.heartbeat.signal} dBm`
           : "--",
       uptime: formatUptimeSeconds(device.heartbeat?.uptimeSec),
+      axisLabels: normalizeAxisLabels(device.metadata?.axisLabels),
       vibration1h: [],
       vibration5h: [],
     };
