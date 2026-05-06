@@ -2,7 +2,7 @@ import React from "react";
 import {
   Activity, Bell, ChevronDown, LayoutDashboard,
   Cpu, BarChart2, Settings, Search, AlertCircle, UploadCloud, MapPin,
-  Menu, Sun, Moon,
+  PanelLeftClose, PanelLeftOpen, Sun, Moon,
 } from "lucide-react";
 import { Sensor } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
@@ -54,7 +54,6 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
     }}>
       <div style={{ padding: "0 20px", height: 54, display: "flex", alignItems: "center", gap: 0 }}>
 
-        {/* Hamburger */}
         <button
           onClick={onToggleSidebar}
           title={sidebarOpen ? "Ẩn menu" : "Hiện menu"}
@@ -70,7 +69,28 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.card; (e.currentTarget as HTMLElement).style.borderColor = C.cardBorder; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
         >
-          <Menu size={13} strokeWidth={2} />
+          <span style={{ position: "relative", width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <PanelLeftClose
+              size={14}
+              strokeWidth={2}
+              style={{
+                position: "absolute",
+                opacity: sidebarOpen ? 1 : 0,
+                transform: sidebarOpen ? "rotate(0deg) scale(1)" : "rotate(-45deg) scale(0.72)",
+                transition: "opacity 0.18s ease, transform 0.18s ease",
+              }}
+            />
+            <PanelLeftOpen
+              size={14}
+              strokeWidth={2}
+              style={{
+                position: "absolute",
+                opacity: sidebarOpen ? 0 : 1,
+                transform: sidebarOpen ? "rotate(45deg) scale(0.72)" : "rotate(0deg) scale(1)",
+                transition: "opacity 0.18s ease, transform 0.18s ease",
+              }}
+            />
+          </span>
         </button>
 
         {/* Brand */}

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildDeviceAxisLabelUpdate,
+  buildDeviceTelemetryCardReadout,
   buildDeviceTelemetrySummary,
   DEFAULT_DEVICE_SORT,
   DEVICE_AXIS_DIRECTION_LABELS,
@@ -51,10 +52,33 @@ test("builds compact telemetry stats for device cards", () => {
     }),
     [
       { label: "T", value: "27.4°C" },
-      { label: "X", value: "0.12g" },
-      { label: "Y", value: "-0.06g" },
-      { label: "Z", value: "1.01g" },
+      { label: "X", value: "0.12m/s²" },
+      { label: "Y", value: "-0.06m/s²" },
+      { label: "Z", value: "1.01m/s²" },
     ],
+  );
+});
+
+test("groups device-card telemetry into temperature and axis readouts", () => {
+  assert.deepEqual(
+    buildDeviceTelemetryCardReadout(
+      {
+        receivedAt: "2026-05-05T01:02:00.000Z",
+        temperature: 27.42,
+        ax: 0.1234,
+        ay: -0.056,
+        az: 1.008,
+      },
+      { ax: "Radial H", ay: "Axial", az: "Radial V" },
+    ),
+    {
+      temperature: { label: "T", value: "27.4°C" },
+      axes: [
+        { label: "Radial H", value: "0.12m/s²" },
+        { label: "Axial", value: "-0.06m/s²" },
+        { label: "Radial V", value: "1.01m/s²" },
+      ],
+    },
   );
 });
 
@@ -83,9 +107,9 @@ test("uses per-device axis labels on device cards", () => {
     ),
     [
       { label: "T", value: "" },
-      { label: "Ngang", value: "0.12g" },
-      { label: "Tâm", value: "0.34g" },
-      { label: "Dọc", value: "0.56g" },
+      { label: "Ngang", value: "0.12m/s²" },
+      { label: "Tâm", value: "0.34m/s²" },
+      { label: "Dọc", value: "0.56m/s²" },
     ],
   );
 });

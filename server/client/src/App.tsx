@@ -37,6 +37,7 @@ const SIDEBAR_NAV_ORDER = [
 ] as const;
 
 const PINNED_NAV_STORAGE_KEY = "sgp:pinned-navs:v1";
+const SIDEBAR_OPEN_STORAGE_KEY = "sgp:sidebar-open:v1";
 
 function isKnownNavLabel(value: string): value is (typeof SIDEBAR_NAV_ORDER)[number] {
   return SIDEBAR_NAV_ORDER.includes(value as (typeof SIDEBAR_NAV_ORDER)[number]);
@@ -470,7 +471,14 @@ function DashboardShell({
 }) {
   const { C, theme } = useTheme();
   const [activeNav, setActiveNav] = useState(() => navFromPathname(window.location.pathname));
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY);
+      return raw === null ? true : raw === "true";
+    } catch {
+      return true;
+    }
+  });
   const [pinnedNavLabels, setPinnedNavLabels] = useState<string[]>(() => {
     try {
       const raw = window.localStorage.getItem(PINNED_NAV_STORAGE_KEY);
@@ -493,6 +501,14 @@ function DashboardShell({
       // ignore storage errors
     }
   }, [pinnedNavLabels]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(sidebarOpen));
+    } catch {
+      // ignore storage errors
+    }
+  }, [sidebarOpen]);
 
   const sidebarNavItems = useMemo(() => {
     const pinned = normalizePinnedNavLabels(pinnedNavLabels);

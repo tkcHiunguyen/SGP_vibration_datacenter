@@ -1,13 +1,12 @@
 import React, { useMemo, useState } from "react";
 import {
-  BarChart2,
-  Cpu,
-  LayoutDashboard,
-  MapPin,
+  CloudUpload,
+  Gauge,
+  MapPinned,
   Pin,
   PinOff,
-  Settings,
-  UploadCloud,
+  RadioTower,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 
@@ -22,19 +21,17 @@ interface LeftPanelProps {
 function navIcon(label: string): React.ReactNode {
   switch (label) {
     case "Tổng quan":
-      return <LayoutDashboard size={14} strokeWidth={2.2} />;
+      return <Gauge size={15} strokeWidth={2.2} />;
     case "Update Center":
-      return <UploadCloud size={14} strokeWidth={2.2} />;
+      return <CloudUpload size={15} strokeWidth={2.2} />;
     case "Quản lý khu vực":
-      return <MapPin size={14} strokeWidth={2.2} />;
-    case "Phân tích":
-      return <BarChart2 size={14} strokeWidth={2.2} />;
+      return <MapPinned size={15} strokeWidth={2.2} />;
     case "Cảm biến":
-      return <Cpu size={14} strokeWidth={2.2} />;
+      return <RadioTower size={15} strokeWidth={2.2} />;
     case "Cài đặt":
-      return <Settings size={14} strokeWidth={2.2} />;
+      return <SlidersHorizontal size={15} strokeWidth={2.2} />;
     default:
-      return <LayoutDashboard size={14} strokeWidth={2.2} />;
+      return <Gauge size={15} strokeWidth={2.2} />;
   }
 }
 
@@ -52,30 +49,18 @@ export function LeftPanel({
 
   return (
     <aside
+      aria-label="Điều hướng chính"
       style={{
         width: "100%",
         height: "100%",
-        background: C.surface,
+        background: `linear-gradient(180deg, ${C.surface} 0%, ${C.bg} 100%)`,
         borderRight: `1px solid ${C.border}`,
-        padding: "18px 12px",
+        padding: "12px 9px",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          color: C.textDim,
-          fontSize: "0.56rem",
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
-          fontWeight: 600,
-          marginBottom: 10,
-        }}
-      >
-        Điều hướng
-      </div>
-
       <style>
         {`
           @keyframes sidebarCardIn {
@@ -91,7 +76,7 @@ export function LeftPanel({
         `}
       </style>
 
-      <div style={{ display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 }}>
+      <nav style={{ display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 }}>
         {navItems.map((label, index) => {
           const isActive = activeNav === label;
           const isPinned = pinnedSet.has(label);
@@ -112,23 +97,28 @@ export function LeftPanel({
               onMouseLeave={() => setHoveredItem((current) => (current === label ? null : current))}
               style={{
                 width: "100%",
-                height: 38,
-                borderRadius: 10,
-                border: `1px solid ${isActive ? C.primary + "55" : isHovered ? C.primary + "33" : C.cardBorder}`,
-                background: isActive ? C.primaryBg : isHovered ? C.primary + "0f" : C.card,
+                minHeight: 40,
+                borderRadius: 12,
+                border: `1px solid ${isActive ? C.primary + "66" : isHovered ? C.primary + "33" : C.cardBorder}`,
+                background: isActive
+                  ? `linear-gradient(135deg, ${C.primaryBg}, ${C.card})`
+                  : isHovered
+                    ? C.primary + "0f"
+                    : C.card,
                 color: isActive ? C.primary : isHovered ? C.textBright : C.textBase,
-                display: "flex",
+                display: "grid",
+                gridTemplateColumns: "28px minmax(0, 1fr) 24px",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0 8px 0 10px",
+                gap: 8,
+                padding: "5px 7px 5px 8px",
                 cursor: "pointer",
                 userSelect: "none",
                 outline: "none",
                 boxShadow:
                   isActive || isHovered
-                    ? `0 6px 16px ${C.primaryGlow}`
+                    ? `0 8px 18px ${C.primaryGlow}`
                     : "0 0 0 rgba(0,0,0,0)",
-                transform: isActive ? "translateX(2px)" : isHovered ? "translateX(3px)" : "translateX(0)",
+                transform: isActive ? "translateX(2px)" : isHovered ? "translateX(2px)" : "translateX(0)",
                 transition:
                   "background 0.22s ease, border-color 0.22s ease, color 0.2s ease, box-shadow 0.24s ease, transform 0.22s ease",
                 animation: "sidebarCardIn 280ms cubic-bezier(0.16, 1, 0.3, 1) both",
@@ -137,15 +127,23 @@ export function LeftPanel({
             >
               <div
                 style={{
-                  display: "flex",
+                  width: 28,
+                  height: 28,
+                  borderRadius: 9,
+                  background: isActive ? C.primary + "20" : isHovered ? C.primary + "16" : C.surface,
+                  border: `1px solid ${isActive ? C.primary + "55" : C.border}`,
+                  color: isActive ? C.primary : C.textMuted,
+                  display: "inline-flex",
                   alignItems: "center",
-                  gap: 8,
-                  fontSize: "0.75rem",
-                  fontWeight: isActive ? 700 : 500,
+                  justifyContent: "center",
+                  boxShadow: isActive ? `0 0 12px ${C.primaryGlow}` : "none",
                 }}
               >
                 {navIcon(label)}
-                <span style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              </div>
+
+              <div style={{ minWidth: 0, display: "flex", alignItems: "center" }}>
+                <span style={{ minWidth: 0, color: isActive ? C.textBright : "inherit", fontSize: "0.74rem", fontWeight: isActive ? 760 : 620, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {label}
                 </span>
               </div>
@@ -159,9 +157,9 @@ export function LeftPanel({
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 9,
+                  width: 24,
+                  height: 24,
+                  borderRadius: 8,
                   border: `1px solid ${isPinned ? C.warning + "66" : isHovered ? C.primary + "40" : C.cardBorder}`,
                   background: isPinned ? C.warningBg : isHovered ? C.primary + "14" : "transparent",
                   color: isPinned ? C.warning : isHovered ? C.primary : C.textMuted,
@@ -179,7 +177,7 @@ export function LeftPanel({
             </div>
           );
         })}
-      </div>
+      </nav>
     </aside>
   );
 }

@@ -2,13 +2,13 @@ import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from "rea
 import {
   Info, Search, AlertTriangle,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight,
-  Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Radio, Globe, X, ExternalLink, PencilLine, Trash2,
+  Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Globe, X, ExternalLink, PencilLine, Trash2,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { ConsoleStatCard, type ToastItem } from "./ui";
 import { useTheme } from "../context/ThemeContext";
 import {
-  buildDeviceTelemetrySummary,
+  buildDeviceTelemetryCardReadout,
   DEFAULT_DEVICE_SORT,
   getLatestDeviceTelemetryPoint,
   type DeviceSortKey,
@@ -26,6 +26,63 @@ const loadSensorChartModal = () =>
 
 const DeviceInfoModal = lazy(loadDeviceInfoModal);
 const SensorChartModal = lazy(loadSensorChartModal);
+
+function splitTelemetryValue(value: string): { amount: string; unit: string } {
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue || normalizedValue === "--") {
+    return { amount: "--", unit: "" };
+  }
+
+  const valueParts = normalizedValue.match(/^(-?\d+(?:\.\d+)?)(.*)$/);
+
+  if (!valueParts) {
+    return { amount: normalizedValue, unit: "" };
+  }
+
+  return { amount: valueParts[1], unit: valueParts[2].trim() };
+}
+
+function TelemetryValue({
+  value,
+  color,
+  mutedColor,
+  fontSize,
+  unitSize,
+  justify = "flex-start",
+}: {
+  value: string;
+  color: string;
+  mutedColor: string;
+  fontSize: string;
+  unitSize: string;
+  justify?: "flex-start" | "center" | "flex-end";
+}) {
+  const { amount, unit } = splitTelemetryValue(value);
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "baseline",
+        justifyContent: justify,
+        gap: 1,
+        minWidth: 0,
+        flexShrink: 0,
+        color,
+        fontSize,
+        fontWeight: 900,
+        fontVariantNumeric: "tabular-nums",
+        letterSpacing: "-0.025em",
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span>{amount}</span>
+      {unit && <span style={{ color: mutedColor, fontSize: unitSize, fontWeight: 850, letterSpacing: "0" }}>{unit}</span>}
+    </span>
+  );
+}
 
 /* ── Device Card ── */
 function DeviceCard({
@@ -60,7 +117,7 @@ function DeviceCard({
   const isAbnormal = sensor.status === "abnormal";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
-  const telemetrySummary = buildDeviceTelemetrySummary(telemetryPoint, sensor.axisLabels);
+  const telemetryReadout = buildDeviceTelemetryCardReadout(telemetryPoint, sensor.axisLabels);
   const cardAnimation = exiting
     ? "cardOut 260ms cubic-bezier(0.22, 0.78, 0.3, 1) both"
     : "cardIn 0.3s ease both";
@@ -75,9 +132,9 @@ function DeviceCard({
         background: C.card,
         border: `1px solid ${hovered ? accentColor + "55" : C.cardBorder}`,
         position: "relative",
-        borderRadius: 12, overflow: "hidden",
+        borderRadius: 10, overflow: "hidden",
         transition: "border-color 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.2s",
-        boxShadow: hovered && !exiting ? `0 6px 24px ${accentColor}18` : "none",
+        boxShadow: hovered && !exiting ? `0 4px 14px ${accentColor}16` : "none",
         transform: hovered && !exiting ? "translateY(-1px)" : "translateY(0)",
         cursor: "pointer",
         animation: cardAnimation,
@@ -117,33 +174,41 @@ function DeviceCard({
       }}
       onContextMenu={(event) => onContextMenu(event, sensor)}
     >
-      {/* Top accent strip */}
-      <div style={{
-        height: 3, flexShrink: 0,
-        background: accentColor,
-        opacity: isOnline ? 1 : 0.4,
-        boxShadow: isOnline ? `0 0 8px ${accentColor}77` : "none",
-        animation: isOnline && isAbnormal ? "stripPulse 2s ease-in-out infinite" : "none",
-      }} />
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 3,
+          background: accentColor,
+          opacity: isOnline ? 0.82 : 0.3,
+          boxShadow: isOnline ? `0 0 10px ${accentColor}66` : "none",
+          animation: isOnline && isAbnormal ? "stripPulse 2s ease-in-out infinite" : "none",
+        }}
+      />
 
-      <div style={{ padding: "9px 11px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 7 }}>
-        {/* Name + info btn */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+      <div style={{ padding: "5px 7px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 5, minWidth: 0 }}>
           <div
             title={sensor.name}
             style={{
               color: C.textBright,
-              fontSize: "0.82rem",
+              fontSize: "0.72rem",
               fontWeight: 750,
-              lineHeight: 1.25,
-              flex: "1 0 auto",
+              lineHeight: 1,
+              flex: "1 1 auto",
+              minWidth: 0,
               whiteSpace: "nowrap",
-              overflow: "visible",
+              overflow: "hidden",
+              textOverflow: "clip",
             }}
           >
             {sensor.name}
           </div>
-          <div style={{ position: "relative" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+            <div style={{ position: "relative" }}>
             <button
               onClick={(e) => { e.stopPropagation(); onInfo(sensor); }}
               title="Thuộc tính thiết bị"
@@ -153,7 +218,7 @@ function DeviceCard({
               }}
               onMouseLeave={() => setInfoHovered(false)}
               style={{
-                width: 22, height: 22, borderRadius: 6,
+                width: 18, height: 18, borderRadius: 5,
                 background: hovered ? C.surface : "transparent",
                 border: `1px solid ${hovered ? C.border : "transparent"}`,
                 cursor: "pointer", transition: "all 0.12s",
@@ -161,12 +226,12 @@ function DeviceCard({
                 flexShrink: 0,
               }}
             >
-              <Info size={11} color={hovered ? C.primary : C.textMuted} strokeWidth={2} />
+              <Info size={9} color={hovered ? C.primary : C.textMuted} strokeWidth={2} />
             </button>
             <div
               style={{
                 position: "absolute",
-                right: "calc(100% + 6px)",
+                right: "calc(100% + 5px)",
                 top: "50%",
                 pointerEvents: "none",
                 opacity: infoHovered ? 1 : 0,
@@ -177,9 +242,9 @@ function DeviceCard({
                 background: C.surface,
                 border: `1px solid ${C.border}`,
                 color: C.textBase,
-                fontSize: "0.62rem",
+                fontSize: "0.58rem",
                 fontWeight: 600,
-                padding: "2px 7px",
+                padding: "2px 6px",
                 borderRadius: 6,
                 whiteSpace: "nowrap",
                 zIndex: 5,
@@ -188,113 +253,165 @@ function DeviceCard({
             >
               Thông tin
             </div>
+            </div>
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (hasWebTarget) {
+                    onOpenWeb(sensor);
+                  }
+                }}
+                title={hasWebTarget ? "Truy cập thiết bị" : "Thiết bị chưa có IP"}
+                onMouseEnter={() => setWebHovered(true)}
+                onMouseLeave={() => setWebHovered(false)}
+                disabled={!hasWebTarget}
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 5,
+                  border: `1px solid ${hasWebTarget && hovered ? C.cardBorder : "transparent"}`,
+                  background: hasWebTarget && hovered ? C.surface : "transparent",
+                  color: hasWebTarget ? C.primary : C.textDim,
+                  cursor: hasWebTarget ? "pointer" : "not-allowed",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Globe size={9} strokeWidth={2} />
+              </button>
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "calc(100% + 5px)",
+                  transform: webHovered ? "translateY(0)" : "translateY(2px)",
+                  opacity: webHovered ? 1 : 0,
+                  pointerEvents: "none",
+                  transition: "opacity 0.14s ease, transform 0.14s ease",
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  color: C.textBase,
+                  fontSize: "0.58rem",
+                  fontWeight: 600,
+                  padding: "2px 6px",
+                  borderRadius: 6,
+                  whiteSpace: "nowrap",
+                  zIndex: 5,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                }}
+              >
+                {hasWebTarget ? "Truy cập thiết bị" : "Thiết bị chưa có IP"}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div style={{ color: C.textMuted, fontSize: "0.66rem", minWidth: 0, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-          {sensor.zone}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            color: C.textMuted,
+            fontSize: "0.53rem",
+            fontWeight: 650,
+            lineHeight: 1,
+            minWidth: 0,
+          }}
+        >
+          <span title={sensor.zone} style={{ minWidth: 0, overflow: "hidden", textOverflow: "clip", whiteSpace: "nowrap" }}>
+            {sensor.zone}
+          </span>
+          <span style={{ color: C.textDim, flexShrink: 0 }}>·</span>
+          <span title={`IP: ${sensor.ipAddress}`} style={{ minWidth: 0, overflow: "hidden", textOverflow: "clip", whiteSpace: "nowrap", flex: "1 1 auto" }}>
+            {sensor.ipAddress}
+          </span>
         </div>
 
         <div
           aria-label="Giá trị telemetry hiện tại"
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            minWidth: 0,
-            overflow: "hidden",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {telemetrySummary.map((item, itemIndex) => (
-            <React.Fragment key={item.label}>
-              {itemIndex > 0 ? (
-                <span style={{ color: C.border, fontSize: "0.52rem", flexShrink: 0 }}>•</span>
-              ) : null}
-              <span
-                title={`${item.label} ${item.value}`.trim()}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 2,
-                  minWidth: 0,
-                  flexShrink: 1,
-                }}
-              >
-                <span style={{ color: C.textMuted, fontSize: "0.52rem", fontWeight: 800, letterSpacing: "0.02em", flexShrink: 0 }}>
-                  {item.label}
-                </span>
-                <span style={{ color: C.textBright, fontSize: "0.54rem", fontWeight: 800, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {item.value}
-                </span>
-              </span>
-            </React.Fragment>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            color: C.textMuted,
-            fontSize: "0.62rem",
             minWidth: 0,
           }}
         >
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <Radio size={10} strokeWidth={2} />
-            IP: {sensor.ipAddress}
-          </div>
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (hasWebTarget) {
-                  onOpenWeb(sensor);
-                }
-              }}
-              onMouseEnter={() => setWebHovered(true)}
-              onMouseLeave={() => setWebHovered(false)}
-              disabled={!hasWebTarget}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(42px, 0.46fr) minmax(96px, 1fr)",
+              gap: 5,
+              minWidth: 0,
+              alignItems: "center",
+            }}
+          >
+            <div
+              title={`Temperature ${telemetryReadout.temperature.value || "--"}`}
               style={{
-                width: 24,
-                height: 24,
-                borderRadius: 8,
-                border: `1px solid ${hasWebTarget ? C.cardBorder : C.border}`,
-                background: hasWebTarget ? C.surface : "transparent",
-                color: hasWebTarget ? C.primary : C.textDim,
-                cursor: hasWebTarget ? "pointer" : "not-allowed",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
+                minWidth: 0,
+                display: "grid",
+                alignContent: "center",
+                gap: 3,
               }}
             >
-              <Globe size={12} strokeWidth={2} />
-            </button>
+              <span style={{ color: C.warning, fontSize: "0.4rem", fontWeight: 900, letterSpacing: "0.09em", lineHeight: 1 }}>
+                TEMP
+              </span>
+              <TelemetryValue
+                value={telemetryReadout.temperature.value || "--"}
+                color={telemetryReadout.temperature.value ? C.textBright : C.textDim}
+                mutedColor={C.warning}
+                fontSize="0.76rem"
+                unitSize="0.46rem"
+              />
+            </div>
+
             <div
               style={{
-                position: "absolute",
-                left: 0,
-                bottom: "calc(100% + 6px)",
-                transform: webHovered ? "translateY(0)" : "translateY(2px)",
-                opacity: webHovered ? 1 : 0,
-                pointerEvents: "none",
-                transition: "opacity 0.14s ease, transform 0.14s ease",
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                color: C.textBase,
-                fontSize: "0.62rem",
-                fontWeight: 600,
-                padding: "2px 7px",
-                borderRadius: 6,
-                whiteSpace: "nowrap",
-                zIndex: 5,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr)",
+                gap: 2,
+                minWidth: 0,
               }}
             >
-              {hasWebTarget ? "Truy cập thiết bị" : "Thiết bị chưa có IP"}
+              {telemetryReadout.axes.map((item, itemIndex) => (
+                <div
+                  key={`${item.label}-${itemIndex}`}
+                  title={`${item.label} ${item.value || "--"}`.trim()}
+                  style={{
+                    minWidth: 0,
+                    display: "grid",
+                    gridTemplateColumns: "max-content max-content",
+                    alignItems: "baseline",
+                    justifyContent: "end",
+                    columnGap: 2,
+                    lineHeight: 1,
+                  }}
+                >
+                  <span
+                    style={{
+                      color: C.textMuted,
+                      fontSize: "0.42rem",
+                      fontWeight: 850,
+                      letterSpacing: "0.02em",
+                      lineHeight: 1,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "clip",
+                      textAlign: "right",
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                  <TelemetryValue
+                    value={item.value || "--"}
+                    color={item.value ? C.textBright : C.textDim}
+                    mutedColor={C.textMuted}
+                    fontSize="0.6rem"
+                    unitSize="0.34rem"
+                    justify="flex-end"
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -727,6 +844,8 @@ export function DeviceManagement({
   const [pageInput, setPageInput] = useState(() => String(readStoredNumber(STORAGE_PAGE_KEY, 1)));
   const didMountRef = useRef(false);
   const exitTimeoutsRef = useRef<Record<string, number>>({});
+  const cardTelemetryPrefetchRef = useRef<Set<string>>(new Set());
+  const cardTelemetryPrefetchTimeoutsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const idleWindow = window as Window & {
@@ -839,12 +958,33 @@ export function DeviceManagement({
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * pageSize;
   const pageEnd = pageStart + pageSize;
-  const pagedDevices = displayed.slice(pageStart, pageEnd);
+  const pagedDevices = useMemo(
+    () => displayed.slice(pageStart, pageEnd),
+    [displayed, pageStart, pageEnd],
+  );
   const shouldGroupByZone = sort === "zone";
   const pagedZoneGroups = useMemo(
     () => shouldGroupByZone ? groupSensorsByZone(pagedDevices) : [],
     [pagedDevices, shouldGroupByZone],
   );
+
+  useEffect(() => {
+    const missingTelemetrySensors = pagedDevices.filter(
+      (sensor) =>
+        !latestTelemetryByDevice[sensor.id] &&
+        !telemetryLoadingByDevice[sensor.id] &&
+        !cardTelemetryPrefetchRef.current.has(sensor.id),
+    );
+
+    missingTelemetrySensors.forEach((sensor, index) => {
+      cardTelemetryPrefetchRef.current.add(sensor.id);
+      const timeoutId = window.setTimeout(() => {
+        cardTelemetryPrefetchTimeoutsRef.current.delete(timeoutId);
+        void onRequestTelemetryHistory(sensor.id, { limit: 1 });
+      }, index * 45);
+      cardTelemetryPrefetchTimeoutsRef.current.add(timeoutId);
+    });
+  }, [latestTelemetryByDevice, onRequestTelemetryHistory, pagedDevices, telemetryLoadingByDevice]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -876,6 +1016,10 @@ export function DeviceManagement({
         window.clearTimeout(timeoutId);
       });
       exitTimeoutsRef.current = {};
+      cardTelemetryPrefetchTimeoutsRef.current.forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
+      });
+      cardTelemetryPrefetchTimeoutsRef.current.clear();
     };
   }, []);
 
@@ -1329,8 +1473,8 @@ export function DeviceManagement({
                     data-ux="device-grid"
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-                      gap: 8,
+                      gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                      gap: 6,
                     }}
                   >
                     {zoneGroup.devices.map((sensor, idx) => (
@@ -1363,8 +1507,8 @@ export function DeviceManagement({
               data-ux="device-grid"
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-                gap: 8,
+                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                gap: 6,
               }}
             >
               {pagedDevices.map((sensor, idx) => (

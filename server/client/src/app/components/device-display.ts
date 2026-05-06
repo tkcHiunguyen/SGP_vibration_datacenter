@@ -15,6 +15,11 @@ export type DeviceTelemetrySummaryItem = {
   value: string;
 };
 
+export type DeviceTelemetryCardReadout = {
+  temperature: DeviceTelemetrySummaryItem;
+  axes: DeviceTelemetrySummaryItem[];
+};
+
 const DEFAULT_DEVICE_AXIS_LABELS = {
   ax: "X",
   ay: "Y",
@@ -58,7 +63,7 @@ function formatTemperature(value?: number): string {
 }
 
 function formatAxisValue(value?: number): string {
-  return isFiniteNumber(value) ? `${value.toFixed(2)}g` : "";
+  return isFiniteNumber(value) ? `${value.toFixed(2)}m/s²` : "";
 }
 
 export function getLatestDeviceTelemetryPoint(points: DeviceTelemetryPoint[]): DeviceTelemetryPoint | null {
@@ -87,6 +92,14 @@ export function buildDeviceTelemetrySummary(
     { label: axisLabels?.ay || DEFAULT_DEVICE_AXIS_LABELS.ay, value: formatAxisValue(point?.ay) },
     { label: axisLabels?.az || DEFAULT_DEVICE_AXIS_LABELS.az, value: formatAxisValue(point?.az) },
   ];
+}
+
+export function buildDeviceTelemetryCardReadout(
+  point?: DeviceTelemetryPoint | null,
+  axisLabels?: DeviceAxisLabels,
+): DeviceTelemetryCardReadout {
+  const [temperature, ...axes] = buildDeviceTelemetrySummary(point, axisLabels);
+  return { temperature, axes };
 }
 
 export function buildDeviceAxisLabelUpdate(
