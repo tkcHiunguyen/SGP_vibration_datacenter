@@ -62,5 +62,6 @@ scripts/token-savior-local.sh
 SOCKETIO-DEVICE-COMMANDS.md
 
 # Codex task workflow generated outputs
+codex_task.md
 codex_task_requirements.md
 codex_task_results.md
