@@ -738,16 +738,22 @@ export function toSpectrumChartData(point: DeviceSpectrumPoint | null): Spectrum
 
   const binHz = spectrumBinHz(point);
   const resolvedBinHz = binHz ?? DEFAULT_SPECTRUM_SAMPLE_RATE_HZ / DEFAULT_SPECTRUM_SOURCE_SAMPLES;
-  const unit = normalizeSpectrumUnit(point.magnitudeUnit);
+  const finiteAmplitudes = point.amplitudes
+    .slice(0, resolvedBinCount)
+    .map((value) => (typeof value === "number" && Number.isFinite(value) ? value : 0));
+  const maxAmplitude = finiteAmplitudes.reduce(
+    (currentMax, value) => (value > currentMax ? value : currentMax),
+    0,
+  );
   return Array.from({ length: resolvedBinCount }, (_, index) => {
-    const raw = point.amplitudes[index];
-    const amp = typeof raw === "number" && Number.isFinite(raw) ? Number(raw.toFixed(6)) : 0;
+    const raw = finiteAmplitudes[index] ?? 0;
+    const amp = maxAmplitude > 0 ? Number(((raw / maxAmplitude) * 100).toFixed(3)) : 0;
     const bin = index + 1;
     return {
       bin,
       freq: Number((resolvedBinHz * bin).toFixed(3)),
       amp,
-      unit,
+      unit: "%",
     };
   });
 }
@@ -1957,15 +1963,6 @@ export function TelemetryTrendChart({
 
   const handleViewportWheel = useCallback(
     (event: React.WheelEvent<SVGRectElement>) => {
-      if (event.shiftKey) {
-        stopWheelScroll(event);
-        const scaleDelta = getPrimaryWheelDelta(event);
-        if (scaleDelta !== 0) {
-          onYAxisZoom?.({ deltaY: scaleDelta });
-        }
-        return;
-      }
-
       if (!onViewportZoom) {
         return;
       }
@@ -1976,7 +1973,21 @@ export function TelemetryTrendChart({
       const anchorTs = xScale.invert(chartX).getTime();
       onViewportZoom({ anchorTs, deltaY: event.deltaY });
     },
-    [innerWidth, margin.left, onViewportZoom, onYAxisZoom, xScale],
+    [innerWidth, margin.left, onViewportZoom, xScale],
+  );
+
+  const handleYAxisWheel = useCallback(
+    (event: React.WheelEvent<SVGRectElement>) => {
+      if (!onYAxisZoom) {
+        return;
+      }
+      stopWheelScroll(event);
+      const scaleDelta = getPrimaryWheelDelta(event);
+      if (scaleDelta !== 0) {
+        onYAxisZoom({ deltaY: scaleDelta });
+      }
+    },
+    [onYAxisZoom],
   );
 
   const handleViewportMouseDown = useCallback(
@@ -2320,6 +2331,14 @@ export function TelemetryTrendChart({
             onMouseLeave={handlePointerLeave}
             onClick={handlePointerClick}
           />
+          <rect
+            x={0}
+            y={margin.top}
+            width={margin.left}
+            height={innerHeight}
+            fill="transparent"
+            onWheel={handleYAxisWheel}
+          />
         </svg>
       ) : null}
 
@@ -2456,7 +2475,6 @@ export function SpectrumZoomChart({
   axisLabelColor,
   gridColor,
   maxHz,
-  yMax,
   C,
   height = SPECTRUM_CHART_HEIGHT,
 }: {
@@ -2465,7 +2483,6 @@ export function SpectrumZoomChart({
   axisLabelColor: string;
   gridColor: string;
   maxHz: number;
-  yMax: number;
   C: {
     surface: string;
     border: string;
@@ -2481,7 +2498,7 @@ export function SpectrumZoomChart({
 
   const margin = useMemo(
     () => ({
-      left: 6,
+      left: 34,
       right: 8,
       top: 24,
       bottom: 24,
@@ -2520,7 +2537,7 @@ export function SpectrumZoomChart({
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
-  const safeYMax = yMax > 0 ? yMax : 1;
+  const safeYMax = 100;
   const barCount = Math.max(1, data.length);
   const barSlotWidth = innerWidth / barCount;
   const barWidth = Math.max(1, barSlotWidth - 1);
@@ -2701,7 +2718,7 @@ export function SpectrumZoomChart({
       {chartWidth > 0 ? (
         <svg width={chartWidth} height={height}>
           <Group>
-            {yScale.ticks(4).map((tick) => {
+            {yScale.ticks(5).map((tick) => {
               const y = yScale(tick);
               return (
                 <line
@@ -2804,6 +2821,21 @@ export function SpectrumZoomChart({
             ) : null}
           </Group>
 
+          <AxisLeft
+            scale={yScale}
+            left={margin.left}
+            tickValues={[0, 25, 50, 75, 100]}
+            tickFormat={(value) => `${Number(value)}%`}
+            tickLabelProps={() => ({
+              fill: axisLabelColor,
+              fontSize: 9,
+              textAnchor: "end",
+              dy: "0.33em",
+            })}
+            stroke={gridColor}
+            tickStroke={gridColor}
+          />
+
           <AxisBottom
             scale={xScale}
             top={margin.top + innerHeight}
@@ -2861,7 +2893,7 @@ export function SpectrumZoomChart({
           <div style={{ fontWeight: 700, marginBottom: 2 }}>Bin {hoverPoint.bin}</div>
           <div style={{ color: C.textMuted, marginBottom: 3 }}>f = {formatFrequencyHz(hoverPoint.freq)}</div>
           <div style={{ color, fontWeight: 700 }}>
-            Biên độ: {hoverPoint.amp.toFixed(6)} {hoverPoint.unit}
+            Biên độ: {hoverPoint.amp.toFixed(2)}{hoverPoint.unit}
           </div>
         </div>
       ) : null}

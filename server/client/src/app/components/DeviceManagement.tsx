@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import {
   Info, Search, AlertTriangle,
-  Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight,
+  Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
   Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Globe, X, ExternalLink, PencilLine, Trash2,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
@@ -11,6 +11,7 @@ import {
   buildDeviceTelemetryCardReadout,
   DEFAULT_DEVICE_SORT,
   getLatestDeviceTelemetryPoint,
+  pickZoneAxisDisplayDeviceIds,
   type DeviceSortKey,
 } from "./device-display";
 
@@ -95,6 +96,7 @@ function DeviceCard({
   onPrepareInfo,
   onPrepareChart,
   telemetryPoint,
+  showAxisReadout,
   exiting,
 }: {
   sensor: Sensor;
@@ -106,6 +108,7 @@ function DeviceCard({
   onPrepareInfo?: () => void;
   onPrepareChart?: () => void;
   telemetryPoint?: DeviceTelemetryPoint | null;
+  showAxisReadout: boolean;
   exiting?: boolean;
 }) {
   const { C } = useTheme();
@@ -309,27 +312,6 @@ function DeviceCard({
         </div>
 
         <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            color: C.textMuted,
-            fontSize: "0.53rem",
-            fontWeight: 650,
-            lineHeight: 1,
-            minWidth: 0,
-          }}
-        >
-          <span title={sensor.zone} style={{ minWidth: 0, overflow: "hidden", textOverflow: "clip", whiteSpace: "nowrap" }}>
-            {sensor.zone}
-          </span>
-          <span style={{ color: C.textDim, flexShrink: 0 }}>·</span>
-          <span title={`IP: ${sensor.ipAddress}`} style={{ minWidth: 0, overflow: "hidden", textOverflow: "clip", whiteSpace: "nowrap", flex: "1 1 auto" }}>
-            {sensor.ipAddress}
-          </span>
-        </div>
-
-        <div
           aria-label="Giá trị telemetry hiện tại"
           style={{
             minWidth: 0,
@@ -338,7 +320,9 @@ function DeviceCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(42px, 0.46fr) minmax(96px, 1fr)",
+              gridTemplateColumns: showAxisReadout
+                ? "minmax(42px, 0.46fr) minmax(96px, 1fr)"
+                : "minmax(0, 1fr)",
               gap: 5,
               minWidth: 0,
               alignItems: "center",
@@ -365,54 +349,56 @@ function DeviceCard({
               />
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr)",
-                gap: 2,
-                minWidth: 0,
-              }}
-            >
-              {telemetryReadout.axes.map((item, itemIndex) => (
-                <div
-                  key={`${item.label}-${itemIndex}`}
-                  title={`${item.label} ${item.value || "--"}`.trim()}
-                  style={{
-                    minWidth: 0,
-                    display: "grid",
-                    gridTemplateColumns: "max-content max-content",
-                    alignItems: "baseline",
-                    justifyContent: "end",
-                    columnGap: 2,
-                    lineHeight: 1,
-                  }}
-                >
-                  <span
+            {showAxisReadout ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr)",
+                  gap: 2,
+                  minWidth: 0,
+                }}
+              >
+                {telemetryReadout.axes.map((item, itemIndex) => (
+                  <div
+                    key={`${item.label}-${itemIndex}`}
+                    title={`${item.label} ${item.value || "--"}`.trim()}
                     style={{
-                      color: C.textMuted,
-                      fontSize: "0.42rem",
-                      fontWeight: 850,
-                      letterSpacing: "0.02em",
+                      minWidth: 0,
+                      display: "grid",
+                      gridTemplateColumns: "max-content max-content",
+                      alignItems: "baseline",
+                      justifyContent: "end",
+                      columnGap: 2,
                       lineHeight: 1,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "clip",
-                      textAlign: "right",
                     }}
                   >
-                    {item.label}
-                  </span>
-                  <TelemetryValue
-                    value={item.value || "--"}
-                    color={item.value ? C.textBright : C.textDim}
-                    mutedColor={C.textMuted}
-                    fontSize="0.6rem"
-                    unitSize="0.34rem"
-                    justify="flex-end"
-                  />
-                </div>
-              ))}
-            </div>
+                    <span
+                      style={{
+                        color: C.textMuted,
+                        fontSize: "0.42rem",
+                        fontWeight: 850,
+                        letterSpacing: "0.02em",
+                        lineHeight: 1,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "clip",
+                        textAlign: "right",
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                    <TelemetryValue
+                      value={item.value || "--"}
+                      color={item.value ? C.textBright : C.textDim}
+                      mutedColor={C.textMuted}
+                      fontSize="0.6rem"
+                      unitSize="0.34rem"
+                      justify="flex-end"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -793,6 +779,26 @@ const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
 const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
 const DEVICE_CARD_EXIT_MS = 260;
 const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
+const CHART_SIDEBAR_MIN_WIDTH_PX = 460;
+const CHART_SIDEBAR_DEFAULT_WIDTH_PX = 860;
+const CHART_SIDEBAR_MAX_WIDTH_PX = 1100;
+const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.72;
+const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 360;
+const CHART_SIDEBAR_COLLAPSE_TOGGLE_SIZE_PX = 34;
+const CHART_SIDEBAR_CONTENT_GAP_PX = 12;
+
+function getChartSidebarMaxWidth(viewportWidth: number): number {
+  const ratioMax = Math.floor(viewportWidth * CHART_SIDEBAR_MAX_VIEWPORT_RATIO);
+  const byMainArea = Math.floor(viewportWidth - CHART_SIDEBAR_MIN_MAIN_AREA_PX);
+  const bounded = Math.min(CHART_SIDEBAR_MAX_WIDTH_PX, ratioMax, byMainArea);
+  return Math.max(CHART_SIDEBAR_MIN_WIDTH_PX, bounded);
+}
+
+function clampChartSidebarWidth(width: number, viewportWidth: number): number {
+  const maxWidth = getChartSidebarMaxWidth(viewportWidth);
+  const normalized = Number.isFinite(width) ? Math.round(width) : CHART_SIDEBAR_DEFAULT_WIDTH_PX;
+  return Math.max(CHART_SIDEBAR_MIN_WIDTH_PX, Math.min(maxWidth, normalized));
+}
 
 function readStoredNumber(key: string, fallback: number): number {
   if (typeof window === "undefined") {
@@ -822,6 +828,9 @@ export function DeviceManagement({
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
   const [selectedSensorMode, setSelectedSensorMode] = useState<DeviceInfoMode>("view");
   const [chartSensor, setChartSensor] = useState<Sensor | null>(null);
+  const [chartSidebarCollapsed, setChartSidebarCollapsed] = useState(false);
+  const [chartSidebarWidthPx, setChartSidebarWidthPx] = useState(CHART_SIDEBAR_DEFAULT_WIDTH_PX);
+  const [chartSidebarResizing, setChartSidebarResizing] = useState(false);
   const [webSensor, setWebSensor] = useState<Sensor | null>(null);
   const [contextMenu, setContextMenu] = useState<DeviceContextMenuState>({
     open: false,
@@ -846,6 +855,11 @@ export function DeviceManagement({
   const exitTimeoutsRef = useRef<Record<string, number>>({});
   const cardTelemetryPrefetchRef = useRef<Set<string>>(new Set());
   const cardTelemetryPrefetchTimeoutsRef = useRef<Set<number>>(new Set());
+  const chartSidebarResizeRef = useRef({
+    active: false,
+    startX: 0,
+    startWidth: CHART_SIDEBAR_DEFAULT_WIDTH_PX,
+  });
 
   useEffect(() => {
     const idleWindow = window as Window & {
@@ -874,6 +888,54 @@ export function DeviceManagement({
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleResize = (): void => {
+      setChartSidebarWidthPx((prev) => clampChartSidebarWidth(prev, window.innerWidth));
+    };
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent): void => {
+      const state = chartSidebarResizeRef.current;
+      if (!state.active) {
+        return;
+      }
+      const delta = state.startX - event.clientX;
+      const nextWidth = clampChartSidebarWidth(state.startWidth + delta, window.innerWidth);
+      setChartSidebarWidthPx(nextWidth);
+    };
+
+    const stopResize = (): void => {
+      const state = chartSidebarResizeRef.current;
+      if (!state.active) {
+        return;
+      }
+      state.active = false;
+      setChartSidebarResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", stopResize);
+    window.addEventListener("mouseleave", stopResize);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", stopResize);
+      window.removeEventListener("mouseleave", stopResize);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
   }, []);
 
@@ -966,6 +1028,10 @@ export function DeviceManagement({
   const pagedZoneGroups = useMemo(
     () => shouldGroupByZone ? groupSensorsByZone(pagedDevices) : [],
     [pagedDevices, shouldGroupByZone],
+  );
+  const zoneAxisDisplayDeviceIds = useMemo(
+    () => pickZoneAxisDisplayDeviceIds(pagedDevices, latestTelemetryByDevice),
+    [pagedDevices, latestTelemetryByDevice],
   );
 
   useEffect(() => {
@@ -1188,6 +1254,16 @@ export function DeviceManagement({
   }
 
   const contextTarget = contextMenu.sensor;
+  const chartSidebarVisible = chartSensor !== null;
+  const chartSidebarOpen = chartSidebarVisible && !chartSidebarCollapsed;
+  const chartSidebarWidthPxSafe = clampChartSidebarWidth(
+    chartSidebarWidthPx,
+    typeof window === "undefined" ? 1920 : window.innerWidth,
+  );
+  const chartSidebarWidth = `${chartSidebarWidthPxSafe}px`;
+  const chartSidebarReservedWidth = chartSidebarOpen
+    ? `calc(${chartSidebarWidth} + ${CHART_SIDEBAR_CONTENT_GAP_PX}px)`
+    : "0px";
   const getContextItemStyle = (item: DeviceContextMenuItem, danger = false): React.CSSProperties => {
     const hovered = contextHoveredItem === item;
     return {
@@ -1231,6 +1307,28 @@ export function DeviceManagement({
         }
       `}</style>
 
+      <div
+        style={{
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            paddingTop: 22,
+            paddingRight: chartSidebarReservedWidth,
+            transition: "padding-right 220ms ease",
+          }}
+        >
       {/* ── Stat summary row ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         <ConsoleStatCard
@@ -1416,244 +1514,410 @@ export function DeviceManagement({
         })}
       </div>
 
-      {/* ── Card Grid ── */}
-      {displayed.length === 0 ? (
-        <div style={{
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          height: 200, borderRadius: 12,
-          background: C.card, border: `1px solid ${C.cardBorder}`,
-          color: C.textMuted, gap: 8,
-        }}>
-          <Layers size={28} strokeWidth={1.2} />
-          <div style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
-          <div style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
-        </div>
-      ) : (
-        <>
-          {shouldGroupByZone ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {pagedZoneGroups.map((zoneGroup) => (
-                <section key={zoneGroup.key} data-ux="device-zone-section" data-zone={zoneGroup.label}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      marginBottom: 8,
-                      padding: "0 2px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                      <MapPin size={13} color={C.primary} strokeWidth={2.2} />
-                      <h3
-                        style={{
-                          color: C.textBright,
-                          fontSize: "0.82rem",
-                          fontWeight: 800,
-                          margin: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {zoneGroup.label}
-                      </h3>
-                      <span style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650 }}>
-                        {zoneGroup.total} thiết bị
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650 }}>
-                      <span style={{ color: C.success }}>{zoneGroup.online} online</span>
-                      {zoneGroup.abnormal > 0 && <span style={{ color: C.danger }}>{zoneGroup.abnormal} cảnh báo</span>}
-                    </div>
-                  </div>
-
-                  <div
-                    data-ux="device-grid"
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                      gap: 6,
-                    }}
-                  >
-                    {zoneGroup.devices.map((sensor, idx) => (
-                      <DeviceCard
-                        key={sensor.id}
-                        sensor={sensor}
-                        idx={idx}
-                        telemetryPoint={latestTelemetryByDevice[sensor.id]}
-                        exiting={exitingDeviceIds.has(sensor.id)}
-                        onInfo={(target) => openDeviceInfo(target, "view")}
-                        onChart={(target) => {
-                          closeContextMenu();
-                          setChartSensor(target);
-                        }}
-                        onOpenWeb={(target) => {
-                          closeContextMenu();
-                          setWebSensor(target);
-                        }}
-                        onContextMenu={openDeviceContextMenu}
-                        onPrepareInfo={loadDeviceInfoModal}
-                        onPrepareChart={loadSensorChartModal}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ))}
+      {/* ── Card Grid + Right Sidebar ── */}
+      <div style={{ display: "flex", alignItems: "stretch", gap: 12, minWidth: 0, flex: 1, minHeight: 0 }}>
+        <div
+          style={{
+            flex: "1 1 auto",
+            minWidth: 0,
+            minHeight: 0,
+            overflowY: "auto",
+            scrollbarWidth: "thin",
+            scrollbarColor: `${C.scrollbar} transparent`,
+            paddingRight: 2,
+          }}
+        >
+          {displayed.length === 0 ? (
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              height: 200, borderRadius: 12,
+              background: C.card, border: `1px solid ${C.cardBorder}`,
+              color: C.textMuted, gap: 8,
+            }}>
+              <Layers size={28} strokeWidth={1.2} />
+              <div style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
+              <div style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
             </div>
           ) : (
-            <div
-              data-ux="device-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                gap: 6,
-              }}
-            >
-              {pagedDevices.map((sensor, idx) => (
-                <DeviceCard
-                  key={sensor.id}
-                  sensor={sensor}
-                  idx={idx}
-                  telemetryPoint={latestTelemetryByDevice[sensor.id]}
-                  exiting={exitingDeviceIds.has(sensor.id)}
-                  onInfo={(target) => openDeviceInfo(target, "view")}
-                  onChart={(target) => {
-                    closeContextMenu();
-                    setChartSensor(target);
-                  }}
-                  onOpenWeb={(target) => {
-                    closeContextMenu();
-                    setWebSensor(target);
-                  }}
-                  onContextMenu={openDeviceContextMenu}
-                  onPrepareInfo={loadDeviceInfoModal}
-                  onPrepareChart={loadSensorChartModal}
-                />
-              ))}
-            </div>
-          )}
+            <>
+              {shouldGroupByZone ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {pagedZoneGroups.map((zoneGroup) => (
+                    <section key={zoneGroup.key} data-ux="device-zone-section" data-zone={zoneGroup.label}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          marginBottom: 8,
+                          padding: "0 2px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <MapPin size={13} color={C.primary} strokeWidth={2.2} />
+                          <h3
+                            style={{
+                              color: C.textBright,
+                              fontSize: "0.82rem",
+                              fontWeight: 800,
+                              margin: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {zoneGroup.label}
+                          </h3>
+                          <span style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650 }}>
+                            {zoneGroup.total} thiết bị
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650 }}>
+                          <span style={{ color: C.success }}>{zoneGroup.online} online</span>
+                          {zoneGroup.abnormal > 0 && <span style={{ color: C.danger }}>{zoneGroup.abnormal} cảnh báo</span>}
+                        </div>
+                      </div>
 
-          <div
-            style={{
-              marginTop: 12,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: C.textMuted, fontSize: "0.7rem", fontWeight: 600 }}>
-                Thiết bị / trang
-              </span>
-              <div style={{ position: "relative" }}>
-                <select
-                  data-ux="page-size-select"
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
+                      <div
+                        data-ux="device-grid"
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                          gap: 6,
+                        }}
+                      >
+                        {zoneGroup.devices.map((sensor, idx) => (
+                          <DeviceCard
+                            key={sensor.id}
+                            sensor={sensor}
+                            idx={idx}
+                            telemetryPoint={latestTelemetryByDevice[sensor.id]}
+                            showAxisReadout={zoneAxisDisplayDeviceIds.has(sensor.id)}
+                            exiting={exitingDeviceIds.has(sensor.id)}
+                            onInfo={(target) => openDeviceInfo(target, "view")}
+                            onChart={(target) => {
+                              closeContextMenu();
+                              setChartSensor(target);
+                              setChartSidebarCollapsed(false);
+                            }}
+                            onOpenWeb={(target) => {
+                              closeContextMenu();
+                              setWebSensor(target);
+                            }}
+                            onContextMenu={openDeviceContextMenu}
+                            onPrepareInfo={loadDeviceInfoModal}
+                            onPrepareChart={loadSensorChartModal}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  data-ux="device-grid"
                   style={{
-                    height: 30,
-                    borderRadius: 8,
-                    background: C.card,
-                    border: `1px solid ${C.cardBorder}`,
-                    color: C.textBase,
-                    fontSize: "0.72rem",
-                    padding: "0 28px 0 10px",
-                    appearance: "none",
-                    cursor: "pointer",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                    gap: 6,
                   }}
                 >
-                  {[10, 20, 50, 100, 200].map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
+                  {pagedDevices.map((sensor, idx) => (
+                    <DeviceCard
+                      key={sensor.id}
+                      sensor={sensor}
+                      idx={idx}
+                      telemetryPoint={latestTelemetryByDevice[sensor.id]}
+                      showAxisReadout={zoneAxisDisplayDeviceIds.has(sensor.id)}
+                      exiting={exitingDeviceIds.has(sensor.id)}
+                      onInfo={(target) => openDeviceInfo(target, "view")}
+                      onChart={(target) => {
+                        closeContextMenu();
+                        setChartSensor(target);
+                        setChartSidebarCollapsed(false);
+                      }}
+                      onOpenWeb={(target) => {
+                        closeContextMenu();
+                        setWebSensor(target);
+                      }}
+                      onContextMenu={openDeviceContextMenu}
+                      onPrepareInfo={loadDeviceInfoModal}
+                      onPrepareChart={loadSensorChartModal}
+                    />
                   ))}
-                </select>
-                <ChevronDown
-                  size={11}
-                  color={C.textMuted}
-                  strokeWidth={2}
-                  style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-                />
-              </div>
-            </div>
+                </div>
+              )}
 
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
+              <div
                 style={{
-                  height: 30,
-                  minWidth: 30,
-                  borderRadius: 8,
-                  border: `1px solid ${C.cardBorder}`,
-                  background: C.card,
-                  color: currentPage === 1 ? C.textDim : C.textBase,
-                  cursor: currentPage === 1 ? "not-allowed" : "pointer",
-                  display: "inline-flex",
+                  marginTop: 12,
+                  display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
                 }}
               >
-                <ChevronLeft size={12} strokeWidth={2} />
-              </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: C.textMuted, fontSize: "0.7rem", fontWeight: 600 }}>
+                    Thiết bị / trang
+                  </span>
+                  <div style={{ position: "relative" }}>
+                    <select
+                      data-ux="page-size-select"
+                      value={pageSize}
+                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      style={{
+                        height: 30,
+                        borderRadius: 8,
+                        background: C.card,
+                        border: `1px solid ${C.cardBorder}`,
+                        color: C.textBase,
+                        fontSize: "0.72rem",
+                        padding: "0 28px 0 10px",
+                        appearance: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {[10, 20, 50, 100, 200].map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={11}
+                      color={C.textMuted}
+                      strokeWidth={2}
+                      style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                    />
+                  </div>
+                </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>Trang</span>
-                <input
-                  data-ux="page-input"
-                  className="page-input"
-                  type="number"
-                  min={1}
-                  max={totalPages}
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onBlur={() => goToPage(pageInput)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      goToPage(pageInput);
-                    }
-                  }}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    style={{
+                      height: 30,
+                      minWidth: 30,
+                      borderRadius: 8,
+                      border: `1px solid ${C.cardBorder}`,
+                      background: C.card,
+                      color: currentPage === 1 ? C.textDim : C.textBase,
+                      cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <ChevronLeft size={12} strokeWidth={2} />
+                  </button>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>Trang</span>
+                    <input
+                      data-ux="page-input"
+                      className="page-input"
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value)}
+                      onBlur={() => goToPage(pageInput)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          goToPage(pageInput);
+                        }
+                      }}
+                      style={{
+                        width: 52,
+                        height: 30,
+                        borderRadius: 8,
+                        border: `1px solid ${C.cardBorder}`,
+                        background: C.card,
+                        color: C.textBase,
+                        fontSize: "0.72rem",
+                        textAlign: "center",
+                        outline: "none",
+                      }}
+                    />
+                    <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>/ {totalPages}</span>
+                  </div>
+
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    style={{
+                      height: 30,
+                      minWidth: 30,
+                      borderRadius: 8,
+                      border: `1px solid ${C.cardBorder}`,
+                      background: C.card,
+                      color: currentPage >= totalPages ? C.textDim : C.textBase,
+                      cursor: currentPage >= totalPages ? "not-allowed" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <ChevronRight size={12} strokeWidth={2} />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        {chartSidebarVisible && chartSidebarCollapsed ? (
+          <button
+            type="button"
+            title="Mở khung biểu đồ"
+            aria-label="Mở khung biểu đồ"
+            onClick={() => setChartSidebarCollapsed(false)}
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 0,
+              width: CHART_SIDEBAR_COLLAPSE_TOGGLE_SIZE_PX,
+              height: 56,
+              borderRadius: "10px 0 0 10px",
+              border: `1px solid ${C.border}`,
+              borderRight: "none",
+              background: C.card,
+              color: C.textMuted,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              boxShadow: "0 8px 20px rgba(2,6,23,0.2)",
+              zIndex: 3,
+            }}
+          >
+            <ChevronLeft size={16} strokeWidth={2.4} />
+          </button>
+        ) : null}
+
+        <div
+          data-ux="device-chart-sidebar"
+          style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: chartSidebarOpen ? chartSidebarWidth : 0,
+            minWidth: chartSidebarOpen ? CHART_SIDEBAR_MIN_WIDTH_PX : 0,
+            maxWidth: chartSidebarOpen ? chartSidebarWidth : 0,
+            opacity: chartSidebarOpen ? 1 : 0,
+            transform: chartSidebarOpen ? "translateX(0)" : "translateX(12px)",
+            transition: "width 220ms ease, max-width 220ms ease, opacity 180ms ease, transform 220ms ease",
+            pointerEvents: chartSidebarOpen ? "auto" : "none",
+            overflow: "visible",
+            zIndex: 2,
+          }}
+        >
+          {chartSidebarOpen && chartSensor ? (
+            <>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                title="Kéo để chỉnh độ rộng khung biểu đồ"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  chartSidebarResizeRef.current = {
+                    active: true,
+                    startX: event.clientX,
+                    startWidth: chartSidebarWidthPxSafe,
+                  };
+                  setChartSidebarResizing(true);
+                  document.body.style.cursor = "col-resize";
+                  document.body.style.userSelect = "none";
+                }}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  left: -8,
+                  width: 16,
+                  cursor: "col-resize",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 5,
+                }}
+              >
+                <div
                   style={{
-                    width: 52,
-                    height: 30,
-                    borderRadius: 8,
-                    border: `1px solid ${C.cardBorder}`,
-                    background: C.card,
-                    color: C.textBase,
-                    fontSize: "0.72rem",
-                    textAlign: "center",
-                    outline: "none",
+                    width: 6,
+                    height: 46,
+                    borderRadius: 999,
+                    border: `1px solid ${chartSidebarResizing ? C.primary : C.border}`,
+                    background: chartSidebarResizing ? C.primaryBg : C.card,
+                    color: chartSidebarResizing ? C.primary : C.textMuted,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.14s ease",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.16)",
                   }}
-                />
-                <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>/ {totalPages}</span>
+                >
+                  <GripVertical size={12} strokeWidth={2.2} />
+                </div>
               </div>
 
               <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage >= totalPages}
+                type="button"
+                title="Thu gọn khung biểu đồ"
+                aria-label="Thu gọn khung biểu đồ"
+                onClick={() => setChartSidebarCollapsed(true)}
                 style={{
-                  height: 30,
-                  minWidth: 30,
-                  borderRadius: 8,
-                  border: `1px solid ${C.cardBorder}`,
+                  position: "absolute",
+                  top: 12,
+                  left: -34,
+                  width: CHART_SIDEBAR_COLLAPSE_TOGGLE_SIZE_PX,
+                  height: 34,
+                  borderRadius: "8px 0 0 8px",
+                  border: `1px solid ${C.border}`,
+                  borderRight: "none",
                   background: C.card,
-                  color: currentPage >= totalPages ? C.textDim : C.textBase,
-                  cursor: currentPage >= totalPages ? "not-allowed" : "pointer",
+                  color: C.textMuted,
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  cursor: "pointer",
+                  zIndex: 6,
                 }}
               >
-                <ChevronRight size={12} strokeWidth={2} />
+                <ChevronRight size={15} strokeWidth={2.4} />
               </button>
-            </div>
-          </div>
-        </>
-      )}
+
+              <Suspense fallback={null}>
+                <SensorChartModal
+                  sensor={chartSensor}
+                  telemetryPoints={telemetryByDevice[chartSensor.id] || []}
+                  telemetryLoading={Boolean(telemetryLoadingByDevice[chartSensor.id])}
+                  spectrumPoints={spectrumByDevice[chartSensor.id] || []}
+                  onRequestTelemetryHistory={onRequestTelemetryHistory}
+                  onNotify={onNotify}
+                  onSensorUpdated={(updated) => {
+                    setChartSensor(updated);
+                    setSelectedSensor((current) => (current?.id === updated.id ? updated : current));
+                    onSensorUpdated?.(updated);
+                  }}
+                  onDeviceDataCleared={onDeviceDataCleared}
+                  onClose={() => {
+                    setChartSensor(null);
+                    setChartSidebarCollapsed(false);
+                  }}
+                />
+              </Suspense>
+            </>
+          ) : null}
+        </div>
+      </div>
+        </div>
+      </div>
 
       {contextMenu.open && contextTarget ? (
         <div
@@ -1744,25 +2008,6 @@ export function DeviceManagement({
               setSelectedSensorMode("view");
             }}
             onNotify={onNotify}
-          />
-        </Suspense>
-      ) : null}
-      {chartSensor ? (
-        <Suspense fallback={null}>
-          <SensorChartModal
-            sensor={chartSensor}
-            telemetryPoints={telemetryByDevice[chartSensor.id] || []}
-            telemetryLoading={Boolean(telemetryLoadingByDevice[chartSensor.id])}
-            spectrumPoints={spectrumByDevice[chartSensor.id] || []}
-            onRequestTelemetryHistory={onRequestTelemetryHistory}
-            onNotify={onNotify}
-            onSensorUpdated={(updated) => {
-              setChartSensor(updated);
-              setSelectedSensor((current) => (current?.id === updated.id ? updated : current));
-              onSensorUpdated?.(updated);
-            }}
-            onDeviceDataCleared={onDeviceDataCleared}
-            onClose={() => setChartSensor(null)}
           />
         </Suspense>
       ) : null}

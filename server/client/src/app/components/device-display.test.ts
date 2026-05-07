@@ -9,6 +9,7 @@ import {
   DEVICE_AXIS_DIRECTION_LABELS,
   formatDeviceZoneOptionLabel,
   getLatestDeviceTelemetryPoint,
+  pickZoneAxisDisplayDeviceIds,
 } from "./device-display";
 
 test("uses zone as the default device sort", () => {
@@ -125,4 +126,40 @@ test("builds an axis-label update for one clicked FFT label", () => {
   );
 
   assert.deepEqual(buildDeviceAxisLabelUpdate({ ax: "Ngang" }, "ax", "   "), undefined);
+});
+
+test("selects one axis-readout device per zone by highest axis peak magnitude", () => {
+  const winners = pickZoneAxisDisplayDeviceIds(
+    [
+      { id: "d1", zoneCode: "ZA", zone: "Zone A" },
+      { id: "d2", zoneCode: "ZA", zone: "Zone A" },
+      { id: "d3", zoneCode: "ZB", zone: "Zone B" },
+      { id: "d4", zoneCode: "ZB", zone: "Zone B" },
+      { id: "d5", zoneCode: "", zone: "--" },
+    ],
+    {
+      d1: { receivedAt: "2026-05-05T01:00:00.000Z", ax: 1.4, ay: -0.5, az: 0.2 },
+      d2: { receivedAt: "2026-05-05T01:01:00.000Z", ax: -2.2, ay: 0.3, az: 0.4 },
+      d3: { receivedAt: "2026-05-05T01:00:00.000Z", ax: 0.2, ay: 0.2, az: 0.2 },
+      d4: { receivedAt: "2026-05-05T01:01:00.000Z", ax: 0.1, ay: 0.9, az: 0.4 },
+      d5: null,
+    },
+  );
+
+  assert.deepEqual([...winners].sort(), ["d2", "d4"]);
+});
+
+test("keeps the first device when zone axis peaks are tied", () => {
+  const winners = pickZoneAxisDisplayDeviceIds(
+    [
+      { id: "d1", zoneCode: "ZA", zone: "Zone A" },
+      { id: "d2", zoneCode: "ZA", zone: "Zone A" },
+    ],
+    {
+      d1: { receivedAt: "2026-05-05T01:00:00.000Z", ax: 1.2, ay: 0.1, az: 0.2 },
+      d2: { receivedAt: "2026-05-05T01:01:00.000Z", ax: -1.2, ay: 0.1, az: 0.2 },
+    },
+  );
+
+  assert.deepEqual([...winners], ["d1"]);
 });

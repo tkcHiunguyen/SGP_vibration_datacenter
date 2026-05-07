@@ -1,4 +1,4 @@
-import type { DeviceAxisKey, DeviceAxisLabels, DeviceTelemetryPoint } from "../data/sensors";
+import type { DeviceAxisKey, DeviceAxisLabels, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 
 export type DeviceSortKey = "status" | "zone" | "name-az" | "device-id";
 
@@ -27,6 +27,7 @@ const DEFAULT_DEVICE_AXIS_LABELS = {
 } as const;
 
 const DEVICE_AXIS_KEYS = ["ax", "ay", "az"] as const;
+const UNASSIGNED_ZONE_LABEL = "Chưa gán";
 
 type DeviceZoneOption = {
   code: string;
@@ -64,6 +65,58 @@ function formatTemperature(value?: number): string {
 
 function formatAxisValue(value?: number): string {
   return isFiniteNumber(value) ? `${value.toFixed(2)}m/s²` : "";
+}
+
+function normalizeZoneLabel(value?: string): string {
+  const trimmed = value?.trim() || "";
+  return trimmed && trimmed !== "--" ? trimmed : "";
+}
+
+function getSensorZoneLabel(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
+  return normalizeZoneLabel(sensor.zoneCode) || normalizeZoneLabel(sensor.zone) || UNASSIGNED_ZONE_LABEL;
+}
+
+function getSensorZoneKey(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
+  return getSensorZoneLabel(sensor).toLocaleLowerCase("vi-VN");
+}
+
+export function getDeviceAxisPeakMagnitude(point?: DeviceTelemetryPoint | null): number | null {
+  let peak: number | null = null;
+
+  for (const axis of DEVICE_AXIS_KEYS) {
+    const value = point?.[axis];
+    if (!isFiniteNumber(value)) {
+      continue;
+    }
+    const magnitude = Math.abs(value);
+    if (peak === null || magnitude > peak) {
+      peak = magnitude;
+    }
+  }
+
+  return peak;
+}
+
+export function pickZoneAxisDisplayDeviceIds(
+  sensors: ReadonlyArray<Pick<Sensor, "id" | "zoneCode" | "zone">>,
+  latestTelemetryByDevice: Record<string, DeviceTelemetryPoint | null | undefined>,
+): Set<string> {
+  const zoneWinners = new Map<string, { deviceId: string; peak: number }>();
+
+  sensors.forEach((sensor) => {
+    const peak = getDeviceAxisPeakMagnitude(latestTelemetryByDevice[sensor.id]);
+    if (peak === null) {
+      return;
+    }
+
+    const zoneKey = getSensorZoneKey(sensor);
+    const currentWinner = zoneWinners.get(zoneKey);
+    if (!currentWinner || peak > currentWinner.peak) {
+      zoneWinners.set(zoneKey, { deviceId: sensor.id, peak });
+    }
+  });
+
+  return new Set(Array.from(zoneWinners.values(), (winner) => winner.deviceId));
 }
 
 export function getLatestDeviceTelemetryPoint(points: DeviceTelemetryPoint[]): DeviceTelemetryPoint | null {

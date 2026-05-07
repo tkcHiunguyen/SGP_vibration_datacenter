@@ -66,9 +66,12 @@ export function MainPanel({
     }}>
       {isDashboard ? (
         <div style={{
-          flex: 1, overflowY: "auto", padding: "22px 26px 32px",
-          scrollbarWidth: "thin",
-          scrollbarColor: `${C.scrollbar} transparent`,
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          padding: "0 26px 32px",
         }}>
           <DeviceManagement
             sensors={sensors}

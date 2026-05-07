@@ -5,6 +5,7 @@ import {
   DEFAULT_ACCEL_TREND_MODE,
   DEFAULT_HISTORY_PRESET_KEY,
   FFT_AXIS_DISPLAY_ORDER,
+  toSpectrumChartData,
   VIBRATION_AXIS_LABELS,
 } from "./chart-parts";
 
@@ -18,4 +19,41 @@ test("keeps the default Axial FFT chart in its original middle position", () => 
     FFT_AXIS_DISPLAY_ORDER.map((item) => VIBRATION_AXIS_LABELS[item.deviceAxis]),
     ["Radial H", "Axial", "Radial V"],
   );
+});
+
+test("normalizes spectrum amplitudes to percentage range", () => {
+  const data = toSpectrumChartData({
+    receivedAt: "2026-05-06T10:00:00.000Z",
+    axis: "x",
+    amplitudes: [2, 4, 1],
+    binCount: 3,
+    binHz: 10,
+  });
+
+  assert.deepEqual(
+    data.map((row) => ({
+      bin: row.bin,
+      freq: row.freq,
+      amp: row.amp,
+      unit: row.unit,
+    })),
+    [
+      { bin: 1, freq: 10, amp: 50, unit: "%" },
+      { bin: 2, freq: 20, amp: 100, unit: "%" },
+      { bin: 3, freq: 30, amp: 25, unit: "%" },
+    ],
+  );
+});
+
+test("keeps normalized spectrum zero when all amplitudes are zero", () => {
+  const data = toSpectrumChartData({
+    receivedAt: "2026-05-06T10:00:00.000Z",
+    axis: "y",
+    amplitudes: [0, 0, 0],
+    binCount: 3,
+    binHz: 10,
+  });
+
+  assert.equal(data.every((row) => row.amp === 0), true);
+  assert.equal(data.every((row) => row.unit === "%"), true);
 });

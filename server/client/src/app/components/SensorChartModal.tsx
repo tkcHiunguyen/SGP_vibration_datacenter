@@ -13,9 +13,6 @@ import type { ToastItem } from "./ui";
 import { ConsoleButton, FormFieldShell, FormInput, Modal } from "./ui";
 import { buildDeviceAxisLabelUpdate, DEVICE_AXIS_DIRECTION_LABELS } from "./device-display";
 import {
-  ACCEL_LIMIT_MAX_MS2,
-  ACCEL_LIMIT_MIN_MS2,
-  ACCEL_LIMIT_MS2,
   ACCEL_RMS_MAX_WINDOW_MS,
   ACCEL_RMS_MIN_WINDOW_MS,
   ACCEL_RMS_TARGET_SAMPLES,
@@ -36,7 +33,6 @@ import {
   EMPTY_SPECTRUM_POINTS,
   GRAVITY_MS2,
   SPECTRUM_CHART_HEIGHT,
-  SPECTRUM_FIXED_Y_MAX_FALLBACK,
   SPECTRUM_HOVER_FETCH_DEBOUNCE_MS,
   SPECTRUM_HOVER_FETCH_MIN_DELTA_MS,
   SPECTRUM_LOADING_LABEL,
@@ -47,8 +43,6 @@ import {
   SpectrumZoomChart,
   TELEMETRY_HISTORY_PRESETS,
   TELEMETRY_HISTORY_BUCKET_STEPS_MS,
-  TEMP_HALF_SPAN_MAX,
-  TEMP_HALF_SPAN_MIN,
   TOP_TREND_CHART_HEIGHT,
   TREND_BUTTON_PAN_ACCELERATION_MS,
   TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND,
@@ -80,7 +74,6 @@ import {
   buildRollingRmsAccelRows,
   buildTiledTrendRows,
   clampAccelAmplitudeLimit,
-  clampTempHalfSpan,
   clampTrendViewport,
   clipGapRangesToWindow,
   downsampleSpectrumChartData,
@@ -99,7 +92,6 @@ import {
   getDefaultTrendViewWindowMs,
   getTelemetryHistoryBucketMs,
   getPrimaryWheelDelta,
-  normalizeSpectrumUnit,
   parseAmplitudeArray,
   parseDateInputValue,
   parseDeviceDataSummaryPayload,
@@ -142,6 +134,8 @@ const LazyMotorSceneCanvas = React.lazy(() =>
 const PLAYBACK_BASE_STEP_MS = 500;
 const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
 const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
+const TEMP_Y_DOMAIN_FIXED: [number, number] = [20, 120];
+const ACCEL_TREND_DEFAULT_Y_MAX = 16 * GRAVITY_MS2;
 
 type DetailTileUxPhase = "idle" | "queued" | "loading" | "ready";
 type DetailTileUxState = {
@@ -569,8 +563,7 @@ export function SensorChartModal({
 }: Props) {
   const { C } = useTheme();
   const [visible, setVisible] = useState(false);
-  const [tempHalfSpan, setTempHalfSpan] = useState(5);
-  const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_LIMIT_MS2);
+  const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_TREND_DEFAULT_Y_MAX);
   const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>(DEFAULT_ACCEL_TREND_MODE);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
@@ -1551,28 +1544,7 @@ export function SensorChartModal({
     [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData],
   );
 
-  const tempData = useMemo(
-    () =>
-      timelineTelemetryData.map((row) => ({
-        ts: row.ts,
-        temp: row.temp,
-        telemetryUuid: row.telemetryUuid,
-      })),
-    [timelineTelemetryData],
-  );
-
-  const tempDomain = useMemo<[number, number]>(() => {
-    const values = tempData
-      .map((item) => item.temp)
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    if (values.length === 0) {
-      return [15, 35];
-    }
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const center = (min + max) / 2;
-    return [Number((center - tempHalfSpan).toFixed(2)), Number((center + tempHalfSpan).toFixed(2))];
-  }, [tempData, tempHalfSpan]);
+  const tempDomain = TEMP_Y_DOMAIN_FIXED;
 
   const hoverSpectrumBusy = hoverSpectrumDebouncing || hoverSpectrumLoading;
   const hoverTelemetrySummaryLabel = useMemo(() => {
@@ -1631,70 +1603,31 @@ export function SensorChartModal({
   const fftRenderX = useMemo(() => downsampleSpectrumChartData(fftX), [fftX]);
   const fftRenderY = useMemo(() => downsampleSpectrumChartData(fftY), [fftY]);
   const fftRenderZ = useMemo(() => downsampleSpectrumChartData(fftZ), [fftZ]);
-  const [spectrumFixedYMax, setSpectrumFixedYMax] = useState(SPECTRUM_FIXED_Y_MAX_FALLBACK);
-
-  useEffect(() => {
-    setSpectrumFixedYMax(SPECTRUM_FIXED_Y_MAX_FALLBACK);
-  }, [sensor?.id]);
-
-  useEffect(() => {
-    const allAmplitudes = spectrumPoints.flatMap((point) => point.amplitudes);
-    if (allAmplitudes.length === 0) {
-      return;
-    }
-
-    const maxAmplitude = allAmplitudes.reduce((max, value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        return max;
-      }
-      return value > max ? value : max;
-    }, 0);
-    if (!Number.isFinite(maxAmplitude) || maxAmplitude <= 0) {
-      return;
-    }
-
-    const padded = maxAmplitude * 1.1;
-    const rounded = Math.ceil(padded * 10) / 10;
-    setSpectrumFixedYMax(Math.max(SPECTRUM_FIXED_Y_MAX_FALLBACK, Number(rounded.toFixed(3))));
-  }, [spectrumPoints]);
-  const spectrumUnitByAxis = useMemo<Record<SpectrumAxis, string>>(
-    () => ({
-      x: normalizeSpectrumUnit(latestSpectrumByAxis.x?.magnitudeUnit),
-      y: normalizeSpectrumUnit(latestSpectrumByAxis.y?.magnitudeUnit),
-      z: normalizeSpectrumUnit(latestSpectrumByAxis.z?.magnitudeUnit),
-    }),
-    [latestSpectrumByAxis.x, latestSpectrumByAxis.y, latestSpectrumByAxis.z],
-  );
   const spectrumPeakByAxis = useMemo<
     Record<SpectrumAxis, { frequencyHz?: number; amplitude?: number }>
   >(
-    () => ({
-      x: {
-        frequencyHz:
-          latestSpectrumByAxis.x?.peakFrequencyHz ??
-          (fftX.length > 0 ? fftX.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).freq : undefined),
-        amplitude:
-          latestSpectrumByAxis.x?.peakAmplitude ??
-          (fftX.length > 0 ? fftX.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).amp : undefined),
-      },
-      y: {
-        frequencyHz:
-          latestSpectrumByAxis.y?.peakFrequencyHz ??
-          (fftY.length > 0 ? fftY.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).freq : undefined),
-        amplitude:
-          latestSpectrumByAxis.y?.peakAmplitude ??
-          (fftY.length > 0 ? fftY.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).amp : undefined),
-      },
-      z: {
-        frequencyHz:
-          latestSpectrumByAxis.z?.peakFrequencyHz ??
-          (fftZ.length > 0 ? fftZ.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).freq : undefined),
-        amplitude:
-          latestSpectrumByAxis.z?.peakAmplitude ??
-          (fftZ.length > 0 ? fftZ.reduce((peak, item) => (item.amp > peak.amp ? item : peak)).amp : undefined),
-      },
-    }),
-    [latestSpectrumByAxis.x, latestSpectrumByAxis.y, latestSpectrumByAxis.z, fftX, fftY, fftZ],
+    () => {
+      const pickPeak = (data: typeof fftX) =>
+        data.length > 0 ? data.reduce((peak, item) => (item.amp > peak.amp ? item : peak)) : null;
+      const peakX = pickPeak(fftX);
+      const peakY = pickPeak(fftY);
+      const peakZ = pickPeak(fftZ);
+      return {
+        x: {
+          frequencyHz: peakX?.freq,
+          amplitude: peakX?.amp,
+        },
+        y: {
+          frequencyHz: peakY?.freq,
+          amplitude: peakY?.amp,
+        },
+        z: {
+          frequencyHz: peakZ?.freq,
+          amplitude: peakZ?.amp,
+        },
+      };
+    },
+    [fftX, fftY, fftZ],
   );
   const spectrumMaxHzByAxis = useMemo<Record<SpectrumAxis, number>>(
     () => ({
@@ -1811,11 +1744,6 @@ export function SensorChartModal({
       trendVisibleWindow.startMs,
     ],
   );
-
-  const handleTempYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
-    const zoomOut = deltaY > 0;
-    setTempHalfSpan((current) => clampTempHalfSpan(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
-  }, []);
 
   const handleAccelYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
     const zoomOut = deltaY > 0;
@@ -2053,30 +1981,11 @@ export function SensorChartModal({
     setPlaybackSpeedIndex((current) => Math.min(PLAYBACK_SPEED_OPTIONS.length - 1, current + 1));
   }, []);
   const accelTrendYDomain = useMemo<[number, number]>(() => {
-    if (accelTrendMode !== "rms") {
-      return [-accelAmplitudeLimit, accelAmplitudeLimit];
+    if (accelTrendMode === "rms") {
+      return [0, accelAmplitudeLimit];
     }
-
-    const values = accelVisible
-      .flatMap((row) => [row.ax, row.ay, row.az])
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-    if (values.length === 0) {
-      return [0, Math.min(accelAmplitudeLimit, 1)];
-    }
-
-    const maxValue = Math.max(...values);
-    if (!Number.isFinite(maxValue) || maxValue <= 0) {
-      return [0, Math.min(accelAmplitudeLimit, 1)];
-    }
-
-    const padded = maxValue * 1.25;
-    const rounded = padded < 1
-      ? Math.ceil(padded * 100) / 100
-      : padded < 10
-        ? Math.ceil(padded * 10) / 10
-        : Math.ceil(padded);
-    return [0, Math.min(accelAmplitudeLimit, Math.max(0.1, rounded))];
-  }, [accelAmplitudeLimit, accelTrendMode, accelVisible]);
+    return [-accelAmplitudeLimit, accelAmplitudeLimit];
+  }, [accelAmplitudeLimit, accelTrendMode]);
   const showInitialLoading = telemetryLoading && telemetryPoints.length === 0;
   const trendOverviewGapRanges = useMemo(() => {
     return buildNullGapRanges(
@@ -2291,8 +2200,7 @@ export function SensorChartModal({
     }
     resetDetailTileCache();
     setTelemetryWindowAnchorMs(Date.now());
-    setTempHalfSpan(5);
-    setAccelAmplitudeLimit(ACCEL_LIMIT_MS2);
+    setAccelAmplitudeLimit(ACCEL_TREND_DEFAULT_Y_MAX);
     setAccelTrendMode(DEFAULT_ACCEL_TREND_MODE);
     setTrendViewWindow(null);
     setTrendPanning(false);
@@ -2405,7 +2313,7 @@ export function SensorChartModal({
               textOverflow: "ellipsis",
             }}
           >
-            {hoverSpectrumBusy ? SPECTRUM_LOADING_LABEL : formatPeakSummary(peak.frequencyHz, peak.amplitude, spectrumUnitByAxis[spectrumAxis])}
+            {hoverSpectrumBusy ? SPECTRUM_LOADING_LABEL : formatPeakSummary(peak.frequencyHz, peak.amplitude, "%")}
           </div>
         </div>
         <div style={{ position: "relative" }}>
@@ -2415,7 +2323,6 @@ export function SensorChartModal({
             axisLabelColor={chartTextStyle.fill}
             gridColor={gridColor}
             maxHz={spectrumMaxHzByAxis[spectrumAxis]}
-            yMax={spectrumFixedYMax}
             C={C}
             height={modalLayout.spectrumHeight}
           />
@@ -2465,27 +2372,22 @@ export function SensorChartModal({
 
   return (
     <>
-      <div onClick={handleClose} style={{
-        position: "fixed", inset: 0, zIndex: 60,
-        background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
-        opacity: visible ? 1 : 0, transition: `opacity ${CHART_MODAL_TRANSITION_MS}ms ease`,
-      }} />
-
       <div
         data-ux="chart-modal"
         data-ux-chart-ready={showInitialLoading ? "false" : "true"}
         data-ux-telemetry-points={telemetryPoints.length}
         style={{
-        position: "fixed", top: "50%", left: "50%", zIndex: 61,
-        transform: visible ? "translate(-50%,-50%) scale(1)" : "translate(-50%,-49%) scale(0.97)",
+        position: "relative",
+        zIndex: 1,
+        transform: visible ? "translateX(0)" : "translateX(18px)",
         opacity: visible ? 1 : 0,
         transition: `transform ${CHART_MODAL_TRANSITION_MS}ms cubic-bezier(0.32,0.72,0,1), opacity ${CHART_MODAL_TRANSITION_MS}ms ease`,
-        width: modalLayout.modalWidth,
-        height: "auto",
-        maxWidth: "1500px",
-        maxHeight: modalLayout.modalMaxHeight,
+        width: "100%",
+        height: "100%",
+        maxWidth: "100%",
+        maxHeight: "100%",
         background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14,
-        boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+        boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
         display: "flex", flexDirection: "column", overflow: "hidden",
       }}
       >
@@ -3269,7 +3171,6 @@ export function SensorChartModal({
                     onHoverTarget={handleTelemetryChartHover}
                     onPinTarget={handleTelemetryChartPin}
                     onViewportZoom={handleTrendViewportZoom}
-                    onYAxisZoom={handleTempYAxisZoom}
                     onViewportPanChange={handleTrendViewportPanChange}
                     onViewportPanStateChange={handleTrendPanStateChange}
                     onLeave={handleTelemetryChartLeave}
@@ -3361,7 +3262,7 @@ export function SensorChartModal({
                     onHoverTarget={handleTelemetryChartHover}
                     onPinTarget={handleTelemetryChartPin}
                     onViewportZoom={handleTrendViewportZoom}
-                    onYAxisZoom={accelTrendMode === "instant" ? handleAccelYAxisZoom : undefined}
+                    onYAxisZoom={handleAccelYAxisZoom}
                     onViewportPanChange={handleTrendViewportPanChange}
                     onViewportPanStateChange={handleTrendPanStateChange}
                     onLeave={handleTelemetryChartLeave}
