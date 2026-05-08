@@ -2022,28 +2022,7 @@ export function SensorChartModal({
     trendVisibleWindow.startMs,
   ]);
 
-  const detailModeLabel = trendDetailMode === "raw"
-    ? "Raw tile"
-    : trendDetailMode === "bucket-10s"
-      ? "Bucket 10s"
-      : "";
-  const detailTileStatusLabel = detailTileUx.phase === "queued"
-    ? `Chuẩn bị tải ${detailTileUx.pendingTiles} tile`
-    : detailTileUx.phase === "loading"
-      ? `Đang tải ${detailTileUx.pendingTiles} tile`
-      : detailLayerActive
-        ? `Chi tiết vùng đang xem · ${detailModeLabel}`
-        : trendDetailMode && detailTileUx.phase === "ready"
-          ? `Tile đã cache · ${detailModeLabel}`
-          : trendDetailMode
-            ? `Chế độ tile · ${detailModeLabel}`
-            : "";
   const telemetryStepLabel = `${formatTelemetryStepMs(displayTelemetryStepMs)}/điểm`;
-  const detailTileStatusTone = detailTileUx.phase === "queued" || detailTileUx.phase === "loading"
-    ? "loading"
-    : detailLayerActive
-      ? "ready"
-      : "idle";
 
   useEffect(() => {
     const targetSensorId = sensor?.id;
@@ -2296,6 +2275,7 @@ export function SensorChartModal({
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
           padding: modalLayout.fftCardPadding,
+          minWidth: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
@@ -2395,22 +2375,22 @@ export function SensorChartModal({
         <div style={{
           background: C.card, borderBottom: `1px solid ${C.border}`,
           padding: modalLayout.headerPadding,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          display: "grid",
+          gridTemplateColumns: modalLayout.viewportWidth < 1180 ? "1fr" : "minmax(0, 1fr) auto",
+          alignItems: "start",
           gap: 12,
-          flexWrap: "wrap",
           flexShrink: 0,
+          overflow: "visible",
+          position: "relative",
+          zIndex: 30,
         }}>
-	          <div style={{ minWidth: 0 }}>
-	            <div style={{ color: C.textMuted, fontSize: "0.58rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, marginBottom: 3 }}>
-	              Phân tích dữ liệu cảm biến
-	            </div>
-	            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-	              <div style={{ color: C.textBright, fontSize: "0.93rem", fontWeight: 700 }}>
-	                {sensor.name} <span style={{ color: C.textMuted, fontWeight: 400, fontSize: "0.75rem" }}>({sensor.id})</span>
+
+	          <div style={{ minWidth: 0, display: "grid", gap: 4 }}>
+	            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, minWidth: 0 }}>
+	              <div style={{ color: C.textMuted, fontSize: "0.58rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+	                Phân tích dữ liệu cảm biến
 	              </div>
-              <div style={{ position: "relative", display: "inline-flex" }}>
+	              <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
                 <button
                   type="button"
                   aria-label="Tùy chọn"
@@ -2457,9 +2437,9 @@ export function SensorChartModal({
                 <div
                   style={{
                     position: "absolute",
-                    left: "50%",
-                    bottom: "calc(100% + 9px)",
-                    transform: settingsTooltipVisible ? "translate(-50%, 0)" : "translate(-50%, 3px)",
+                    left: 0,
+                    top: "calc(100% + 9px)",
+                    transform: settingsTooltipVisible ? "translate(0, 0)" : "translate(0, -3px)",
                     opacity: settingsTooltipVisible && !clearingDeviceData ? 1 : 0,
                     pointerEvents: "none",
                     padding: "2px 7px",
@@ -2480,9 +2460,36 @@ export function SensorChartModal({
                 </div>
               </div>
             </div>
-          </div>
+	            <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+	              <span
+	                title={sensor.name}
+	                style={{
+	                  color: C.textBright,
+	                  fontSize: "0.93rem",
+	                  fontWeight: 700,
+	                  minWidth: 0,
+	                  overflow: "hidden",
+	                  textOverflow: "ellipsis",
+	                  whiteSpace: "nowrap",
+	                  flex: "1 1 auto",
+	                }}
+	              >
+	                {sensor.name}
+	              </span>
+	            </div>
+	          </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              rowGap: 8,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+              minWidth: 0,
+            }}
+          >
             <div ref={calendarPopoverRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -3127,6 +3134,7 @@ export function SensorChartModal({
               gridTemplateColumns: modalLayout.topGridColumns,
               gap: modalLayout.topGridGap,
               marginBottom: modalLayout.sectionGap,
+              alignItems: "stretch",
             }}
           >
             <ChartSection
@@ -3274,12 +3282,22 @@ export function SensorChartModal({
 
           {!showInitialLoading ? (
             <div style={{ marginBottom: modalLayout.sectionGap }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: modalLayout.chartTitleGap, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: modalLayout.chartTitleGap,
+                  flexWrap: "nowrap",
+                  minWidth: 0,
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  scrollbarWidth: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
                 <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Toàn cảnh dữ liệu đã tải</span>
-                <span style={{ color: C.textMuted, fontSize: "0.66rem" }}>
-                  {`${activePresetLabel} · kéo hoặc resize để đổi vùng đang xem`}
-                </span>
                 <label
                   title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
                   style={{
@@ -3297,6 +3315,8 @@ export function SensorChartModal({
                     fontWeight: 800,
                     letterSpacing: "0.01em",
                     whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    maxWidth: 180,
                   }}
                 >
                   <span>Độ phân giải</span>
@@ -3315,6 +3335,9 @@ export function SensorChartModal({
                       fontSize: "0.61rem",
                       fontWeight: 900,
                       cursor: "pointer",
+                      maxWidth: 112,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     <option value="auto">Tự động ({formatTelemetryStepMs(activeTelemetryGapStepMs)}/điểm)</option>
@@ -3329,49 +3352,6 @@ export function SensorChartModal({
                     ))}
                   </select>
                 </label>
-                {detailTileStatusLabel ? (
-                  <span
-                    title="Giống bản đồ: tổng quan dùng lớp overview, zoom nhỏ dùng tile chi tiết và cache lân cận"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      minHeight: 22,
-                      padding: "0 8px",
-                      borderRadius: 999,
-                      border: `1px solid ${detailTileStatusTone === "ready" ? C.success + "66" : detailTileStatusTone === "loading" ? C.primary + "77" : C.border}`,
-                      background: detailTileStatusTone === "ready"
-                        ? C.success + "16"
-                        : detailTileStatusTone === "loading"
-                          ? C.primaryBg
-                          : C.surface,
-                      color: detailTileStatusTone === "ready"
-                        ? C.success
-                        : detailTileStatusTone === "loading"
-                          ? C.primary
-                          : C.textMuted,
-                      fontSize: "0.61rem",
-                      fontWeight: 800,
-                      letterSpacing: "0.01em",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        background: detailTileStatusTone === "ready"
-                          ? C.success
-                          : detailTileStatusTone === "loading"
-                            ? C.primary
-                            : C.textMuted,
-                        animation: detailTileStatusTone === "loading" ? "detailTilePulse 1s ease-in-out infinite" : undefined,
-                      }}
-                    />
-                    {detailTileStatusLabel}
-                  </span>
-                ) : null}
               </div>
               <div
                 style={{

@@ -9,9 +9,9 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, SpectrumAxis } from "../../data/sensors";
 
 export const GRAVITY_MS2 = 9.80665;
-export const ACCEL_LIMIT_MS2 = 8 * GRAVITY_MS2;
+export const ACCEL_LIMIT_MS2 = 160;
 export const ACCEL_LIMIT_MIN_MS2 = 0.1 * GRAVITY_MS2;
-export const ACCEL_LIMIT_MAX_MS2 = 16 * GRAVITY_MS2;
+export const ACCEL_LIMIT_MAX_MS2 = 160;
 export const TEMP_HALF_SPAN_MIN = 0.25;
 export const TEMP_HALF_SPAN_MAX = 80;
 export const TREND_MIN_RENDER_POINTS = 240;
@@ -95,37 +95,43 @@ export function getChartModalLayout(): ChartModalLayout {
   const tightHeight = viewportHeight < 720;
   const narrowWidth = viewportWidth < 1500;
   const compactWidth = viewportWidth < 1280;
+  const baseChartHeight = tightHeight
+    ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+    : compactHeight
+      ? 132 + CHART_MODAL_EXPANDED_CHART_PX
+      : midHeight
+        ? 154 + CHART_MODAL_EXPANDED_CHART_PX
+        : scaledDesktopHeight
+          ? 172 + CHART_MODAL_EXPANDED_CHART_PX
+          : TOP_TREND_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX;
+  const baseOverviewHeight = tightHeight
+    ? 48
+    : compactHeight
+      ? 56
+      : midHeight
+        ? 66
+        : scaledDesktopHeight
+          ? 78
+          : TREND_OVERVIEW_HEIGHT;
+  const baseSpectrumHeight = tightHeight
+    ? 78 + CHART_MODAL_EXPANDED_CHART_PX
+    : compactHeight
+      ? 96 + CHART_MODAL_EXPANDED_CHART_PX
+      : midHeight
+        ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+        : scaledDesktopHeight
+          ? 124 + CHART_MODAL_EXPANDED_CHART_PX
+          : SPECTRUM_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX;
+  const verticalFill = viewportWidth >= 900
+    ? Math.max(0, Math.min(180, Math.round((viewportHeight - 760) * 0.5)))
+    : 0;
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: tightHeight
-      ? 112 + CHART_MODAL_EXPANDED_CHART_PX
-      : compactHeight
-        ? 132 + CHART_MODAL_EXPANDED_CHART_PX
-        : midHeight
-          ? 154 + CHART_MODAL_EXPANDED_CHART_PX
-          : scaledDesktopHeight
-            ? 172 + CHART_MODAL_EXPANDED_CHART_PX
-            : TOP_TREND_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX,
-    overviewHeight: tightHeight
-      ? 48
-      : compactHeight
-        ? 56
-        : midHeight
-          ? 66
-          : scaledDesktopHeight
-            ? 78
-            : TREND_OVERVIEW_HEIGHT,
-    spectrumHeight: tightHeight
-      ? 78 + CHART_MODAL_EXPANDED_CHART_PX
-      : compactHeight
-        ? 96 + CHART_MODAL_EXPANDED_CHART_PX
-        : midHeight
-          ? 112 + CHART_MODAL_EXPANDED_CHART_PX
-          : scaledDesktopHeight
-            ? 124 + CHART_MODAL_EXPANDED_CHART_PX
-            : SPECTRUM_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX,
+    chartHeight: baseChartHeight + Math.round(verticalFill * 0.55),
+    overviewHeight: baseOverviewHeight + Math.round(verticalFill * 0.1),
+    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 0.35),
     topGridGap: tightHeight ? 8 : compactHeight ? 9 : 10,
     sectionGap: tightHeight ? 7 : compactHeight ? 8 : scaledDesktopHeight ? 9 : 12,
     chartTitleGap: tightHeight ? 4 : scaledDesktopHeight ? 5 : 8,
@@ -2920,18 +2926,47 @@ export function ChartSection({
   cardPadding?: string;
 }) {
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: titleGap, flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: titleGap,
+          flexWrap: "nowrap",
+          minHeight: 28,
+        }}
+      >
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 0" }}>
           <span style={{ color: C.primary, display: "inline-flex", flexShrink: 0 }}>{icon}</span>
-          <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700, minWidth: 0 }}>{title}</span>
+          <span
+            title={title}
+            style={{
+              color: C.textBright,
+              fontSize: "0.8rem",
+              fontWeight: 700,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </span>
         </div>
-        {headerAction ? <div style={{ flexShrink: 0 }}>{headerAction}</div> : null}
+        {headerAction ? <div style={{ flexShrink: 0, minWidth: 0 }}>{headerAction}</div> : null}
       </div>
-      <div style={{
-        background: C.card, border: `1px solid ${C.cardBorder}`, borderRadius: 10,
-        padding: cardPadding,
-      }}>
+      <div
+        style={{
+          background: C.card,
+          border: `1px solid ${C.cardBorder}`,
+          borderRadius: 10,
+          padding: cardPadding,
+          flex: "1 1 auto",
+          minHeight: 0,
+        }}
+      >
         {children}
       </div>
     </div>

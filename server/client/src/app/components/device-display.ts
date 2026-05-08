@@ -152,7 +152,26 @@ export function buildDeviceTelemetryCardReadout(
   axisLabels?: DeviceAxisLabels,
 ): DeviceTelemetryCardReadout {
   const [temperature, ...axes] = buildDeviceTelemetrySummary(point, axisLabels);
-  return { temperature, axes };
+
+  const strongestAxis = axes.reduce<DeviceTelemetrySummaryItem[]>((winner, axis) => {
+    const numericValue = Number.parseFloat(axis.value);
+    if (!Number.isFinite(numericValue)) {
+      return winner;
+    }
+
+    if (winner.length === 0) {
+      return [axis];
+    }
+
+    const winnerValue = Number.parseFloat(winner[0].value);
+    if (!Number.isFinite(winnerValue) || Math.abs(numericValue) > Math.abs(winnerValue)) {
+      return [axis];
+    }
+
+    return winner;
+  }, []);
+
+  return { temperature, axes: strongestAxis };
 }
 
 export function buildDeviceAxisLabelUpdate(

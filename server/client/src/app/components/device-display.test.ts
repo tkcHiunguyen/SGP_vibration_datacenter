@@ -60,7 +60,7 @@ test("builds compact telemetry stats for device cards", () => {
   );
 });
 
-test("groups device-card telemetry into temperature and axis readouts", () => {
+test("groups device-card telemetry into temperature and strongest-axis readouts", () => {
   assert.deepEqual(
     buildDeviceTelemetryCardReadout(
       {
@@ -74,11 +74,7 @@ test("groups device-card telemetry into temperature and axis readouts", () => {
     ),
     {
       temperature: { label: "T", value: "27.4°C" },
-      axes: [
-        { label: "Radial H", value: "0.12m/s²" },
-        { label: "Axial", value: "-0.06m/s²" },
-        { label: "Radial V", value: "1.01m/s²" },
-      ],
+      axes: [{ label: "Radial V", value: "1.01m/s²" }],
     },
   );
 });
