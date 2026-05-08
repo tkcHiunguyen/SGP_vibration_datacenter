@@ -136,6 +136,7 @@ const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
 const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
 const TEMP_Y_DOMAIN_FIXED: [number, number] = [20, 120];
 const ACCEL_TREND_DEFAULT_Y_MAX = 16 * GRAVITY_MS2;
+const STORAGE_CHART_HISTORY_PRESET_KEY = "sgp_ui_chart_history_preset";
 
 type DetailTileUxPhase = "idle" | "queued" | "loading" | "ready";
 type DetailTileUxState = {
@@ -530,6 +531,33 @@ function formatTelemetryStepMs(stepMs: number): string {
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(hours < 10 ? 1 : 0)} giờ`;
 }
 
+function readStoredHistoryPreset(): HistoryPresetKey {
+  if (typeof window === "undefined") {
+    return DEFAULT_HISTORY_PRESET_KEY;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(STORAGE_CHART_HISTORY_PRESET_KEY);
+    return TELEMETRY_HISTORY_PRESETS.some((preset) => preset.key === stored)
+      ? (stored as HistoryPresetKey)
+      : DEFAULT_HISTORY_PRESET_KEY;
+  } catch {
+    return DEFAULT_HISTORY_PRESET_KEY;
+  }
+}
+
+function writeStoredHistoryPreset(preset: HistoryPresetKey): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_CHART_HISTORY_PRESET_KEY, preset);
+  } catch {
+    // Ignore storage failures (private mode/quota); chart still works in-memory.
+  }
+}
+
 interface Props {
   sensor: Sensor | null;
   telemetryPoints?: DeviceTelemetryPoint[];
@@ -567,7 +595,7 @@ export function SensorChartModal({
   const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>(DEFAULT_ACCEL_TREND_MODE);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
-  const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(DEFAULT_HISTORY_PRESET_KEY);
+  const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(() => readStoredHistoryPreset());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState("");
   const [calendarPopoverOpen, setCalendarPopoverOpen] = useState(false);
   const [calendarHoverDate, setCalendarHoverDate] = useState<string | null>(null);
@@ -1375,6 +1403,7 @@ export function SensorChartModal({
       setHistoryPresetLoading(preset);
       try {
         await onRequestTelemetryHistory(sensor.id, options);
+        writeStoredHistoryPreset(preset);
         setActiveHistoryPreset(preset);
         setSelectedCalendarDate("");
         setCalendarPopoverOpen(false);
@@ -2179,11 +2208,12 @@ export function SensorChartModal({
     }
     resetDetailTileCache();
     setTelemetryWindowAnchorMs(Date.now());
+    const storedHistoryPreset = readStoredHistoryPreset();
     setAccelAmplitudeLimit(ACCEL_TREND_DEFAULT_Y_MAX);
     setAccelTrendMode(DEFAULT_ACCEL_TREND_MODE);
     setTrendViewWindow(null);
     setTrendPanning(false);
-    setActiveHistoryPreset(DEFAULT_HISTORY_PRESET_KEY);
+    setActiveHistoryPreset(storedHistoryPreset);
     setSelectedCalendarDate("");
     setCalendarPopoverOpen(false);
     setCalendarHoverDate(null);
@@ -2206,7 +2236,7 @@ export function SensorChartModal({
       return;
     }
     autoPresetLoadedSensorIdRef.current = sensor.id;
-    void handleHistoryPresetSelect(DEFAULT_HISTORY_PRESET_KEY);
+    void handleHistoryPresetSelect(readStoredHistoryPreset());
   }, [handleHistoryPresetSelect, onRequestTelemetryHistory, sensor]);
 
   if (!sensor) return null;
