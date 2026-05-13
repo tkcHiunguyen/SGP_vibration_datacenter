@@ -409,7 +409,8 @@ export function registerRoutes({
     return `${protocol}://${trimmed}`.replace(/\/+$/, '');
   }
 
-  function resolveLocalLanIp(): string | undefined {
+  function listLocalLanIps(): string[] {
+    const ips: string[] = [];
     const nets = networkInterfaces();
     for (const interfaces of Object.values(nets)) {
       if (!interfaces || interfaces.length === 0) {
@@ -417,11 +418,61 @@ export function registerRoutes({
       }
       for (const entry of interfaces) {
         if (entry.family === 'IPv4' && !entry.internal) {
-          return entry.address;
+          ips.push(entry.address);
         }
       }
     }
-    return undefined;
+    return ips;
+  }
+
+  function resolveLocalLanIp(): string | undefined {
+    return listLocalLanIps()[0];
+  }
+
+  function sameIpv4Slash24(a: string, b: string): boolean {
+    const left = a.replace(/^::ffff:/, '').split('.');
+    const right = b.replace(/^::ffff:/, '').split('.');
+    return left.length === 4 && right.length === 4 && left[0] === right[0] && left[1] === right[1] && left[2] === right[2];
+  }
+
+  function resolveDeviceReachableBaseUrl(deviceIp: string, sourceUrl: string): string | undefined {
+    const normalizedDeviceIp = deviceIp.replace(/^::ffff:/, '').trim();
+    if (!normalizedDeviceIp || isIP(normalizedDeviceIp) !== 4) {
+      return undefined;
+    }
+    const localIp = listLocalLanIps().find((ip) => sameIpv4Slash24(ip, normalizedDeviceIp));
+    if (!localIp) {
+      return undefined;
+    }
+    try {
+      const parsed = new URL(sourceUrl);
+      const port = parsed.port || String(env.PORT);
+      return `${parsed.protocol}//${localIp}${port ? `:${port}` : ''}`.replace(/\/+$/, '');
+    } catch {
+      return `http://${localIp}:${env.PORT}`;
+    }
+  }
+
+  function resolveDeviceOtaUrl(deviceId: string, otaUrl: string): string {
+    const session = deviceService.get(deviceId);
+    const deviceIp = session?.clientIp?.replace(/^::ffff:/, '').trim();
+    if (!deviceIp) {
+      return otaUrl;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(otaUrl);
+    } catch {
+      return otaUrl;
+    }
+    if (!parsed.pathname.startsWith('/ota-bins/')) {
+      return otaUrl;
+    }
+    const deviceBaseUrl = resolveDeviceReachableBaseUrl(deviceIp, otaUrl);
+    if (!deviceBaseUrl) {
+      return otaUrl;
+    }
+    return `${deviceBaseUrl}${parsed.pathname}${parsed.search}`;
   }
 
   function isLoopbackHostname(hostname: string): boolean {
@@ -1333,8 +1384,9 @@ export function registerRoutes({
     }> = [];
 
     for (const deviceId of deviceIds) {
+      const deviceOtaUrl = resolveDeviceOtaUrl(deviceId, body.otaUrl);
       const basePayload: Record<string, unknown> = {
-        otaUrl: body.otaUrl,
+        otaUrl: deviceOtaUrl,
         command: body.commandType,
         type: body.commandType,
       };
@@ -1658,12 +1710,15 @@ export function registerRoutes({
     const body = bodySchema.parse(request.body);
     const actor = principalActor(principal);
     const payload = body.payload || {};
-    const payloadValidation = validateCommandPayload(body.type, payload);
+    const payloadForDevice = isOtaCommandType(body.type)
+      ? { ...payload, otaUrl: resolveDeviceOtaUrl(deviceId, extractCommandOtaUrl(payload) ?? '') }
+      : payload;
+    const payloadValidation = validateCommandPayload(body.type, payloadForDevice);
     if (!payloadValidation.ok) {
       return reply.code(422).send({ ok: false, error: payloadValidation.error, field: payloadValidation.field });
     }
 
-    const normalizedPayload = normalizeCommandPayloadForDevice(body.type, deviceId, payload);
+    const normalizedPayload = normalizeCommandPayloadForDevice(body.type, deviceId, payloadForDevice);
     const command = await commandService.create(deviceId, body.type, normalizedPayload);
     if (!command) {
       auditService.record({

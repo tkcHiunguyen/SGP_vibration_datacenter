@@ -114,7 +114,6 @@ function DeviceCard({
   const [hovered, setHovered] = useState(false);
   const [infoHovered, setInfoHovered] = useState(false);
   const [webHovered, setWebHovered] = useState(false);
-  const [cardTooltipPosition, setCardTooltipPosition] = useState({ x: 8, y: 8 });
   const isOnline   = sensor.online;
   const isAbnormal = sensor.status === "abnormal";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
@@ -137,7 +136,7 @@ function DeviceCard({
         borderRadius: 10, overflow: "hidden",
         transition: "border-color 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.2s",
         boxShadow: hovered && !exiting ? `0 4px 14px ${accentColor}16` : "none",
-        transform: hovered && !exiting ? "translateY(-1px)" : "translateY(0)",
+        transform: hovered && !exiting ? "translateY(-2px)" : "translateY(0)",
         cursor: "pointer",
         animation: cardAnimation,
         animationDelay: exiting ? "0s" : `${Math.min(idx * 0.04, 0.4)}s`,
@@ -152,24 +151,6 @@ function DeviceCard({
         }
       }}
       onMouseLeave={() => setHovered(false)}
-      onMouseMove={(event) => {
-        if (exiting) {
-          return;
-        }
-        const cardRect = event.currentTarget.getBoundingClientRect();
-        const tooltipWidth = 104;
-        const tooltipHeight = 24;
-        const offsetX = 12;
-        const offsetY = 14;
-        const localX = event.clientX - cardRect.left + offsetX;
-        const localY = event.clientY - cardRect.top + offsetY;
-        const nextX = Math.max(8, Math.min(localX, cardRect.width - tooltipWidth - 8));
-        const nextY = Math.max(8, Math.min(localY, cardRect.height - tooltipHeight - 8));
-        setCardTooltipPosition({
-          x: nextX,
-          y: nextY,
-        });
-      }}
       onClick={() => {
         if (!exiting) {
           onChart(sensor);
@@ -226,8 +207,8 @@ function DeviceCard({
                 padding: 0,
                 lineHeight: 0,
                 borderRadius: 5,
-                background: hovered ? C.surface : "transparent",
-                border: `1px solid ${hovered ? C.border : "transparent"}`,
+                background: infoHovered ? C.surface : "transparent",
+                border: `1px solid ${infoHovered ? C.border : "transparent"}`,
                 cursor: "pointer",
                 transition: "all 0.12s",
                 display: "inline-flex",
@@ -236,7 +217,7 @@ function DeviceCard({
                 flexShrink: 0,
               }}
             >
-              <Info size={11} color={hovered ? C.primary : C.textMuted} strokeWidth={2} />
+              <Info size={11} color={infoHovered ? C.primary : C.textMuted} strokeWidth={2} />
             </button>
             <div
               style={{
@@ -277,14 +258,14 @@ function DeviceCard({
                 onMouseLeave={() => setWebHovered(false)}
                 disabled={!hasWebTarget}
                 style={{
-                  width: 18,
-                  height: 18,
+                  width: 20,
+                  height: 20,
                   padding: 0,
                   lineHeight: 0,
                   borderRadius: 5,
-                  border: `1px solid ${hasWebTarget && hovered ? C.border : "transparent"}`,
-                  background: hasWebTarget && hovered ? C.surface : "transparent",
-                  color: hasWebTarget ? C.primary : C.textDim,
+                  border: `1px solid ${hasWebTarget && webHovered ? C.border : "transparent"}`,
+                  background: hasWebTarget && webHovered ? C.surface : "transparent",
+                  color: hasWebTarget && webHovered ? C.primary : hasWebTarget ? C.textMuted : C.textDim,
                   cursor: hasWebTarget ? "pointer" : "not-allowed",
                   transition: "all 0.12s",
                   display: "inline-flex",
@@ -293,7 +274,7 @@ function DeviceCard({
                   flexShrink: 0,
                 }}
               >
-                <Globe size={9} strokeWidth={2} />
+                <Globe size={11} strokeWidth={2} />
               </button>
               <div
                 style={{
@@ -414,29 +395,6 @@ function DeviceCard({
         </div>
       </div>
 
-      <div
-        style={{
-          position: "absolute",
-          left: cardTooltipPosition.x,
-          top: cardTooltipPosition.y,
-          pointerEvents: "none",
-          opacity: hovered && !exiting ? 1 : 0,
-          transform: hovered ? "translateY(0)" : "translateY(2px)",
-          transition: "opacity 0.14s ease, transform 0.14s ease",
-          background: C.surface,
-          border: `1px solid ${C.border}`,
-          color: C.textBase,
-          fontSize: "0.62rem",
-          fontWeight: 600,
-          padding: "2px 7px",
-          borderRadius: 6,
-          whiteSpace: "nowrap",
-          zIndex: 20,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-        }}
-      >
-        Xem lịch sử
-      </div>
     </div>
   );
 }
