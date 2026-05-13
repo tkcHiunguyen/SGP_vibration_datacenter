@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "export:motor-base": "node scripts/export-motor-base-glb.mjs",
-    "export:machine-train": "node scripts/export-motor-pump-train-glb.mjs"
+    "export:machine-train": "node scripts/export-motor-pump-train-glb.mjs",
+    "export:vibration-sensor": "node scripts/export-vibration-sensor-glb.mjs"
   },
   "dependencies": {
     "@visx/axis": "^3.12.0",

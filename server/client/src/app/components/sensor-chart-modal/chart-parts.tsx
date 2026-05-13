@@ -36,7 +36,8 @@ export const DEFAULT_SPECTRUM_SOURCE_SAMPLES = 1024;
 export const SPECTRUM_RENDER_BARS = 512;
 export const SPECTRUM_HOVER_FETCH_DEBOUNCE_MS = 500;
 export const SPECTRUM_HOVER_FETCH_MIN_DELTA_MS = 500;
-export const SPECTRUM_FIXED_Y_MAX_FALLBACK = 1;
+export const SPECTRUM_RMS_Y_MAX_MS2 = 160;
+export const SPECTRUM_RMS_Y_MIN_MS2 = 0.6;
 export const SPECTRUM_LOADING_LABEL = "Đang tải dữ liệu";
 export const SPECTRUM_NO_DATA_LABEL = "Không có dữ liệu";
 export const EMPTY_SPECTRUM_POINTS: DeviceSpectrumPoint[] = [];
@@ -492,7 +493,7 @@ export function formatPeakSummary(frequencyHz?: number, amplitude?: number, unit
   ) {
     return SPECTRUM_NO_DATA_LABEL;
   }
-  return `Peak: ${frequencyHz.toFixed(1)} Hz / ${amplitude.toFixed(3)} ${unit}`;
+  return `Energy: ${frequencyHz.toFixed(1)} Hz / ${amplitude.toFixed(3)} ${unit}`;
 }
 
 export function formatOptionalValue(value: number | undefined, precision: number, suffix = ""): string {
@@ -746,20 +747,15 @@ export function toSpectrumChartData(point: DeviceSpectrumPoint | null): Spectrum
   const resolvedBinHz = binHz ?? DEFAULT_SPECTRUM_SAMPLE_RATE_HZ / DEFAULT_SPECTRUM_SOURCE_SAMPLES;
   const finiteAmplitudes = point.amplitudes
     .slice(0, resolvedBinCount)
-    .map((value) => (typeof value === "number" && Number.isFinite(value) ? value : 0));
-  const maxAmplitude = finiteAmplitudes.reduce(
-    (currentMax, value) => (value > currentMax ? value : currentMax),
-    0,
-  );
+    .map((value) => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0));
   return Array.from({ length: resolvedBinCount }, (_, index) => {
-    const raw = finiteAmplitudes[index] ?? 0;
-    const amp = maxAmplitude > 0 ? Number(((raw / maxAmplitude) * 100).toFixed(3)) : 0;
+    const rmsMps2 = finiteAmplitudes[index] ?? 0;
     const bin = index + 1;
     return {
       bin,
       freq: Number((resolvedBinHz * bin).toFixed(3)),
-      amp,
-      unit: "%",
+      amp: Number(rmsMps2.toFixed(6)),
+      unit: point.magnitudeUnit || "m/s²",
     };
   });
 }
@@ -2483,6 +2479,8 @@ export function SpectrumZoomChart({
   maxHz,
   C,
   height = SPECTRUM_CHART_HEIGHT,
+  yMax = SPECTRUM_RMS_Y_MAX_MS2,
+  onYAxisZoom,
 }: {
   data: SpectrumChartDataPoint[];
   color: string;
@@ -2496,6 +2494,8 @@ export function SpectrumZoomChart({
     textMuted: string;
   };
   height?: number;
+  yMax?: number;
+  onYAxisZoom?: (deltaY: number) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   useNonPassiveWheelBlock(wrapperRef);
@@ -2504,9 +2504,9 @@ export function SpectrumZoomChart({
 
   const margin = useMemo(
     () => ({
-      left: 34,
+      left: 42,
       right: 8,
-      top: 24,
+      top: 18,
       bottom: 24,
     }),
     [],
@@ -2543,7 +2543,7 @@ export function SpectrumZoomChart({
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
-  const safeYMax = 100;
+  const safeYMax = Math.max(SPECTRUM_RMS_Y_MIN_MS2, Number.isFinite(yMax) ? yMax : SPECTRUM_RMS_Y_MAX_MS2);
   const barCount = Math.max(1, data.length);
   const barSlotWidth = innerWidth / barCount;
   const barWidth = Math.max(1, barSlotWidth - 1);
@@ -2588,7 +2588,7 @@ export function SpectrumZoomChart({
       return null;
     }
 
-    const titleText = "Peak";
+    const titleText = "Energy";
     const freqText = `${peakPoint.freq.toFixed(1)} Hz`;
     const ampText = `${peakPoint.amp.toFixed(3)} ${peakPoint.unit}`;
 
@@ -2713,7 +2713,10 @@ export function SpectrumZoomChart({
   return (
     <div
       ref={wrapperRef}
-      onWheel={stopWheelScroll}
+      onWheel={(event) => {
+        stopWheelScroll(event);
+        onYAxisZoom?.(event.deltaY);
+      }}
       style={{
         width: "100%",
         height,
@@ -2743,7 +2746,6 @@ export function SpectrumZoomChart({
               const barX = margin.left + index * barSlotWidth + (barSlotWidth - barWidth) / 2;
               const topY = yScale(Math.max(0, Math.min(safeYMax, point.amp)));
               const height = Math.max(1, margin.top + innerHeight - topY);
-              const isPeak = index === peakIndex;
               return (
                 <rect
                   key={`fft-bar-${point.bin}-${index}`}
@@ -2752,7 +2754,7 @@ export function SpectrumZoomChart({
                   width={barWidth}
                   height={height}
                   rx={Math.min(2, barWidth / 2)}
-                  fill={isPeak ? "#f59e0b" : color}
+                  fill={color}
                 />
               );
             })}
@@ -2830,8 +2832,8 @@ export function SpectrumZoomChart({
           <AxisLeft
             scale={yScale}
             left={margin.left}
-            tickValues={[0, 25, 50, 75, 100]}
-            tickFormat={(value) => `${Number(value)}%`}
+            tickValues={yScale.ticks(5)}
+            tickFormat={(value) => `${Number(value)}`}
             tickLabelProps={() => ({
               fill: axisLabelColor,
               fontSize: 9,
@@ -2899,7 +2901,7 @@ export function SpectrumZoomChart({
           <div style={{ fontWeight: 700, marginBottom: 2 }}>Bin {hoverPoint.bin}</div>
           <div style={{ color: C.textMuted, marginBottom: 3 }}>f = {formatFrequencyHz(hoverPoint.freq)}</div>
           <div style={{ color, fontWeight: 700 }}>
-            Biên độ: {hoverPoint.amp.toFixed(2)}{hoverPoint.unit}
+            RMS: {hoverPoint.amp.toFixed(3)} {hoverPoint.unit}
           </div>
         </div>
       ) : null}

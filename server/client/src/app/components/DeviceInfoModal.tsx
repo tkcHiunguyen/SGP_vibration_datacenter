@@ -545,6 +545,7 @@ export function DeviceInfoModal({
       items: [
         { icon: <Hash size={14} />, label: "Mã thiết bị", value: sensor.id },
         { icon: <Server size={14} />, label: "UUID", value: sensor.uuid },
+        { icon: <Wifi size={14} />, label: "IP thiết bị", value: sensor.ipAddress || "N/A" },
         { icon: <MapPin size={14} />, label: "Site", value: sensor.site },
         { icon: <MapPin size={14} />, label: "Zone", value: sensor.zone },
       ],

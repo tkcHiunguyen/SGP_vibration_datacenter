@@ -25,7 +25,7 @@ const envSchema = z.object({
   HOSTS: z.string().optional(),
   OTA_PUBLIC_BASE_URL: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(1200),
   RATE_LIMIT_TIME_WINDOW: z.string().default('1 minute'),
   DATABASE_URL: z.string().optional(),
   MYSQL_URL: z.string().optional(),

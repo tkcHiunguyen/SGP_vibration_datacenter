@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -72,6 +73,51 @@ export function registerRoutes({
     axisLabels: deviceAxisLabelsSchema,
     notes: z.string().optional(),
   });
+
+  const placementConfigSchema = z.object({}).passthrough();
+
+  function isAllowedDeviceProxyIp(ip: string): boolean {
+    const normalized = ip.replace(/^::ffff:/, '').trim();
+    if (isIP(normalized) === 0) {
+      return false;
+    }
+    if (normalized === '127.0.0.1' || normalized === '::1' || normalized === '0.0.0.0') {
+      return false;
+    }
+    if (/^(10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.|169\.254\.)/.test(normalized)) {
+      return true;
+    }
+    if (/^(fc|fd|fe80:)/i.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  function rewriteDeviceProxyHtml(html: string, proxyBasePath: string): string {
+    const injectedBase = `<base href="${proxyBasePath}/">`;
+    const withBase = /<head[^>]*>/i.test(html)
+      ? html.replace(/<head([^>]*)>/i, `<head$1>${injectedBase}`)
+      : `${injectedBase}${html}`;
+    return withBase.split('"/api/').join(`"${proxyBasePath}/api/`).split("'/api/").join(`'${proxyBasePath}/api/`);
+  }
+
+  function placementAxisLabelsFromConfig(config: Record<string, unknown>): { ax?: string; ay?: string; az?: string } | undefined {
+    const rawLabels = config.chartAxisLabels;
+    if (!rawLabels || typeof rawLabels !== 'object' || Array.isArray(rawLabels)) {
+      return undefined;
+    }
+
+    const labels = rawLabels as Record<string, unknown>;
+    const normalized: { ax?: string; ay?: string; az?: string } = {};
+    for (const axis of ['ax', 'ay', 'az'] as const) {
+      const label = typeof labels[axis] === 'string' ? labels[axis].trim() : '';
+      if (label) {
+        normalized[axis] = label;
+      }
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
 
   const deviceListQuerySchema = z.object({
     site: z.string().optional(),
@@ -707,6 +753,60 @@ export function registerRoutes({
     };
   });
 
+  app.all('/api/devices/:deviceId/ui-proxy/*', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+
+    const params = request.params as { deviceId: string; '*': string };
+    const session = deviceService.get(params.deviceId);
+    const clientIp = session?.clientIp?.replace(/^::ffff:/, '').trim();
+    if (!clientIp) {
+      return reply.code(404).send({ ok: false, error: 'device_offline_or_no_ip' });
+    }
+    if (!isAllowedDeviceProxyIp(clientIp)) {
+      return reply.code(403).send({ ok: false, error: 'device_ip_not_allowed' });
+    }
+
+    const rawPath = params['*'] || '';
+    const safePath = rawPath.startsWith('/') ? rawPath.slice(1) : rawPath;
+    const queryIndex = request.url.indexOf('?');
+    const query = queryIndex >= 0 ? request.url.slice(queryIndex) : '';
+    const targetUrl = `http://${clientIp}/${safePath}${query}`;
+    const headers = new Headers();
+    const contentType = request.headers['content-type'];
+    if (typeof contentType === 'string') {
+      headers.set('content-type', contentType);
+    }
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        method: request.method,
+        headers,
+        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : JSON.stringify(request.body ?? {}),
+        signal: AbortSignal.timeout(8_000),
+        redirect: 'manual',
+      });
+      const responseContentType = upstream.headers.get('content-type') || 'application/octet-stream';
+      reply.code(upstream.status);
+      reply.header('content-type', responseContentType);
+      reply.header('cache-control', 'no-store');
+      const location = upstream.headers.get('location');
+      if (location) {
+        reply.header('location', `/api/devices/${encodeURIComponent(params.deviceId)}/ui-proxy/${location.replace(/^https?:\/\/[^/]+\//, '')}`);
+      }
+      if (responseContentType.includes('text/html')) {
+        const html = await upstream.text();
+        return reply.send(rewriteDeviceProxyHtml(html, `/api/devices/${encodeURIComponent(params.deviceId)}/ui-proxy`));
+      }
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      return reply.send(buffer);
+    } catch (error) {
+      app.log.warn({ deviceId: params.deviceId, clientIp, error }, 'Device UI proxy failed');
+      return reply.code(502).send({ ok: false, error: 'device_proxy_failed' });
+    }
+  });
+
   app.get('/api/devices/:deviceId', async (request, reply) => {
     if (!requireRole(request, reply, 'viewer')) {
       return;
@@ -730,6 +830,41 @@ export function registerRoutes({
         metadata,
       },
     };
+  });
+
+  app.get('/api/devices/:deviceId/placement-config', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+    const paramsSchema = z.object({ deviceId: z.string().min(1) });
+    const { deviceId } = paramsSchema.parse(request.params);
+    const metadata = deviceService.getMetadata(deviceId);
+    const session = deviceService.get(deviceId);
+    if (!metadata && !session) {
+      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    }
+    const config = await spectrumStorageService.readPlacementConfig(deviceId);
+    return { ok: true, data: config };
+  });
+
+  app.put('/api/devices/:deviceId/placement-config', async (request, reply) => {
+    if (!requireRole(request, reply, 'operator')) {
+      return;
+    }
+    const paramsSchema = z.object({ deviceId: z.string().min(1) });
+    const { deviceId } = paramsSchema.parse(request.params);
+    const metadata = deviceService.getMetadata(deviceId);
+    const session = deviceService.get(deviceId);
+    if (!metadata && !session) {
+      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    }
+    const config = placementConfigSchema.parse(request.body);
+    const axisLabels = placementAxisLabelsFromConfig(config);
+    if (axisLabels) {
+      await deviceService.updateStrict(deviceId, { axisLabels });
+    }
+    const saved = await spectrumStorageService.writePlacementConfig(deviceId, config);
+    return { ok: true, data: saved };
   });
 
   app.get('/api/devices/:deviceId/history', async (request, reply) => {

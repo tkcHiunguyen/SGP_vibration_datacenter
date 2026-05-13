@@ -11,11 +11,8 @@ import {
 } from "./sensor-chart-modal/telemetry-tiles";
 import type { ToastItem } from "./ui";
 import { ConsoleButton, FormFieldShell, FormInput, Modal } from "./ui";
-import { buildDeviceAxisLabelUpdate, DEVICE_AXIS_DIRECTION_LABELS } from "./device-display";
+import type { PlacementAxisSceneMatch } from "./MotorSceneCanvas";
 import {
-  ACCEL_RMS_MAX_WINDOW_MS,
-  ACCEL_RMS_MIN_WINDOW_MS,
-  ACCEL_RMS_TARGET_SAMPLES,
   CALENDAR_WEEKDAY_LABELS,
   CHART_MODAL_EXPANDED_CHART_PX,
   CHART_MODAL_TRANSITION_MS,
@@ -26,7 +23,6 @@ import {
   DATA_SETTINGS_SUMMARY_FETCH_DELAY_MS,
   DAY_IN_MS,
   DEFAULT_HISTORY_PRESET_KEY,
-  DEFAULT_ACCEL_TREND_MODE,
   FFT_AXIS_DISPLAY_ORDER,
   DEFAULT_SPECTRUM_SAMPLE_RATE_HZ,
   DEFAULT_SPECTRUM_SOURCE_SAMPLES,
@@ -38,6 +34,7 @@ import {
   SPECTRUM_LOADING_LABEL,
   SPECTRUM_NO_DATA_LABEL,
   SPECTRUM_RENDER_BARS,
+  SPECTRUM_RMS_Y_MIN_MS2,
   SpectrumLoadingState,
   SpectrumNoDataState,
   SpectrumZoomChart,
@@ -71,7 +68,6 @@ import {
   buildCalendarDayCells,
   buildNullGapRanges,
   buildOverviewTelemetryRows,
-  buildRollingRmsAccelRows,
   buildTiledTrendRows,
   clampAccelAmplitudeLimit,
   clampTrendViewport,
@@ -109,7 +105,6 @@ import {
 } from "./sensor-chart-modal/chart-parts";
 import { useChartModalLayout } from "./sensor-chart-modal/useChartModalLayout";
 import type {
-  AccelTrendMode,
   ButtonPanState,
   CalendarDayCell,
   ChartPanState,
@@ -131,6 +126,203 @@ const LazyMotorSceneCanvas = React.lazy(() =>
     default: module.MotorSceneCanvas,
   })),
 );
+
+type PlacementRotationValue = { x: number; y: number; z: number };
+type PlacementAxisLabelsValue = { ax?: string; ay?: string; az?: string };
+type PlacementModelAxisKey = "x" | "y" | "z";
+
+const PLACEMENT_FACE_OPTIONS: Array<{ key: string; label: string; axisKey: PlacementModelAxisKey; sign: ""; color: string; pastel: string; rotation: PlacementRotationValue }> = [
+  { key: "bottom", label: "Radial V", axisKey: "z", sign: "", color: "#0f766e", pastel: "#ccfbf1", rotation: { x: 0, y: 0, z: 0 } },
+  { key: "front", label: "Radial H", axisKey: "x", sign: "", color: "#2563eb", pastel: "#dbeafe", rotation: { x: 90, y: 0, z: 180 } },
+  { key: "right", label: "Axial", axisKey: "y", sign: "", color: "#dc2626", pastel: "#fee2e2", rotation: { x: 0, y: 0, z: 90 } },
+];
+
+const PLACEMENT_TWIST_OPTIONS = [0, 90] as const;
+type PlacementTwistValue = (typeof PLACEMENT_TWIST_OPTIONS)[number];
+
+const MOTOR_PHYSICAL_AXIS_LABELS: Record<PlacementModelAxisKey, string> = {
+  x: "Radial H",
+  y: "Axial",
+  z: "Radial V",
+};
+
+const PLACEMENT_MOTOR_AXIS_RENAME_OPTIONS: Array<{
+  axisKey: PlacementModelAxisKey;
+  deviceAxisKey: DeviceAxisKey;
+  defaultLabel: string;
+}> = [
+  { axisKey: "y", deviceAxisKey: "ay", defaultLabel: MOTOR_PHYSICAL_AXIS_LABELS.y },
+  { axisKey: "x", deviceAxisKey: "ax", defaultLabel: MOTOR_PHYSICAL_AXIS_LABELS.x },
+  { axisKey: "z", deviceAxisKey: "az", defaultLabel: MOTOR_PHYSICAL_AXIS_LABELS.z },
+];
+
+const modelAxisLabels = (axisLabels: PlacementAxisLabelsValue | undefined): Record<PlacementModelAxisKey, string> => ({
+  x: axisLabels?.ax || MOTOR_PHYSICAL_AXIS_LABELS.x,
+  y: axisLabels?.ay || MOTOR_PHYSICAL_AXIS_LABELS.y,
+  z: axisLabels?.az || MOTOR_PHYSICAL_AXIS_LABELS.z,
+});
+
+const defaultMotorAxisLabels = () => ({
+  ax: MOTOR_PHYSICAL_AXIS_LABELS.x,
+  ay: MOTOR_PHYSICAL_AXIS_LABELS.y,
+  az: MOTOR_PHYSICAL_AXIS_LABELS.z,
+});
+
+const motorAxisLabelsFromPlacement = (
+  chartLabels: { ax: string; ay: string; az: string },
+  axisKeyMapping: Record<PlacementModelAxisKey, PlacementModelAxisKey>,
+) => {
+  const next = defaultMotorAxisLabels();
+  (["x", "y", "z"] as const).forEach((rawAxisKey) => {
+    next[deviceAxisKeyForModelAxis(axisKeyMapping[rawAxisKey])] = chartLabels[deviceAxisKeyForModelAxis(rawAxisKey)];
+  });
+  return next;
+};
+
+const axisLabelFor = (axisLabels: PlacementAxisLabelsValue | undefined, axisKey: PlacementModelAxisKey) =>
+  modelAxisLabels(axisLabels)[axisKey];
+
+const withPlacementTwist = (
+  faceRotation: PlacementRotationValue,
+  twistDegrees: number,
+  faceKey: string,
+): PlacementRotationValue => {
+  if (twistDegrees === 0) return normalizePlacementRotation(faceRotation);
+  // Explicit 3-axis × 2-twist table. Keeps the 6 bidirectional orientations unique.
+  if (faceKey === "bottom") return normalizePlacementRotation({ x: 0, y: 90, z: 0 });
+  if (faceKey === "front") return normalizePlacementRotation({ x: 90, y: 90, z: 180 });
+  if (faceKey === "right") return normalizePlacementRotation({ x: 90, y: 0, z: 90 });
+  return normalizePlacementRotation(faceRotation);
+};
+
+const normalizePlacementAngle = (value: number) => ((value % 360) + 360) % 360;
+const normalizePlacementRotation = (rotation: PlacementRotationValue): PlacementRotationValue => ({
+  x: normalizePlacementAngle(rotation.x),
+  y: normalizePlacementAngle(rotation.y),
+  z: normalizePlacementAngle(rotation.z),
+});
+const shortestPlacementAngleDelta = (from: number, to: number) => {
+  const delta = normalizePlacementAngle(to) - normalizePlacementAngle(from);
+  return ((delta + 540) % 360) - 180;
+};
+
+type PlacementAxisVector = { x: number; y: number; z: number };
+type PlacementAxisMatch = Record<PlacementModelAxisKey, { motorAxis: PlacementModelAxisKey; motor: string; sensor: string; hint: string }>;
+const deviceAxisKeyForModelAxis = (axisKey: PlacementModelAxisKey): DeviceAxisKey =>
+  axisKey === "x" ? "ax" : axisKey === "y" ? "ay" : "az";
+const placementAxisLabelsEqual = (
+  left: PlacementAxisLabelsValue | undefined,
+  right: PlacementAxisLabelsValue | undefined,
+) => (["ax", "ay", "az"] as const).every((axis) => (left?.[axis] || "") === (right?.[axis] || ""));
+async function persistDeviceAxisLabels(deviceId: string, axisLabels: { ax: string; ay: string; az: string }): Promise<void> {
+  const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
+    method: "PUT",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ axisLabels }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(safeString(asRecord(body).error || "device_axis_label_update_failed"));
+  }
+}
+const degToRad = (degrees: number) => (degrees * Math.PI) / 180;
+const rotatePlacementVector = (vector: PlacementAxisVector, rotation: PlacementRotationValue): PlacementAxisVector => {
+  let { x, y, z } = vector;
+  const rx = degToRad(rotation.x);
+  const ry = degToRad(rotation.y);
+  const rz = degToRad(rotation.z);
+  let cos = Math.cos(rx);
+  let sin = Math.sin(rx);
+  [y, z] = [y * cos - z * sin, y * sin + z * cos];
+  cos = Math.cos(ry);
+  sin = Math.sin(ry);
+  [x, z] = [x * cos + z * sin, -x * sin + z * cos];
+  cos = Math.cos(rz);
+  sin = Math.sin(rz);
+  [x, y] = [x * cos - y * sin, x * sin + y * cos];
+  return { x, y, z };
+};
+const absPlacementDot = (a: PlacementAxisVector, b: PlacementAxisVector) => Math.abs(a.x * b.x + a.y * b.y + a.z * b.z);
+const buildPlacementAxisMatches = (
+  axisLabels: PlacementAxisLabelsValue | undefined,
+  motorRotation: PlacementRotationValue,
+  sensorRotation: PlacementRotationValue,
+): PlacementAxisMatch => {
+  const labels = modelAxisLabels(axisLabels);
+  const motorAxes = [
+    { key: "x" as const, label: labels.x, vector: rotatePlacementVector({ x: 1, y: 0, z: 0 }, motorRotation) },
+    { key: "y" as const, label: labels.y, vector: rotatePlacementVector({ x: 0, y: 0, z: 1 }, motorRotation) },
+    { key: "z" as const, label: labels.z, vector: rotatePlacementVector({ x: 0, y: 1, z: 0 }, motorRotation) },
+  ];
+  const sensorAxes = [
+    { key: "x" as const, label: "X", vector: rotatePlacementVector({ x: 1, y: 0, z: 0 }, sensorRotation) },
+    { key: "y" as const, label: "Y", vector: rotatePlacementVector({ x: 0, y: 0, z: 1 }, sensorRotation) },
+    { key: "z" as const, label: "Z", vector: rotatePlacementVector({ x: 0, y: 1, z: 0 }, sensorRotation) },
+  ];
+  const permutations = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const bestPermutation = permutations.reduce((best, candidate) => {
+    const candidateScore = candidate.reduce((score, motorIndex, sensorIndex) =>
+      score + absPlacementDot(sensorAxes[sensorIndex].vector, motorAxes[motorIndex].vector), 0);
+    const bestScore = best.reduce((score, motorIndex, sensorIndex) =>
+      score + absPlacementDot(sensorAxes[sensorIndex].vector, motorAxes[motorIndex].vector), 0);
+    return candidateScore > bestScore ? candidate : best;
+  }, permutations[0]);
+  return sensorAxes.reduce((matches, sensorAxis, sensorIndex) => {
+    const motorAxis = motorAxes[bestPermutation[sensorIndex]];
+    matches[sensorAxis.key] = {
+      motorAxis: motorAxis.key,
+      motor: motorAxis.label,
+      sensor: sensorAxis.label,
+      hint: `song song trục ${sensorAxis.label} cảm biến`,
+    };
+    return matches;
+  }, {} as PlacementAxisMatch);
+};
+const buildPlacementAxisMatchesFromKeyMapping = (
+  axisLabels: PlacementAxisLabelsValue | undefined,
+  axisKeyMapping: Record<PlacementModelAxisKey, PlacementModelAxisKey>,
+): PlacementAxisMatch => {
+  const labels = modelAxisLabels(axisLabels);
+  return (["x", "y", "z"] as const).reduce((matches, sensorAxisKey) => {
+    const motorAxis = axisKeyMapping[sensorAxisKey] || sensorAxisKey;
+    const sensorLabel = sensorAxisKey === "x" ? "X" : sensorAxisKey === "y" ? "Y" : "Z";
+    matches[sensorAxisKey] = {
+      motorAxis,
+      motor: labels[motorAxis],
+      sensor: sensorLabel,
+      hint: `song song trục ${sensorLabel} cảm biến`,
+    } as PlacementAxisMatch[typeof sensorAxisKey];
+    return matches;
+  }, {} as PlacementAxisMatch);
+};
+const chartAxisLabelsFromPlacementMatches = (
+  axisLabels: { ax: string; ay: string; az: string },
+  matches: PlacementAxisMatch,
+) => ({
+  ax: axisLabels[deviceAxisKeyForModelAxis(matches.x.motorAxis)],
+  ay: axisLabels[deviceAxisKeyForModelAxis(matches.y.motorAxis)],
+  az: axisLabels[deviceAxisKeyForModelAxis(matches.z.motorAxis)],
+});
+const placementAxisMappingFromChartLabels = (chartLabels: { ax: string; ay: string; az: string }) => ({
+  x: chartLabels.ax,
+  y: chartLabels.ay,
+  z: chartLabels.az,
+});
+const placementSensorLabelForMotorAxis = (matches: PlacementAxisMatch, motorAxis: PlacementModelAxisKey) => {
+  const sensorAxis = (["x", "y", "z"] as const).find((axisKey) => matches[axisKey].motorAxis === motorAxis);
+  return sensorAxis ? `Sensor ${matches[sensorAxis].sensor}` : "Chưa mapping";
+};
+const easePlacementInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
 const PLAYBACK_BASE_STEP_MS = 500;
 const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
 const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
@@ -244,15 +436,15 @@ function buildDenseTelemetryRowsFromPoints(
             : null,
         ax:
           typeof point.ax === "number" && Number.isFinite(point.ax)
-            ? Number((point.ax * GRAVITY_MS2).toFixed(4))
+            ? Number(point.ax.toFixed(4))
             : null,
         ay:
           typeof point.ay === "number" && Number.isFinite(point.ay)
-            ? Number((point.ay * GRAVITY_MS2).toFixed(4))
+            ? Number(point.ay.toFixed(4))
             : null,
         az:
           typeof point.az === "number" && Number.isFinite(point.az)
-            ? Number((point.az * GRAVITY_MS2).toFixed(4))
+            ? Number(point.az.toFixed(4))
             : null,
       }];
     })
@@ -498,15 +690,15 @@ function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySn
         : undefined,
     ax:
       typeof point.ax === "number" && Number.isFinite(point.ax)
-        ? Number((point.ax * GRAVITY_MS2).toFixed(3))
+        ? Number(point.ax.toFixed(3))
         : undefined,
     ay:
       typeof point.ay === "number" && Number.isFinite(point.ay)
-        ? Number((point.ay * GRAVITY_MS2).toFixed(3))
+        ? Number(point.ay.toFixed(3))
         : undefined,
     az:
       typeof point.az === "number" && Number.isFinite(point.az)
-        ? Number((point.az * GRAVITY_MS2).toFixed(3))
+        ? Number(point.az.toFixed(3))
         : undefined,
   };
 }
@@ -592,7 +784,7 @@ export function SensorChartModal({
   const { C } = useTheme();
   const [visible, setVisible] = useState(false);
   const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_TREND_DEFAULT_Y_MAX);
-  const [accelTrendMode, setAccelTrendMode] = useState<AccelTrendMode>(DEFAULT_ACCEL_TREND_MODE);
+  const [spectrumYAxisMax, setSpectrumYAxisMax] = useState<number | null>(null);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
   const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(() => readStoredHistoryPreset());
@@ -626,7 +818,25 @@ export function SensorChartModal({
   const [axisRenameDraft, setAxisRenameDraft] = useState("");
   const [axisRenameSaving, setAxisRenameSaving] = useState(false);
   const [axisRenameError, setAxisRenameError] = useState("");
+  const [positionAxisRenameDrafts, setPositionAxisRenameDrafts] = useState<{ ax: string; ay: string; az: string }>(defaultMotorAxisLabels);
+  const [positionAxisRenameSaving, setPositionAxisRenameSaving] = useState(false);
+  const [positionAxisRenameError, setPositionAxisRenameError] = useState("");
   const [visualizeOpen, setVisualizeOpen] = useState(false);
+  const [positionConfigOpen, setPositionConfigOpen] = useState(false);
+  const [positionConfigSelection, setPositionConfigSelection] = useState<"motor" | "sensor">("motor");
+  const [positionConfigStep, setPositionConfigStep] = useState<1 | 2 | 3>(1);
+  const [positionMotorRotation, setPositionMotorRotation] = useState<PlacementRotationValue>({ x: 0, y: 0, z: 0 });
+  const [positionSensorRotation, setPositionSensorRotation] = useState<PlacementRotationValue>({ x: 0, y: 0, z: 0 });
+  const [positionMotorFaceKey, setPositionMotorFaceKey] = useState("bottom");
+  const [positionSensorFaceKey, setPositionSensorFaceKey] = useState("bottom");
+  const [positionMotorTwist, setPositionMotorTwist] = useState(0);
+  const [positionSensorTwist, setPositionSensorTwist] = useState<PlacementTwistValue>(0);
+  const [confirmedAxisLabels, setConfirmedAxisLabels] = useState<{ ax: string; ay: string; az: string } | null>(null);
+  const [sceneAxisMatches, setSceneAxisMatches] = useState<PlacementAxisSceneMatch | null>(null);
+  const [useLiveAxisMatches, setUseLiveAxisMatches] = useState(false);
+  const [motorAxisLabels, setMotorAxisLabels] = useState<{ ax: string; ay: string; az: string }>(defaultMotorAxisLabels);
+  const [placementAxisKeyMapping, setPlacementAxisKeyMapping] = useState<Record<PlacementModelAxisKey, PlacementModelAxisKey>>({ x: "x", y: "y", z: "z" });
+  const positionRotationAnimationRef = useRef<number | null>(null);
   const [playbackRunning, setPlaybackRunning] = useState(false);
   const [playbackCursorTs, setPlaybackCursorTs] = useState<number | null>(null);
   const [playbackSpeedIndex, setPlaybackSpeedIndex] = useState(DEFAULT_PLAYBACK_SPEED_INDEX);
@@ -639,6 +849,7 @@ export function SensorChartModal({
   const [selectedTelemetryStepMs, setSelectedTelemetryStepMs] = useState<TelemetryResolutionSelection>("auto");
   const modalLayout = useChartModalLayout();
   const closeTimerRef = useRef<number | null>(null);
+  const onSensorUpdatedRef = useRef(onSensorUpdated);
   const spectrumHoverTimerRef = useRef<number | null>(null);
   const lastSpectrumHoverTsRef = useRef<number | null>(null);
   const spectrumRequestSeqRef = useRef(0);
@@ -656,6 +867,11 @@ export function SensorChartModal({
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
   const controlsBusy = Boolean(historyPresetLoading) || calendarLoading;
+
+  useEffect(() => {
+    onSensorUpdatedRef.current = onSensorUpdated;
+  }, [onSensorUpdated]);
+
   const selectedCalendarDateLabel = useMemo(
     () => formatDateInputLabel(selectedCalendarDate),
     [selectedCalendarDate],
@@ -671,13 +887,121 @@ export function SensorChartModal({
   );
   const vibrationAxisLabels = useMemo(
     () => ({
-      ax: sensor?.axisLabels?.ax || VIBRATION_AXIS_LABELS.ax,
-      ay: sensor?.axisLabels?.ay || VIBRATION_AXIS_LABELS.ay,
-      az: sensor?.axisLabels?.az || VIBRATION_AXIS_LABELS.az,
+      ax: VIBRATION_AXIS_LABELS.ax,
+      ay: VIBRATION_AXIS_LABELS.ay,
+      az: VIBRATION_AXIS_LABELS.az,
     }),
-    [sensor?.axisLabels?.ax, sensor?.axisLabels?.ay, sensor?.axisLabels?.az],
+    [],
   );
+  const chartAxisLabels = confirmedAxisLabels ?? vibrationAxisLabels;
+  const markPlacementAxisMatchesLive = useCallback(() => {
+    setUseLiveAxisMatches(true);
+    setSceneAxisMatches(null);
+  }, []);
+  const handlePlacementAxisMatchChange = useCallback((match: PlacementAxisSceneMatch) => {
+    if (useLiveAxisMatches) {
+      setSceneAxisMatches(match);
+    }
+  }, [useLiveAxisMatches]);
+
+  useEffect(() => {
+    setConfirmedAxisLabels(null);
+    setSceneAxisMatches(null);
+    setUseLiveAxisMatches(false);
+    setPositionAxisRenameError("");
+    setMotorAxisLabels(defaultMotorAxisLabels());
+    setPositionAxisRenameDrafts(defaultMotorAxisLabels());
+    setPlacementAxisKeyMapping({ x: "x", y: "y", z: "z" });
+    setPositionConfigStep(1);
+    setPositionConfigSelection("motor");
+    setPositionMotorFaceKey("bottom");
+    setPositionSensorFaceKey("bottom");
+    setPositionMotorTwist(0);
+    setPositionSensorTwist(0);
+    setPositionMotorRotation(PLACEMENT_FACE_OPTIONS[0].rotation);
+    setPositionSensorRotation(PLACEMENT_FACE_OPTIONS[0].rotation);
+    if (!sensor?.id) return;
+    let cancelled = false;
+    fetch(`/api/devices/${encodeURIComponent(sensor.id)}/placement-config`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const config = payload?.data;
+        if (cancelled || !config || typeof config !== "object") return;
+        const motor = config.motor || {};
+        const sensorConfig = config.sensor || {};
+        if (motor.rotation) setPositionMotorRotation(motor.rotation);
+        if (sensorConfig.rotation) setPositionSensorRotation(sensorConfig.rotation);
+        if (typeof motor.faceKey === "string") setPositionMotorFaceKey(motor.faceKey);
+        if (typeof sensorConfig.faceKey === "string") setPositionSensorFaceKey(sensorConfig.faceKey);
+        if (motor.twist === 0 || motor.twist === 90) setPositionMotorTwist(motor.twist);
+        if (sensorConfig.twist === 0 || sensorConfig.twist === 90) setPositionSensorTwist(sensorConfig.twist);
+        let nextAxisKeyMapping: Record<PlacementModelAxisKey, PlacementModelAxisKey> = { x: "x", y: "y", z: "z" };
+        let hasStoredAxisKeyMapping = false;
+        if (config.axisKeyMapping && typeof config.axisKeyMapping === "object") {
+          const mapping = config.axisKeyMapping as Partial<Record<PlacementModelAxisKey, PlacementModelAxisKey>>;
+          nextAxisKeyMapping = {
+            x: mapping.x === "x" || mapping.x === "y" || mapping.x === "z" ? mapping.x : "x",
+            y: mapping.y === "x" || mapping.y === "y" || mapping.y === "z" ? mapping.y : "y",
+            z: mapping.z === "x" || mapping.z === "y" || mapping.z === "z" ? mapping.z : "z",
+          };
+          hasStoredAxisKeyMapping = true;
+        }
+        setPlacementAxisKeyMapping(nextAxisKeyMapping);
+        setUseLiveAxisMatches(!hasStoredAxisKeyMapping);
+        let nextChartAxisLabels: { ax: string; ay: string; az: string } | null = null;
+        if (config.chartAxisLabels && typeof config.chartAxisLabels === "object") {
+          const labels = config.chartAxisLabels as Partial<Record<DeviceAxisKey, string>>;
+          nextChartAxisLabels = {
+            ax: labels.ax || MOTOR_PHYSICAL_AXIS_LABELS.x,
+            ay: labels.ay || MOTOR_PHYSICAL_AXIS_LABELS.y,
+            az: labels.az || MOTOR_PHYSICAL_AXIS_LABELS.z,
+          };
+          setConfirmedAxisLabels(nextChartAxisLabels);
+          if (sensor && !placementAxisLabelsEqual(sensor.axisLabels, nextChartAxisLabels)) {
+            onSensorUpdatedRef.current?.({ ...sensor, axisLabels: nextChartAxisLabels });
+            void persistDeviceAxisLabels(sensor.id, nextChartAxisLabels).catch(() => undefined);
+          }
+        } else if (config.axisMapping && typeof config.axisMapping === "object") {
+          const mapping = config.axisMapping as Partial<Record<PlacementModelAxisKey, string>>;
+          nextChartAxisLabels = {
+            ax: mapping.x || MOTOR_PHYSICAL_AXIS_LABELS.x,
+            ay: mapping.y || MOTOR_PHYSICAL_AXIS_LABELS.y,
+            az: mapping.z || MOTOR_PHYSICAL_AXIS_LABELS.z,
+          };
+          setConfirmedAxisLabels(nextChartAxisLabels);
+          if (sensor && !placementAxisLabelsEqual(sensor.axisLabels, nextChartAxisLabels)) {
+            onSensorUpdatedRef.current?.({ ...sensor, axisLabels: nextChartAxisLabels });
+            void persistDeviceAxisLabels(sensor.id, nextChartAxisLabels).catch(() => undefined);
+          }
+        }
+        if (config.motorAxisLabels && typeof config.motorAxisLabels === "object") {
+          const labels = config.motorAxisLabels as Partial<Record<DeviceAxisKey, string>>;
+          const nextMotorAxisLabels = {
+            ax: labels.ax || MOTOR_PHYSICAL_AXIS_LABELS.x,
+            ay: labels.ay || MOTOR_PHYSICAL_AXIS_LABELS.y,
+            az: labels.az || MOTOR_PHYSICAL_AXIS_LABELS.z,
+          };
+          setMotorAxisLabels(nextMotorAxisLabels);
+          setPositionAxisRenameDrafts(nextMotorAxisLabels);
+        } else if (nextChartAxisLabels) {
+          const nextMotorAxisLabels = motorAxisLabelsFromPlacement(nextChartAxisLabels, nextAxisKeyMapping);
+          setMotorAxisLabels(nextMotorAxisLabels);
+          setPositionAxisRenameDrafts(nextMotorAxisLabels);
+        } else {
+          const nextMotorAxisLabels = defaultMotorAxisLabels();
+          setMotorAxisLabels(nextMotorAxisLabels);
+          setPositionAxisRenameDrafts(nextMotorAxisLabels);
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [sensor?.id, vibrationAxisLabels]);
+
   const visualizeOverlay = modalLayout.viewportWidth < 1180;
+
+  useEffect(() => {
+    setSpectrumYAxisMax(null);
+  }, [sensor?.id]);
   const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
 
   useEffect(() => {
@@ -739,10 +1063,10 @@ export function SensorChartModal({
       setCalendarPopoverOpen(false);
       setTimePresetMenuOpen(false);
       setAxisRenameTarget(axis);
-      setAxisRenameDraft(vibrationAxisLabels[axis]);
+      setAxisRenameDraft(chartAxisLabels[axis]);
       setAxisRenameError("");
     },
-    [axisRenameSaving, sensor, vibrationAxisLabels],
+    [axisRenameSaving, sensor, chartAxisLabels],
   );
 
   const closeAxisRenameModal = useCallback(() => {
@@ -759,30 +1083,48 @@ export function SensorChartModal({
       return;
     }
 
-    const nextAxisLabels = buildDeviceAxisLabelUpdate(sensor.axisLabels, axisRenameTarget, axisRenameDraft);
+    const trimmedName = axisRenameDraft.trim();
+    const nextChartLabels = {
+      ...chartAxisLabels,
+      [axisRenameTarget]: trimmedName || vibrationAxisLabels[axisRenameTarget],
+    };
+    const rawAxisKey: PlacementModelAxisKey = axisRenameTarget === "ax" ? "x" : axisRenameTarget === "ay" ? "y" : "z";
+    const motorAxisKey = placementAxisKeyMapping[rawAxisKey];
+    const nextMotorAxisLabels = {
+      ...motorAxisLabels,
+      [deviceAxisKeyForModelAxis(motorAxisKey)]: nextChartLabels[axisRenameTarget],
+    };
     setAxisRenameSaving(true);
     setAxisRenameError("");
 
     try {
-      const response = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}`, {
+      const existingResponse = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}/placement-config`);
+      const existingPayload = existingResponse.ok ? await existingResponse.json().catch(() => ({})) : {};
+      const existingConfig = asRecord(asRecord(existingPayload).data ?? existingPayload);
+      const response = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}/placement-config`, {
         method: "PUT",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ axisLabels: nextAxisLabels ?? {} }),
+        body: JSON.stringify({
+          ...existingConfig,
+          axisMapping: placementAxisMappingFromChartLabels(nextChartLabels),
+          axisKeyMapping: placementAxisKeyMapping,
+          chartAxisLabels: nextChartLabels,
+          motorAxisLabels: nextMotorAxisLabels,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(safeString(asRecord(body).error || "axis_label_update_failed"));
+        throw new Error(safeString(asRecord(body).error || "placement_axis_label_update_failed"));
       }
 
-      const updatedSensor: Sensor = {
-        ...sensor,
-        axisLabels: nextAxisLabels,
-      };
-      const axisDirectionLabel = DEVICE_AXIS_DIRECTION_LABELS[axisRenameTarget];
-      onSensorUpdated?.(updatedSensor);
+      const axisDirectionLabel = chartAxisLabels[axisRenameTarget];
+      setConfirmedAxisLabels(nextChartLabels);
+      setMotorAxisLabels(nextMotorAxisLabels);
+      setPositionAxisRenameDrafts(nextMotorAxisLabels);
+      onSensorUpdated?.({ ...sensor, axisLabels: nextChartLabels });
       onNotify?.({
         type: "success",
         title: "Đã đổi tên trục",
@@ -797,7 +1139,7 @@ export function SensorChartModal({
     } finally {
       setAxisRenameSaving(false);
     }
-  }, [axisRenameDraft, axisRenameSaving, axisRenameTarget, onNotify, onSensorUpdated, sensor]);
+  }, [axisRenameDraft, axisRenameSaving, axisRenameTarget, chartAxisLabels, motorAxisLabels, onNotify, onSensorUpdated, placementAxisKeyMapping, sensor, vibrationAxisLabels]);
 
   const openDataSettings = useCallback(() => {
     if (clearingDeviceData) {
@@ -1016,13 +1358,17 @@ export function SensorChartModal({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (axisRenameTarget || clearDataConfirmMounted || clearingDeviceData || dataSettingsMounted) {
+      if (axisRenameTarget || positionAxisRenameSaving || clearDataConfirmMounted || clearingDeviceData || dataSettingsMounted) {
         return;
       }
       if (event.key !== "Escape") {
         return;
       }
       event.preventDefault();
+      if (positionConfigOpen) {
+        setPositionConfigOpen(false);
+        return;
+      }
       if (visualizeOpen) {
         setVisualizeOpen(false);
         return;
@@ -1034,7 +1380,7 @@ export function SensorChartModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [axisRenameTarget, clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose, visualizeOpen]);
+  }, [axisRenameTarget, clearDataConfirmMounted, clearingDeviceData, dataSettingsMounted, sensor, handleClose, positionAxisRenameSaving, positionConfigOpen, visualizeOpen]);
 
   useEffect(() => {
     return () => {
@@ -1119,6 +1465,133 @@ export function SensorChartModal({
     setCalendarAvailabilityLoadingKey(null);
     setCalendarAvailabilityError("");
   }, [sensor?.id]);
+
+  const animatePlacementRotation = useCallback((target: PlacementRotationValue, objectKey = positionConfigStep === 1 ? "motor" : "sensor") => {
+    markPlacementAxisMatchesLive();
+    if (typeof window === "undefined") {
+      if (objectKey === "motor") setPositionMotorRotation(normalizePlacementRotation(target));
+      else setPositionSensorRotation(normalizePlacementRotation(target));
+      return;
+    }
+    if (positionRotationAnimationRef.current !== null) {
+      window.cancelAnimationFrame(positionRotationAnimationRef.current);
+      positionRotationAnimationRef.current = null;
+    }
+    const setValues = objectKey === "motor" ? setPositionMotorRotation : setPositionSensorRotation;
+    const source = objectKey === "motor" ? positionMotorRotation : positionSensorRotation;
+    const normalizedTarget = normalizePlacementRotation(target);
+    const delta = {
+      x: shortestPlacementAngleDelta(source.x, normalizedTarget.x),
+      y: shortestPlacementAngleDelta(source.y, normalizedTarget.y),
+      z: shortestPlacementAngleDelta(source.z, normalizedTarget.z),
+    };
+    const start = window.performance.now();
+    const duration = 620;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = easePlacementInOut(progress);
+      setValues(normalizePlacementRotation({
+        x: source.x + delta.x * eased,
+        y: source.y + delta.y * eased,
+        z: source.z + delta.z * eased,
+      }));
+      if (progress < 1) {
+        positionRotationAnimationRef.current = window.requestAnimationFrame(tick);
+        return;
+      }
+      positionRotationAnimationRef.current = null;
+      setValues(normalizedTarget);
+    };
+    positionRotationAnimationRef.current = window.requestAnimationFrame(tick);
+  }, [markPlacementAxisMatchesLive, positionConfigStep, positionMotorRotation, positionSensorRotation]);
+
+  const placementAxisMatches = useMemo(
+    () => useLiveAxisMatches
+      ? sceneAxisMatches ?? buildPlacementAxisMatches(motorAxisLabels, positionMotorRotation, positionSensorRotation)
+      : buildPlacementAxisMatchesFromKeyMapping(motorAxisLabels, placementAxisKeyMapping),
+    [motorAxisLabels, placementAxisKeyMapping, positionMotorRotation, positionSensorRotation, sceneAxisMatches, useLiveAxisMatches],
+  );
+
+  const savePositionConfig = useCallback(async () => {
+    if (!sensor || positionAxisRenameSaving) {
+      return;
+    }
+    const defaults = defaultMotorAxisLabels();
+    const nextMotorAxisLabels = {
+      ax: positionAxisRenameDrafts.ax.trim() || defaults.ax,
+      ay: positionAxisRenameDrafts.ay.trim() || defaults.ay,
+      az: positionAxisRenameDrafts.az.trim() || defaults.az,
+    };
+    const nextChartLabels = chartAxisLabelsFromPlacementMatches(nextMotorAxisLabels, placementAxisMatches);
+    const nextAxisKeyMapping = {
+      x: placementAxisMatches.x.motorAxis,
+      y: placementAxisMatches.y.motorAxis,
+      z: placementAxisMatches.z.motorAxis,
+    };
+
+    setPositionAxisRenameSaving(true);
+    setPositionAxisRenameError("");
+    try {
+      const placementConfig = {
+        motor: { faceKey: positionMotorFaceKey, twist: positionMotorTwist, rotation: positionMotorRotation },
+        sensor: { faceKey: positionSensorFaceKey, twist: positionSensorTwist, rotation: positionSensorRotation },
+        axisMapping: placementAxisMappingFromChartLabels(nextChartLabels),
+        axisKeyMapping: nextAxisKeyMapping,
+        chartAxisLabels: nextChartLabels,
+        motorAxisLabels: nextMotorAxisLabels,
+      };
+      const response = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}/placement-config`, {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(placementConfig),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(safeString(asRecord(body).error || "placement_axis_label_update_failed"));
+      }
+
+      setMotorAxisLabels(nextMotorAxisLabels);
+      setConfirmedAxisLabels(nextChartLabels);
+      setPlacementAxisKeyMapping(nextAxisKeyMapping);
+      setUseLiveAxisMatches(false);
+      setSceneAxisMatches(null);
+      onSensorUpdated?.({ ...sensor, axisLabels: nextChartLabels });
+      setPositionConfigOpen(false);
+      onNotify?.({
+        type: "success",
+        title: "Đã lưu cấu hình 3D",
+        text: `${sensor.name || sensor.id}: ${nextChartLabels.ax} / ${nextChartLabels.ay} / ${nextChartLabels.az}`,
+      });
+    } catch (error) {
+      const message = `Không lưu được cấu hình 3D: ${safeString(error)}`;
+      setPositionAxisRenameError(message);
+      onNotify?.({ type: "warning", title: "Lưu cấu hình 3D thất bại", text: message });
+    } finally {
+      setPositionAxisRenameSaving(false);
+    }
+  }, [
+    onNotify,
+    onSensorUpdated,
+    placementAxisMatches,
+    positionAxisRenameDrafts,
+    positionAxisRenameSaving,
+    positionMotorFaceKey,
+    positionMotorRotation,
+    positionMotorTwist,
+    positionSensorFaceKey,
+    positionSensorRotation,
+    positionSensorTwist,
+    sensor,
+  ]);
+
+  useEffect(() => () => {
+    if (positionRotationAnimationRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(positionRotationAnimationRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -1335,6 +1808,7 @@ export function SensorChartModal({
         spectrumHoverTimerRef.current = null;
       }
       spectrumRequestSeqRef.current += 1;
+      setSpectrumYAxisMax(null);
       setHoverSpectrumDebouncing(false);
       setSpectrumPinnedTarget(target);
       setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
@@ -1584,14 +2058,14 @@ export function SensorChartModal({
       hoverTelemetrySnapshot.temp,
       2,
       "°C",
-    )} · ${vibrationAxisLabels.ax} ${formatOptionalValue(
+    )} · ${chartAxisLabels.ax} ${formatOptionalValue(
       hoverTelemetrySnapshot.ax,
       2,
-    )} · ${vibrationAxisLabels.ay} ${formatOptionalValue(
+    )} · ${chartAxisLabels.ay} ${formatOptionalValue(
       hoverTelemetrySnapshot.ay,
       2,
-    )} · ${vibrationAxisLabels.az} ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`;
-  }, [hoverTelemetrySnapshot, vibrationAxisLabels]);
+    )} · ${chartAxisLabels.az} ${formatOptionalValue(hoverTelemetrySnapshot.az, 2)} m/s²`;
+  }, [hoverTelemetrySnapshot, chartAxisLabels]);
   const spectrumPinned = spectrumPinnedTarget !== null;
   const shouldUseHoverSpectrumState =
     hoverSpectrumBusy || spectrumPinned || hoverTelemetrySnapshot !== null || hoverSpectrumPoints !== null;
@@ -1666,6 +2140,25 @@ export function SensorChartModal({
     }),
     [fftX, fftY, fftZ],
   );
+  const spectrumAutoYAxisMax = useMemo(() => {
+    const maxAmp = Math.max(
+      spectrumPeakByAxis.x.amplitude ?? 0,
+      spectrumPeakByAxis.y.amplitude ?? 0,
+      spectrumPeakByAxis.z.amplitude ?? 0,
+    );
+    const padded = maxAmp * 1.18;
+    if (!(padded > 0)) {
+      return SPECTRUM_RMS_Y_MIN_MS2;
+    }
+    if (padded <= 1) {
+      return Math.max(SPECTRUM_RMS_Y_MIN_MS2, Number(padded.toFixed(2)));
+    }
+    if (padded <= 10) {
+      return Math.ceil(padded * 10) / 10;
+    }
+    return Math.ceil(padded);
+  }, [spectrumPeakByAxis]);
+  const effectiveSpectrumYAxisMax = spectrumYAxisMax ?? spectrumAutoYAxisMax;
   const loadedTrendWindowMs = useMemo(
     () => Math.max(1, telemetryWindowAnchorMs - telemetryWindowStartMs),
     [telemetryWindowAnchorMs, telemetryWindowStartMs],
@@ -1778,6 +2271,15 @@ export function SensorChartModal({
     const zoomOut = deltaY > 0;
     setAccelAmplitudeLimit((current) => clampAccelAmplitudeLimit(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
   }, []);
+
+  const handleSpectrumYAxisZoom = useCallback((deltaY: number) => {
+    const zoomOut = deltaY > 0;
+    setSpectrumYAxisMax((current) => {
+      const base = current ?? spectrumAutoYAxisMax;
+      const next = base * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP);
+      return Math.max(SPECTRUM_RMS_Y_MIN_MS2, Math.min(10000, Number(next.toFixed(next < 10 ? 2 : 1))));
+    });
+  }, [spectrumAutoYAxisMax]);
 
   const handleTrendViewportPanChange = useCallback(
     (nextWindow: TrendViewport) => {
@@ -1905,24 +2407,14 @@ export function SensorChartModal({
     [displayTelemetryData],
   );
   const activeAccelData = useMemo(
-    () => {
-      const rawRows = displayTelemetryData.map((row) => ({
-        ts: row.ts,
-        ax: row.ax,
-        ay: row.ay,
-        az: row.az,
-        telemetryUuid: row.telemetryUuid,
-      }));
-      if (accelTrendMode === "instant") {
-        return rawRows;
-      }
-      const rmsWindowMs = Math.min(
-        ACCEL_RMS_MAX_WINDOW_MS,
-        Math.max(ACCEL_RMS_MIN_WINDOW_MS, displayTelemetryStepMs * ACCEL_RMS_TARGET_SAMPLES),
-      );
-      return buildRollingRmsAccelRows(displayTelemetryData, rmsWindowMs);
-    },
-    [accelTrendMode, displayTelemetryData, displayTelemetryStepMs],
+    () => displayTelemetryData.map((row) => ({
+      ts: row.ts,
+      ax: row.ax,
+      ay: row.ay,
+      az: row.az,
+      telemetryUuid: row.telemetryUuid,
+    })),
+    [displayTelemetryData],
   );
 
   const tempVisible = useMemo(
@@ -2009,12 +2501,10 @@ export function SensorChartModal({
   const handleIncreasePlaybackSpeed = useCallback(() => {
     setPlaybackSpeedIndex((current) => Math.min(PLAYBACK_SPEED_OPTIONS.length - 1, current + 1));
   }, []);
-  const accelTrendYDomain = useMemo<[number, number]>(() => {
-    if (accelTrendMode === "rms") {
-      return [0, accelAmplitudeLimit];
-    }
-    return [-accelAmplitudeLimit, accelAmplitudeLimit];
-  }, [accelAmplitudeLimit, accelTrendMode]);
+  const accelTrendYDomain = useMemo<[number, number]>(
+    () => [0, accelAmplitudeLimit],
+    [accelAmplitudeLimit],
+  );
   const showInitialLoading = telemetryLoading && telemetryPoints.length === 0;
   const trendOverviewGapRanges = useMemo(() => {
     return buildNullGapRanges(
@@ -2210,7 +2700,7 @@ export function SensorChartModal({
     setTelemetryWindowAnchorMs(Date.now());
     const storedHistoryPreset = readStoredHistoryPreset();
     setAccelAmplitudeLimit(ACCEL_TREND_DEFAULT_Y_MAX);
-    setAccelTrendMode(DEFAULT_ACCEL_TREND_MODE);
+    setSpectrumYAxisMax(null);
     setTrendViewWindow(null);
     setTrendPanning(false);
     setActiveHistoryPreset(storedHistoryPreset);
@@ -2249,9 +2739,9 @@ export function SensorChartModal({
     z: fftRenderZ,
   } satisfies Record<SpectrumAxis, typeof fftRenderX>;
 
-  const renderFftAxisLabelButton = (axis: DeviceAxisKey) => {
+  const renderFftAxisLabelButton = (axis: DeviceAxisKey, spectrumAxis: SpectrumAxis) => {
     const color = FFT_AXIS_COLORS[axis];
-    const directionLabel = DEVICE_AXIS_DIRECTION_LABELS[axis];
+    const axisDisplayLabel = chartAxisLabels[axis];
     return (
       <button
         type="button"
@@ -2261,32 +2751,46 @@ export function SensorChartModal({
           openAxisRenameModal(axis);
         }}
         disabled={axisRenameSaving}
-        title={`Đổi tên ${directionLabel}`}
-        aria-label={`Đổi tên ${directionLabel}`}
+        title={`Đổi tên ${axisDisplayLabel}`}
+        aria-label={`Đổi tên ${axisDisplayLabel}`}
         style={{
+          position: "relative",
           display: "inline-flex",
           alignItems: "center",
-          gap: 5,
+          gap: 6,
           maxWidth: "100%",
+          minHeight: 28,
           minWidth: 0,
+          boxSizing: "border-box",
           border: `1px solid ${color}38`,
           borderRadius: 999,
           background: `${color}12`,
           color,
-          fontSize: "0.68rem",
+          fontSize: "0.7rem",
           fontWeight: 800,
-          lineHeight: 1,
-          padding: "4px 7px",
+          lineHeight: 1.25,
+          padding: "5px 26px 5px 9px",
           cursor: axisRenameSaving ? "wait" : "pointer",
           opacity: axisRenameSaving ? 0.68 : 1,
           transition: "transform 0.14s ease, border-color 0.14s ease, background 0.14s ease",
         }}
       >
-        <span aria-hidden="true">■</span>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {vibrationAxisLabels[axis]}
+        <span aria-hidden="true" style={{ flex: "0 0 auto", lineHeight: 1 }}>■</span>
+        <span style={{ display: "block", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.25 }}>
+          {chartAxisLabels[axis]} <span style={{ opacity: 0.72 }}>({spectrumAxis})</span>
         </span>
-        <PencilLine size={10} strokeWidth={2.3} aria-hidden="true" />
+        <PencilLine
+          size={10}
+          strokeWidth={2.3}
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            right: 9,
+            top: "50%",
+            transform: "translateY(-50%)",
+            pointerEvents: "none",
+          }}
+        />
       </button>
     );
   };
@@ -2308,8 +2812,8 @@ export function SensorChartModal({
           minWidth: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, padding: "0 4px", minHeight: 18 }}>
-          {renderFftAxisLabelButton(deviceAxis)}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 5, padding: "0 4px", minHeight: 30 }}>
+          {renderFftAxisLabelButton(deviceAxis, spectrumAxis)}
           <div
             style={{
               color: C.textMuted,
@@ -2323,7 +2827,7 @@ export function SensorChartModal({
               textOverflow: "ellipsis",
             }}
           >
-            {hoverSpectrumBusy ? SPECTRUM_LOADING_LABEL : formatPeakSummary(peak.frequencyHz, peak.amplitude, "%")}
+            {hoverSpectrumBusy ? SPECTRUM_LOADING_LABEL : formatPeakSummary(peak.frequencyHz, peak.amplitude, "m/s²")}
           </div>
         </div>
         <div style={{ position: "relative" }}>
@@ -2335,6 +2839,8 @@ export function SensorChartModal({
             maxHz={spectrumMaxHzByAxis[spectrumAxis]}
             C={C}
             height={modalLayout.spectrumHeight}
+            yMax={effectiveSpectrumYAxisMax}
+            onYAxisZoom={handleSpectrumYAxisZoom}
           />
           {hoverSpectrumBusy ? (
             <div
@@ -3223,47 +3729,6 @@ export function SensorChartModal({
               C={C}
               titleGap={modalLayout.chartTitleGap}
               cardPadding={modalLayout.chartCardPadding}
-              headerAction={
-                <div
-                  role="group"
-                  aria-label="Chế độ giá trị gia tốc"
-                  style={{
-                    display: "inline-grid",
-                    gridTemplateColumns: "repeat(2, 70px)",
-                    height: 26,
-                    padding: 2,
-                    borderRadius: 999,
-                    border: `1px solid ${C.border}`,
-                    background: C.surface,
-                  }}
-                >
-                  {(["instant", "rms"] as const).map((mode) => {
-                    const active = accelTrendMode === mode;
-                    return (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setAccelTrendMode(mode)}
-                        aria-pressed={active ? "true" : "false"}
-                        title={mode === "instant" ? "Giá trị tức thời" : "Giá trị RMS"}
-                        style={{
-                          border: "none",
-                          borderRadius: 999,
-                          background: active ? C.primaryBg : "transparent",
-                          color: active ? C.primary : C.textMuted,
-                          fontSize: "0.62rem",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          minWidth: 0,
-                          transition: "background 0.14s ease, color 0.14s ease",
-                        }}
-                      >
-                        {mode === "instant" ? "Tức thời" : "RMS"}
-                      </button>
-                    );
-                  })}
-                </div>
-              }
             >
               {showInitialLoading ? (
                 <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
@@ -3276,9 +3741,9 @@ export function SensorChartModal({
                     data={accelDisplayData}
                     hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
                     series={[
-                      { key: "ax", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.ax} RMS` : vibrationAxisLabels.ax, color: "#f87171", strokeWidth: 1.8 },
-                      { key: "ay", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.ay} RMS` : vibrationAxisLabels.ay, color: "#60a5fa", strokeWidth: 1.8 },
-                      { key: "az", name: accelTrendMode === "rms" ? `${vibrationAxisLabels.az} RMS` : vibrationAxisLabels.az, color: "#a78bfa", strokeWidth: 1.8 },
+                      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: "#f87171", strokeWidth: 1.8 },
+                      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: "#60a5fa", strokeWidth: 1.8 },
+                      { key: "az", name: `${chartAxisLabels.az} RMS`, color: "#a78bfa", strokeWidth: 1.8 },
                     ]}
                     gapSegmentsBySeries={{
                       ax: accelGapRanges,
@@ -3424,9 +3889,44 @@ export function SensorChartModal({
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
                 <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
                 <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Phổ tần số FFT</span>
-                <span style={{ color: C.textMuted, fontSize: "0.68rem" }}>
-                  ({vibrationAxisLabels.ax} / {vibrationAxisLabels.ay} / {vibrationAxisLabels.az})
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPositionAxisRenameDrafts(motorAxisLabels);
+                    setPositionAxisRenameError("");
+                    setPositionConfigOpen(true);
+                  }}
+                  title="Mở cấu hình vị trí motor và cảm biến"
+                  onMouseEnter={(event) => {
+                    event.currentTarget.style.transform = "translateY(-1px)";
+                    event.currentTarget.style.borderColor = "rgba(20,184,166,0.55)";
+                    event.currentTarget.style.boxShadow = "0 7px 16px rgba(15,23,42,0.14)";
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.transform = "translateY(0)";
+                    event.currentTarget.style.borderColor = C.border;
+                    event.currentTarget.style.boxShadow = "none";
+                  }}
+                  style={{
+                    height: 24,
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    padding: "0 9px",
+                    background: C.surface,
+                    color: C.textBase,
+                    fontSize: "0.62rem",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    flexShrink: 0,
+                    transition: "transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease",
+                  }}
+                >
+                  <Box size={11} strokeWidth={2.2} />
+                  <span>Cấu hình</span>
+                </button>
               </div>
               {hoverTelemetrySnapshot ? (
                 <span
@@ -3694,6 +4194,347 @@ export function SensorChartModal({
 	      </div>
 
       <Modal
+        open={positionConfigOpen}
+        onClose={() => setPositionConfigOpen(false)}
+        title="Cấu hình vị trí"
+        description="Thiết lập vị trí motor và cảm biến trong không gian 3D."
+        width={1180}
+        zIndex={118}
+        backdropBlur={3}
+      >
+        <div
+          style={{
+            position: "relative",
+            height: "min(72vh, 720px)",
+            minHeight: 520,
+            borderRadius: 12,
+            overflow: "hidden",
+            border: `1px solid ${C.border}`,
+            background: C.surface,
+          }}
+        >
+          <React.Suspense
+            fallback={
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: C.textMuted,
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                }}
+              >
+                Đang mở môi trường 3D...
+              </div>
+            }
+          >
+            <LazyMotorSceneCanvas
+              key={`position-config-${sensor.id}-${motorAxisLabels.ax}-${motorAxisLabels.ay}-${motorAxisLabels.az}`}
+              className="motor-scene-canvas--position-config"
+              placementMode
+              selectedPlacementObject={positionConfigSelection}
+              placementMotorRotation={positionMotorRotation}
+              placementSensorRotation={positionSensorRotation}
+              showPlacementSensorAxes={positionConfigOpen}
+              placementAxisLabels={motorAxisLabels}
+              onPlacementAxisMatchChange={handlePlacementAxisMatchChange}
+              onPlacementSelectionChange={(objectKey) => {
+                if (objectKey === "motor" || objectKey === "sensor") {
+                  setPositionConfigSelection(objectKey);
+                }
+              }}
+              onPlacementRotationChange={(objectKey, rotation) => {
+                markPlacementAxisMatchesLive();
+                if (objectKey === "motor") {
+                  setPositionMotorRotation(rotation);
+                  return;
+                }
+                setPositionSensorRotation(rotation);
+              }}
+            />
+          </React.Suspense>
+
+          <div
+            style={{
+              position: "absolute",
+              right: 18,
+              top: 16,
+              width: 330,
+              borderRadius: 16,
+              border: `1px solid ${C.border}`,
+              background: "rgba(248, 250, 252, 0.42)",
+              backdropFilter: "blur(16px)",
+              boxShadow: "0 18px 45px rgba(15,23,42,0.22)",
+              padding: 14,
+              color: C.textBase,
+              zIndex: 5,
+            }}
+          >
+            <style>{`
+              @keyframes positionConfigStepIn { from { opacity: 0; transform: translateX(18px) scale(0.98); } to { opacity: 1; transform: translateX(0) scale(1); } }
+              @keyframes positionConfigRowIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+              @keyframes positionConfigGlow { 0%, 100% { box-shadow: 0 0 0 rgba(20,184,166,0); } 50% { box-shadow: 0 0 22px rgba(20,184,166,0.22); } }
+            `}</style>
+            <div key={positionConfigStep} style={{ animation: "positionConfigStepIn 420ms cubic-bezier(0.16, 1, 0.3, 1)", willChange: "opacity, transform" }}>
+            <div style={{ color: "#0f766e", fontSize: "0.68rem", fontWeight: 900, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              Bước {positionConfigStep}/3
+            </div>
+            <div style={{ color: "#0f172a", fontSize: "0.92rem", fontWeight: 900, marginTop: 5 }}>
+              {positionConfigStep === 1 ? "Xác định hướng motor" : positionConfigStep === 2 ? "Xác định hướng cảm biến" : "Đổi tên và xác nhận"}
+            </div>
+            <div style={{ color: "#334155", fontSize: "0.68rem", lineHeight: 1.45, marginTop: 5 }}>
+              {positionConfigStep < 3 ? "Chọn trục rung tiếp xúc + hướng xoay 0°/90° quanh trục đó." : "Đổi tên 3 trục motor theo mapping cảm biến, rồi lưu cấu hình."}
+            </div>
+
+            {positionConfigStep < 3 && (
+              <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7, marginTop: 14 }}>
+              {PLACEMENT_FACE_OPTIONS.map((option) => {
+                const objectKey = positionConfigStep === 1 ? "motor" : "sensor";
+                const activeFaceKey = positionConfigStep === 1 ? positionMotorFaceKey : positionSensorFaceKey;
+                const activeTwist = positionConfigStep === 1 ? positionMotorTwist : positionSensorTwist;
+                const axisLabel = axisLabelFor(objectKey === "motor" ? motorAxisLabels : vibrationAxisLabels, option.axisKey);
+                const active = activeFaceKey === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    title={`${option.sign}${axisLabel}`}
+                    onClick={() => {
+                      if (objectKey === "motor") {
+                        setPositionMotorFaceKey(option.key);
+                      } else {
+                        setPositionSensorFaceKey(option.key);
+                      }
+                      animatePlacementRotation(withPlacementTwist(option.rotation, activeTwist, option.key), objectKey);
+                    }}
+                    style={{
+                      height: 38,
+                      borderRadius: 10,
+                      border: `1px solid ${active ? option.color : C.border}`,
+                      background: active ? option.pastel : "rgba(255,255,255,0.82)",
+                      color: active ? option.color : "#334155",
+                      fontSize: "0.68rem",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      outline: "none",
+                    }}
+                  >
+                    <span style={{ display: "block", lineHeight: 1 }}>{axisLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6, marginTop: 9 }}>
+              {PLACEMENT_TWIST_OPTIONS.map((twist) => {
+                const objectKey = positionConfigStep === 1 ? "motor" : "sensor";
+                const activeFaceKey = positionConfigStep === 1 ? positionMotorFaceKey : positionSensorFaceKey;
+                const activeTwist = positionConfigStep === 1 ? positionMotorTwist : positionSensorTwist;
+                const activeFace = PLACEMENT_FACE_OPTIONS.find((option) => option.key === activeFaceKey) ?? PLACEMENT_FACE_OPTIONS[0];
+                const active = activeTwist === twist;
+                return (
+                  <button
+                    key={twist}
+                    type="button"
+                    onClick={() => {
+                      if (objectKey === "motor") {
+                        setPositionMotorTwist(twist);
+                      } else {
+                        setPositionSensorTwist(twist);
+                      }
+                      animatePlacementRotation(withPlacementTwist(activeFace.rotation, twist, activeFace.key), objectKey);
+                    }}
+                    style={{
+                      height: 30,
+                      borderRadius: 999,
+                      border: `1px solid ${active ? activeFace.color : C.border}`,
+                      background: active ? activeFace.pastel : "rgba(255,255,255,0.82)",
+                      color: active ? activeFace.color : "#475569",
+                      fontSize: "0.62rem",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      outline: "none",
+                    }}
+                  >
+                    {twist}°
+                  </button>
+                );
+              })}
+            </div>
+              </>
+            )}
+
+            {positionConfigStep === 3 && (
+              <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
+                {PLACEMENT_MOTOR_AXIS_RENAME_OPTIONS.map((option, index) => {
+                  const sensorLabel = placementSensorLabelForMotorAxis(placementAxisMatches, option.axisKey);
+                  return (
+                    <div
+                      key={option.deviceAxisKey}
+                      style={{
+                        borderRadius: 12,
+                        border: `1px solid ${C.border}`,
+                        background: "rgba(255,255,255,0.8)",
+                        padding: 9,
+                        animation: `positionConfigRowIn 360ms cubic-bezier(0.16, 1, 0.3, 1) ${index * 70}ms both`,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 7 }}>
+                        <span style={{ color: "#0f172a", fontSize: "0.68rem", fontWeight: 900 }}>{option.defaultLabel}</span>
+                        <span style={{ color: "#0f766e", fontSize: "0.62rem", fontWeight: 900 }}>{sensorLabel}</span>
+                      </div>
+                      <FormFieldShell icon={<PencilLine size={13} strokeWidth={2.1} />} style={{ minHeight: 36 }}>
+                        <FormInput
+                          value={positionAxisRenameDrafts[option.deviceAxisKey]}
+                          onChange={(event) => {
+                            setPositionAxisRenameDrafts((current) => ({
+                              ...current,
+                              [option.deviceAxisKey]: event.target.value,
+                            }));
+                            if (positionAxisRenameError) {
+                              setPositionAxisRenameError("");
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" || positionAxisRenameSaving) {
+                              return;
+                            }
+                            event.preventDefault();
+                            void savePositionConfig();
+                          }}
+                          onDoubleClick={(event) => event.currentTarget.select()}
+                          placeholder={option.defaultLabel}
+                          autoFocus={index === 0}
+                          disabled={positionAxisRenameSaving}
+                          maxLength={48}
+                          aria-label={`Tên trục ${option.defaultLabel}`}
+                        />
+                      </FormFieldShell>
+                    </div>
+                  );
+                })}
+                {positionAxisRenameError ? (
+                  <div style={{ color: C.warning, fontSize: "0.7rem", lineHeight: 1.45 }}>{positionAxisRenameError}</div>
+                ) : (
+                  <div style={{ color: "#64748b", fontSize: "0.6rem", fontWeight: 800, lineHeight: 1.45 }}>
+                    Tên trống sẽ quay về tên mặc định Axial / Radial H / Radial V.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+              <button
+                type="button"
+                disabled={positionAxisRenameSaving}
+                onClick={async () => {
+                  if (positionConfigStep === 1) {
+                    setPositionConfigStep(2);
+                    setPositionConfigSelection("sensor");
+                    return;
+                  }
+                  if (positionConfigStep === 2) {
+                    setPositionAxisRenameDrafts(motorAxisLabels);
+                    setPositionAxisRenameError("");
+                    setPositionConfigStep(3);
+                    return;
+                  }
+                  void savePositionConfig();
+                }}
+                onMouseDown={(event) => {
+                  event.currentTarget.style.transform = "translateY(1px) scale(0.98)";
+                  event.currentTarget.style.boxShadow = "0 3px 8px rgba(15,118,110,0.18)";
+                }}
+                onMouseUp={(event) => {
+                  event.currentTarget.style.transform = "translateY(-1px) scale(1)";
+                  event.currentTarget.style.boxShadow = "0 8px 18px rgba(15,118,110,0.22)";
+                }}
+                onMouseEnter={(event) => {
+                  event.currentTarget.style.transform = "translateY(-1px)";
+                  event.currentTarget.style.boxShadow = "0 8px 18px rgba(15,118,110,0.22)";
+                }}
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.transform = "translateY(0) scale(1)";
+                  event.currentTarget.style.boxShadow = "none";
+                }}
+                style={{
+                  height: 32,
+                  borderRadius: 999,
+                  border: "1px solid rgba(15,118,110,0.45)",
+                  background: "linear-gradient(135deg, rgba(20,184,166,0.2), rgba(45,212,191,0.32))",
+                  color: "#0f766e",
+                  padding: "0 13px",
+                  fontSize: "0.68rem",
+                  fontWeight: 900,
+                  cursor: positionAxisRenameSaving ? "wait" : "pointer",
+                  outline: "none",
+                  opacity: positionAxisRenameSaving ? 0.7 : 1,
+                  transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                  animation: positionConfigStep === 3 ? "positionConfigGlow 1600ms ease-in-out infinite" : undefined,
+                }}
+              >
+                {positionConfigStep === 1 ? "Hoàn thành motor" : positionConfigStep === 2 ? "Tiếp tục" : positionAxisRenameSaving ? "Đang lưu..." : "Lưu cấu hình"}
+              </button>
+              <button
+                type="button"
+                disabled={positionAxisRenameSaving}
+                onClick={() => {
+                  if (positionConfigStep === 3) {
+                    setPositionConfigStep(2);
+                    return;
+                  }
+                  if (positionConfigStep === 1) {
+                    setPositionMotorFaceKey("bottom");
+                    setPositionMotorTwist(0);
+                    animatePlacementRotation({ x: 0, y: 0, z: 0 }, "motor");
+                  } else {
+                    setPositionSensorFaceKey("bottom");
+                    setPositionSensorTwist(0);
+                    animatePlacementRotation({ x: 0, y: 0, z: 0 }, "sensor");
+                  }
+                }}
+                onMouseDown={(event) => {
+                  event.currentTarget.style.transform = "translateY(1px) scale(0.98)";
+                }}
+                onMouseUp={(event) => {
+                  event.currentTarget.style.transform = "translateY(-1px) scale(1)";
+                }}
+                onMouseEnter={(event) => {
+                  event.currentTarget.style.transform = "translateY(-1px)";
+                  event.currentTarget.style.boxShadow = "0 7px 15px rgba(15,23,42,0.14)";
+                }}
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.transform = "translateY(0) scale(1)";
+                  event.currentTarget.style.boxShadow = "none";
+                }}
+                style={{
+                  height: 32,
+                  borderRadius: 999,
+                  border: `1px solid ${C.border}`,
+                  background: "rgba(255, 255, 255, 0.72)",
+                  color: "#334155",
+                  padding: "0 11px",
+                  fontSize: "0.66rem",
+                  fontWeight: 900,
+                  cursor: positionAxisRenameSaving ? "wait" : "pointer",
+                  opacity: positionAxisRenameSaving ? 0.68 : 1,
+                  outline: "none",
+                  transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                }}
+              >
+                {positionConfigStep === 3 ? "Quay lại" : "Reset"}
+              </button>
+            </div>
+            </div>
+          </div>
+
+        </div>
+      </Modal>
+
+      <Modal
         open={dataSettingsMounted}
         onClose={closeDataSettings}
         title="Tùy chọn dữ liệu"
@@ -3860,7 +4701,7 @@ export function SensorChartModal({
       <Modal
         open={Boolean(axisRenameTarget)}
         onClose={closeAxisRenameModal}
-        title={`Đổi tên ${axisRenameTarget ? DEVICE_AXIS_DIRECTION_LABELS[axisRenameTarget] : "trục"}`}
+        title={`Đổi tên ${axisRenameTarget ? chartAxisLabels[axisRenameTarget] : "trục"}`}
         width={420}
         zIndex={96}
         disableClose={axisRenameSaving}
@@ -3893,7 +4734,7 @@ export function SensorChartModal({
                 void saveAxisRename();
               }}
               onDoubleClick={(event) => event.currentTarget.select()}
-              placeholder={axisRenameTarget ? vibrationAxisLabels[axisRenameTarget] : "Tên trục"}
+              placeholder={axisRenameTarget ? chartAxisLabels[axisRenameTarget] : "Tên trục"}
               autoFocus
               disabled={axisRenameSaving}
               maxLength={48}

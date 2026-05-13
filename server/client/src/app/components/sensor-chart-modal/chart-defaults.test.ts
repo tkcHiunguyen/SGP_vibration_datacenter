@@ -21,13 +21,14 @@ test("keeps the default Axial FFT chart in its original middle position", () => 
   );
 });
 
-test("normalizes spectrum amplitudes to percentage range", () => {
+test("keeps spectrum amplitudes as RMS m/s² values", () => {
   const data = toSpectrumChartData({
     receivedAt: "2026-05-06T10:00:00.000Z",
     axis: "x",
     amplitudes: [2, 4, 1],
     binCount: 3,
     binHz: 10,
+    magnitudeUnit: "m/s²",
   });
 
   assert.deepEqual(
@@ -38,14 +39,14 @@ test("normalizes spectrum amplitudes to percentage range", () => {
       unit: row.unit,
     })),
     [
-      { bin: 1, freq: 10, amp: 50, unit: "%" },
-      { bin: 2, freq: 20, amp: 100, unit: "%" },
-      { bin: 3, freq: 30, amp: 25, unit: "%" },
+      { bin: 1, freq: 10, amp: 2, unit: "m/s²" },
+      { bin: 2, freq: 20, amp: 4, unit: "m/s²" },
+      { bin: 3, freq: 30, amp: 1, unit: "m/s²" },
     ],
   );
 });
 
-test("keeps normalized spectrum zero when all amplitudes are zero", () => {
+test("keeps RMS spectrum zero when all amplitudes are zero", () => {
   const data = toSpectrumChartData({
     receivedAt: "2026-05-06T10:00:00.000Z",
     axis: "y",
@@ -55,5 +56,5 @@ test("keeps normalized spectrum zero when all amplitudes are zero", () => {
   });
 
   assert.equal(data.every((row) => row.amp === 0), true);
-  assert.equal(data.every((row) => row.unit === "%"), true);
+  assert.equal(data.every((row) => row.unit === "m/s²"), true);
 });

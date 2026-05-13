@@ -78,6 +78,12 @@ type SpectrumFrameSummary = {
   totalBytes: number;
 };
 
+export type PlacementConfigPayload = Record<string, unknown> & {
+  version?: number;
+  deviceId?: string;
+  updatedAt?: string;
+};
+
 function toIsoTimestamp(value: string | Date): string {
   if (value instanceof Date) {
     return value.toISOString();
@@ -578,6 +584,37 @@ export class SpectrumStorageService {
         new Date().toISOString(),
       ],
     );
+  }
+
+  async readPlacementConfig(deviceId: string): Promise<PlacementConfigPayload | null> {
+    const deviceSegment = sanitizePathSegment(deviceId, 'device');
+    try {
+      const absolutePath = join(this.baseDir, deviceSegment, 'placement-config.json');
+      const raw = await readFile(absolutePath, 'utf8');
+      const parsed = JSON.parse(raw) as PlacementConfigPayload;
+      if (!parsed || typeof parsed !== 'object') {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async writePlacementConfig(deviceId: string, payload: PlacementConfigPayload): Promise<PlacementConfigPayload> {
+    const deviceSegment = sanitizePathSegment(deviceId, 'device');
+    const next: PlacementConfigPayload = {
+      ...payload,
+      version: 1,
+      deviceId,
+      updatedAt: new Date().toISOString(),
+    };
+    const absolutePath = join(this.baseDir, deviceSegment, 'placement-config.json');
+    await mkdir(dirname(absolutePath), { recursive: true });
+    const temporaryPath = `${absolutePath}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    await rename(temporaryPath, absolutePath);
+    return next;
   }
 
   private async readPersistedPayload(storagePath: string): Promise<PersistedSpectrumPayload | null> {

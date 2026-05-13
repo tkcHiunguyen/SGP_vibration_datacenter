@@ -2,6 +2,7 @@ type SceneLoadProgress = {
   environment: number;
   motorModel: number;
   machineTrainModel: number;
+  sensorModel: number;
 };
 
 function clampPercentage(value: number) {
@@ -16,6 +17,7 @@ export function calculateSceneLoadProgress(progress: SceneLoadProgress) {
   const environment = clampPercentage(progress.environment);
   const motorModel = clampPercentage(progress.motorModel);
   const machineTrainModel = clampPercentage(progress.machineTrainModel);
+  const sensorModel = clampPercentage(progress.sensorModel);
 
-  return Math.round((environment + motorModel + machineTrainModel) / 3);
+  return Math.round((environment + motorModel + machineTrainModel + sensorModel) / 4);
 }

@@ -192,7 +192,7 @@ function DeviceCard({
         }}
       />
 
-      <div style={{ padding: "5px 7px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
+      <div style={{ padding: "5px 10px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 5, minWidth: 0 }}>
           <div
             title={sensor.name}
@@ -221,8 +221,8 @@ function DeviceCard({
               }}
               onMouseLeave={() => setInfoHovered(false)}
               style={{
-                width: 18,
-                height: 18,
+                width: 20,
+                height: 20,
                 padding: 0,
                 lineHeight: 0,
                 borderRadius: 5,
@@ -236,7 +236,7 @@ function DeviceCard({
                 flexShrink: 0,
               }}
             >
-              <Info size={9} color={hovered ? C.primary : C.textMuted} strokeWidth={2} />
+              <Info size={11} color={hovered ? C.primary : C.textMuted} strokeWidth={2} />
             </button>
             <div
               style={{
@@ -581,11 +581,7 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
 
   const sensorId = sensor?.id ?? "";
   const hasWebTarget = Boolean(sensor && sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "");
-  const webUrl = sensor
-    ? /^https?:\/\//i.test(sensor.ipAddress)
-      ? sensor.ipAddress
-      : `http://${sensor.ipAddress}`
-    : "";
+  const webUrl = sensor ? `/api/devices/${encodeURIComponent(sensor.id)}/ui-proxy/` : "";
 
   useEffect(() => {
     setMountFrame(false);
