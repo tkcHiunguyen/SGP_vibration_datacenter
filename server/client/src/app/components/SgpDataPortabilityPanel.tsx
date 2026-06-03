@@ -221,6 +221,10 @@ function sortExportJobs(jobs: ExportJob[]): ExportJob[] {
   return [...jobs].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 }
 
+function isExportJobNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("sgpdata_export_job_not_found");
+}
+
 export function SgpDataPortabilityPanel({
   mode,
   allowModeSwitch = false,
@@ -335,6 +339,14 @@ export function SgpDataPortabilityPanel({
         }
       } catch (error) {
         if (cancelled) return;
+        if (isExportJobNotFoundError(error)) {
+          clearStoredExportJobId(exportJob.jobId);
+          setExportJob(null);
+          setStatus("idle");
+          setMessage("Job export cũ không còn. Tạo job export mới.");
+          void refreshExportJobs();
+          return;
+        }
         setStatus("error");
         setMessage(error instanceof Error ? error.message : "Không đọc được trạng thái export");
       }
