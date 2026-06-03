@@ -1151,7 +1151,8 @@ export function registerRoutes({
   });
 
   app.get('/api/sgpdata/export/jobs', async (request, reply) => {
-    const principal = requireRole(request, reply, 'admin');
+    // Progress is shared with all signed-in users on the current server.
+    const principal = requireRole(request, reply, 'viewer');
     if (!principal) {
       return;
     }
@@ -1165,7 +1166,8 @@ export function registerRoutes({
   });
 
   app.get('/api/sgpdata/export/jobs/:jobId', async (request, reply) => {
-    const principal = requireRole(request, reply, 'admin');
+    // Progress is shared with all signed-in users on the current server.
+    const principal = requireRole(request, reply, 'viewer');
     if (!principal) {
       return;
     }

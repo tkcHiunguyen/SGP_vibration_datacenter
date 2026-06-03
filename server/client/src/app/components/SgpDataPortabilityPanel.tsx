@@ -179,7 +179,13 @@ async function readError(response: Response): Promise<string> {
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  if (!response.ok) throw new Error(await readError(response));
+  if (!response.ok) {
+    const error = await readError(response);
+    if (response.status === 404 && error === "Not Found") {
+      throw new Error(`${error}: ${url}`);
+    }
+    throw new Error(error);
+  }
   const parsed = (await response.json()) as { ok?: boolean; data?: T } | T;
   if (parsed && typeof parsed === "object" && "data" in parsed) {
     return (parsed as { data: T }).data;
