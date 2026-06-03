@@ -109,6 +109,8 @@ export function registerRoutes({
   const sgpDataImportQuerySchema = z.object({
     mode: z.enum(['merge', 'idempotent']).optional().default('merge'),
   });
+  const sgpDataImportJobParamsSchema = z.object({ jobId: z.string().min(1) });
+  const sgpDataImportJobListQuerySchema = z.object({ limit: z.coerce.number().int().positive().max(100).optional() });
   const sgpDataDeviceSchema = z
     .object({
       deviceId: z.string().min(1),
@@ -182,9 +184,47 @@ export function registerRoutes({
   const sgpDataExportDir = join(process.cwd(), 'storage', 'exports');
   const sgpDataExportJobTtlMs = 24 * 60 * 60 * 1000;
   const sgpDataExportConcurrency = 1;
+  type SgpDataImportJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+  type SgpDataImportJob = {
+    jobId: string;
+    status: SgpDataImportJobStatus;
+    progress: number;
+    stage: string;
+    createdAt: string;
+    updatedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+    createdBy?: string;
+    fileName: string;
+    sizeBytes: number;
+    mode: 'merge' | 'idempotent';
+    error?: string;
+    preview?: ReturnType<typeof createSgpDataPreview>;
+    result?: SgpDataImportResult;
+    totals: { devices: number; measurements: number; spectrum: number; placementConfigs: number };
+    imported: { devices: number; measurements: number; spectrum: number; placementConfigs: number };
+    currentDeviceId?: string;
+    devices: Record<string, { deviceId: string; name?: string; measurementsTotal: number; measurementsImported: number; spectrumTotal: number; spectrumImported: number; status: 'queued' | 'running' | 'completed' | 'skipped' }>;
+  };
+  type SgpDataImportResult = {
+    imported: boolean;
+    fileName: string;
+    sizeBytes: number;
+    mode: 'merge' | 'idempotent';
+    devices: { inserted: number; updated: number; skipped: number };
+    measurements: { inserted?: number; updated?: number; skipped?: number };
+    spectrum: { inserted?: number; updated?: number; skipped?: number };
+    placementConfigs: { written: number; skipped: number };
+    preview: ReturnType<typeof createSgpDataPreview>;
+  };
+
   const sgpDataExportQueue: string[] = [];
   let sgpDataExportRunning = 0;
   let sgpDataExportDraining = false;
+  const sgpDataImportJobs = new Map<string, SgpDataImportJob>();
+  const sgpDataImportQueue: Array<{ jobId: string; archive: SgpDataArchive }> = [];
+  let sgpDataImportRunning = 0;
+  let sgpDataImportDraining = false;
 
   function isAllowedDeviceProxyIp(ip: string): boolean {
     const normalized = ip.replace(/^::ffff:/, '').trim();
@@ -980,6 +1020,132 @@ export function registerRoutes({
     };
   }
 
+  function buildSgpDataImportDeviceProgress(archive: SgpDataArchive): SgpDataImportJob['devices'] {
+    const devices: SgpDataImportJob['devices'] = {};
+    for (const device of archive.devices) {
+      const deviceId = device.deviceId.trim();
+      if (deviceId) devices[deviceId] = { deviceId, name: optionalText(device.name), measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'queued' };
+    }
+    for (const point of archive.measurements) {
+      const deviceId = point.deviceId.trim();
+      if (!deviceId) continue;
+      devices[deviceId] ??= { deviceId, measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'queued' };
+      devices[deviceId].measurementsTotal += 1;
+    }
+    for (const frame of archive.spectrumFrames) {
+      const deviceId = frame.deviceId.trim();
+      if (!deviceId) continue;
+      devices[deviceId] ??= { deviceId, measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'queued' };
+      devices[deviceId].spectrumTotal += 1;
+    }
+    return devices;
+  }
+
+  function toSgpDataImportJobResponse(job: SgpDataImportJob) {
+    return { ...job, devices: Object.values(job.devices) };
+  }
+
+  function updateSgpDataImportJob(job: SgpDataImportJob, patch: Partial<SgpDataImportJob>): void {
+    Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+    job.progress = clampExportProgress(job.progress);
+    sgpDataImportJobs.set(job.jobId, job);
+  }
+
+  function updateSgpDataImportJobProgress(job: SgpDataImportJob, stage: string): void {
+    const total = job.totals.devices + job.totals.measurements + job.totals.spectrum + job.totals.placementConfigs;
+    const done = job.imported.devices + job.imported.measurements + job.imported.spectrum + job.imported.placementConfigs;
+    updateSgpDataImportJob(job, { stage, progress: total > 0 ? Math.max(5, Math.min(99, Math.round((done / total) * 100))) : 99 });
+  }
+
+  async function performSgpDataImportArchive(archive: SgpDataArchive, filename: string, sizeBytes: number, mode: 'merge' | 'idempotent', actor: string, job?: SgpDataImportJob): Promise<SgpDataImportResult> {
+    const archiveDeviceById = new Map(archive.devices.map((device) => [device.deviceId.trim(), device]));
+    const referencedDeviceIds = new Set<string>();
+    for (const device of archive.devices) if (device.deviceId.trim()) referencedDeviceIds.add(device.deviceId.trim());
+    for (const point of archive.measurements) if (point.deviceId.trim()) referencedDeviceIds.add(point.deviceId.trim());
+    for (const frame of archive.spectrumFrames) if (frame.deviceId.trim()) referencedDeviceIds.add(frame.deviceId.trim());
+
+    const deviceImport = { inserted: 0, updated: 0, skipped: 0 };
+    const importableDeviceIds = new Set<string>();
+    for (const deviceId of referencedDeviceIds) {
+      if (job) { job.currentDeviceId = deviceId; job.devices[deviceId] ??= { deviceId, measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'queued' }; job.devices[deviceId].status = 'running'; updateSgpDataImportJobProgress(job, `Đang nhập thiết bị ${deviceId}`); }
+      const before = deviceService.getMetadata(deviceId);
+      const imported = archiveDeviceById.get(deviceId);
+      try {
+        await deviceService.importMetadataStrict(normalizeSgpDataDevice(deviceId, imported));
+        before ? (deviceImport.updated += 1) : (deviceImport.inserted += 1);
+        importableDeviceIds.add(deviceId);
+      } catch {
+        try {
+          await deviceService.importMetadataStrict({ ...normalizeSgpDataDevice(deviceId, imported), uuid: '', zone: '' });
+          before ? (deviceImport.updated += 1) : (deviceImport.inserted += 1);
+          importableDeviceIds.add(deviceId);
+        } catch {
+          deviceImport.skipped += 1;
+          if (job) job.devices[deviceId].status = 'skipped';
+        }
+      }
+      if (job) { job.imported.devices += 1; if (job.devices[deviceId].status !== 'skipped') job.devices[deviceId].status = 'running'; updateSgpDataImportJobProgress(job, `Đã xử lý thiết bị ${deviceId}`); }
+    }
+
+    const measurements = archive.measurements.map((point) => normalizeArchiveTelemetryPoint(point)).filter((point): point is TelemetryImportPoint => point !== null).filter((point) => importableDeviceIds.has(point.deviceId));
+    const telemetryImport = await telemetryService.importHistory(measurements);
+    if (job) {
+      for (const point of measurements) { job.devices[point.deviceId] ??= { deviceId: point.deviceId, measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'running' }; job.devices[point.deviceId].measurementsImported += 1; }
+      job.imported.measurements = measurements.length;
+      updateSgpDataImportJobProgress(job, 'Đã nhập telemetry');
+    }
+
+    const placementImport = { written: 0, skipped: 0 };
+    for (const [deviceId, config] of Object.entries(archive.placementConfigs ?? {})) {
+      if (!importableDeviceIds.has(deviceId)) { placementImport.skipped += 1; continue; }
+      try { await spectrumStorageService.writePlacementConfig(deviceId, config); placementImport.written += 1; } catch { placementImport.skipped += 1; }
+      if (job) { job.currentDeviceId = deviceId; job.imported.placementConfigs += 1; updateSgpDataImportJobProgress(job, `Đang nhập cấu hình ${deviceId}`); }
+    }
+
+    const spectrumFrames = archive.spectrumFrames.map((frame) => normalizeArchiveSpectrumFrame(frame)).filter((frame): frame is SpectrumArchiveFrame => frame !== null).filter((frame) => importableDeviceIds.has(frame.deviceId));
+    const spectrumImport = await spectrumStorageService.importFrames(spectrumFrames);
+    if (job) {
+      for (const frame of spectrumFrames) { job.devices[frame.deviceId] ??= { deviceId: frame.deviceId, measurementsTotal: 0, measurementsImported: 0, spectrumTotal: 0, spectrumImported: 0, status: 'running' }; job.devices[frame.deviceId].spectrumImported += 1; }
+      job.imported.spectrum = spectrumFrames.length;
+      for (const device of Object.values(job.devices)) if (device.status === 'running') device.status = 'completed';
+      updateSgpDataImportJobProgress(job, 'Đã nhập phổ FFT');
+    }
+
+    auditService.record({ action: 'sgpdata_import', deviceId: 'n/a', commandId: 'n/a', actor, result: 'imported', metadata: { fileName: filename, sizeBytes, mode, deviceImport, telemetryImport, spectrumImport, placementImport } });
+    return { imported: true, fileName: filename, sizeBytes, mode, devices: deviceImport, measurements: telemetryImport, spectrum: spectrumImport, placementConfigs: placementImport, preview: createSgpDataPreview(archive) };
+  }
+
+  function enqueueSgpDataImportJob(jobId: string, archive: SgpDataArchive): void {
+    sgpDataImportQueue.push({ jobId, archive });
+    void drainSgpDataImportQueue();
+  }
+
+  async function drainSgpDataImportQueue(): Promise<void> {
+    if (sgpDataImportDraining) return;
+    sgpDataImportDraining = true;
+    try {
+      while (sgpDataImportRunning < 1 && sgpDataImportQueue.length > 0) {
+        const item = sgpDataImportQueue.shift();
+        if (!item) continue;
+        const job = sgpDataImportJobs.get(item.jobId);
+        if (!job || job.status !== 'queued') continue;
+        sgpDataImportRunning += 1;
+        void (async () => {
+          try {
+            updateSgpDataImportJob(job, { status: 'running', progress: 1, stage: 'Đang bắt đầu import', startedAt: new Date().toISOString() });
+            const result = await performSgpDataImportArchive(item.archive, job.fileName, job.sizeBytes, job.mode, job.createdBy ?? 'anonymous', job);
+            updateSgpDataImportJob(job, { status: 'completed', progress: 100, stage: 'Import hoàn tất', result, completedAt: new Date().toISOString() });
+          } catch (error) {
+            updateSgpDataImportJob(job, { status: 'failed', progress: 100, stage: 'Import thất bại', error: sgpDataImportError(error), completedAt: new Date().toISOString() });
+          } finally {
+            sgpDataImportRunning = Math.max(0, sgpDataImportRunning - 1);
+            void drainSgpDataImportQueue();
+          }
+        })();
+      }
+    } finally { sgpDataImportDraining = false; }
+  }
+
   function normalizeDeviceAxisLabels(labels: unknown): DeviceAxisLabels | undefined {
     if (!labels || typeof labels !== 'object' || Array.isArray(labels)) {
       return undefined;
@@ -1425,6 +1591,65 @@ export function registerRoutes({
     } catch (error) {
       return reply.code(422).send({ ok: false, error: sgpDataImportError(error) });
     }
+  });
+
+  app.post('/api/sgpdata/import/jobs', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) return;
+    const queryResult = sgpDataImportQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) return reply.code(422).send({ ok: false, error: 'sgpdata_import_mode_invalid' });
+    let upload: { archive: SgpDataArchive; filename: string; sizeBytes: number };
+    try {
+      upload = await readSgpDataArchiveUpload(request);
+    } catch (error) {
+      return reply.code(422).send({ ok: false, error: sgpDataImportError(error) });
+    }
+    const preview = createSgpDataPreview(upload.archive);
+    const now = new Date().toISOString();
+    const job: SgpDataImportJob = {
+      jobId: randomUUID(),
+      status: 'queued',
+      progress: 0,
+      stage: 'Đang chờ import',
+      createdAt: now,
+      updatedAt: now,
+      createdBy: principalActor(principal),
+      fileName: upload.filename,
+      sizeBytes: upload.sizeBytes,
+      mode: queryResult.data.mode,
+      preview,
+      totals: {
+        devices: preview.metadata.deviceCount,
+        measurements: preview.metadata.measurementCount,
+        spectrum: preview.metadata.spectrumCount,
+        placementConfigs: preview.metadata.placementConfigCount,
+      },
+      imported: { devices: 0, measurements: 0, spectrum: 0, placementConfigs: 0 },
+      devices: buildSgpDataImportDeviceProgress(upload.archive),
+    };
+    sgpDataImportJobs.set(job.jobId, job);
+    enqueueSgpDataImportJob(job.jobId, upload.archive);
+    return reply.code(202).send({ ok: true, data: toSgpDataImportJobResponse(job) });
+  });
+
+  app.get('/api/sgpdata/import/jobs', async (request, reply) => {
+    // Progress is shared with all signed-in users on the current server.
+    if (!requireRole(request, reply, 'viewer')) return;
+    const queryResult = sgpDataImportJobListQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) return reply.code(422).send({ ok: false, error: 'sgpdata_import_job_query_invalid' });
+    const limit = queryResult.data.limit ?? 20;
+    const items = [...sgpDataImportJobs.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, limit);
+    return reply.send({ ok: true, data: { items: items.map(toSgpDataImportJobResponse) } });
+  });
+
+  app.get('/api/sgpdata/import/jobs/:jobId', async (request, reply) => {
+    // Progress is shared with all signed-in users on the current server.
+    if (!requireRole(request, reply, 'viewer')) return;
+    const params = sgpDataImportJobParamsSchema.safeParse(request.params ?? {});
+    if (!params.success) return reply.code(422).send({ ok: false, error: 'sgpdata_job_id_required' });
+    const job = sgpDataImportJobs.get(params.data.jobId);
+    if (!job) return reply.code(404).send({ ok: false, error: 'sgpdata_import_job_not_found' });
+    return reply.send({ ok: true, data: toSgpDataImportJobResponse(job) });
   });
 
   app.post('/api/sgpdata/import', async (request, reply) => {

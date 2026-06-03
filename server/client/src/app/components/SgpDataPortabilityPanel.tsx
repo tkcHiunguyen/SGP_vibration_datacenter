@@ -35,6 +35,28 @@ type ImportResult = {
   spectrum?: ImportBucket;
 };
 type ExportJobStatus = "queued" | "running" | "completed" | "failed";
+type ImportJobStatus = ExportJobStatus;
+type ImportDeviceProgress = { deviceId: string; name?: string; measurementsTotal: number; measurementsImported: number; spectrumTotal: number; spectrumImported: number; status: "queued" | "running" | "completed" | "skipped" };
+type ImportJob = {
+  jobId: string;
+  status: ImportJobStatus;
+  progress: number;
+  stage: string;
+  createdAt: string;
+  updatedAt: string;
+  fileName: string;
+  sizeBytes: number;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  preview?: Preview;
+  result?: ImportResult;
+  totals: { devices: number; measurements: number; spectrum: number; placementConfigs: number };
+  imported: { devices: number; measurements: number; spectrum: number; placementConfigs: number };
+  currentDeviceId?: string;
+  devices: ImportDeviceProgress[];
+};
+type ImportJobListResponse = { items?: ImportJob[] };
 type ExportJob = {
   jobId: string;
   status: ExportJobStatus;
@@ -61,6 +83,7 @@ type ExportJobListResponse = { items?: ExportJob[] };
 
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"] as const;
 const EXPORT_JOB_STORAGE_KEY = "sgp:data-export-job";
+const IMPORT_JOB_STORAGE_KEY = "sgp:data-import-job";
 
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
@@ -219,11 +242,45 @@ function clearStoredExportJobId(jobId?: string): void {
   }
 }
 
+function readStoredImportJobId(): string | null {
+  try {
+    return window.localStorage.getItem(IMPORT_JOB_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeImportJobId(jobId: string): void {
+  try {
+    window.localStorage.setItem(IMPORT_JOB_STORAGE_KEY, jobId);
+  } catch {
+    // Ignore storage failures; the server job still continues.
+  }
+}
+
+function clearStoredImportJobId(jobId?: string): void {
+  try {
+    if (!jobId || window.localStorage.getItem(IMPORT_JOB_STORAGE_KEY) === jobId) {
+      window.localStorage.removeItem(IMPORT_JOB_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 function isExportJobActive(job?: ExportJob | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
 
+function isImportJobActive(job?: ImportJob | null): boolean {
+  return job?.status === "queued" || job?.status === "running";
+}
+
 function sortExportJobs(jobs: ExportJob[]): ExportJob[] {
+  return [...jobs].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function sortImportJobs(jobs: ImportJob[]): ImportJob[] {
   return [...jobs].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 }
 
@@ -249,6 +306,8 @@ export function SgpDataPortabilityPanel({
   const [rangePickerOpen, setRangePickerOpen] = useState(false);
   const [exportJob, setExportJob] = useState<ExportJob | null>(null);
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
+  const [importJob, setImportJob] = useState<ImportJob | null>(null);
+  const [importJobs, setImportJobs] = useState<ImportJob[]>([]);
   const [startCursorMonth, setStartCursorMonth] = useState(() => startOfMonth(new Date()));
   const [endCursorMonth, setEndCursorMonth] = useState(() => startOfMonth(new Date()));
   const [draftStartDate, setDraftStartDate] = useState<Date | null>(null);
@@ -272,6 +331,7 @@ export function SgpDataPortabilityPanel({
     };
   }, [preview]);
   const sharedExportBusy = exportJobs.some(isExportJobActive);
+  const sharedImportBusy = importJobs.some(isImportJobActive);
 
   useEffect(() => {
     if (!mode) return;
@@ -316,10 +376,46 @@ export function SgpDataPortabilityPanel({
   }, [activeMode]);
 
   useEffect(() => {
+    if (activeMode !== "import" || importJob) return;
+    const storedJobId = readStoredImportJobId();
+    if (!storedJobId) return;
+    let cancelled = false;
+    void fetchImportJob(storedJobId)
+      .then((job) => {
+        if (cancelled) return;
+        setImportJob(job);
+        upsertImportJob(job);
+        if (isImportJobActive(job)) {
+          setStatus("loading");
+          setMessage(job.stage || "Đang import dữ liệu...");
+        } else if (job.status === "failed") {
+          setStatus("error");
+          setMessage(job.error || "Import thất bại");
+          clearStoredImportJobId(job.jobId);
+        }
+      })
+      .catch(() => clearStoredImportJobId(storedJobId));
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMode, importJob]);
+
+  useEffect(() => {
+    if (activeMode !== "import") return;
+    void refreshImportJobs();
+  }, [activeMode]);
+
+  useEffect(() => {
     if (activeMode !== "export" || !sharedExportBusy) return;
     const timer = window.setInterval(() => void refreshExportJobs(), 1500);
     return () => window.clearInterval(timer);
   }, [activeMode, sharedExportBusy]);
+
+  useEffect(() => {
+    if (activeMode !== "import" || !sharedImportBusy) return;
+    const timer = window.setInterval(() => void refreshImportJobs(), 1500);
+    return () => window.clearInterval(timer);
+  }, [activeMode, sharedImportBusy]);
 
   useEffect(() => {
     if (activeMode !== "export" || !exportJob || exportJob.status === "completed" || exportJob.status === "failed") return;
@@ -365,6 +461,42 @@ export function SgpDataPortabilityPanel({
   }, [activeMode, exportJob?.jobId, exportJob?.status]);
 
   useEffect(() => {
+    if (activeMode !== "import" || !importJob || importJob.status === "completed" || importJob.status === "failed") return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const nextJob = await fetchImportJob(importJob.jobId);
+        if (cancelled) return;
+        setImportJob(nextJob);
+        upsertImportJob(nextJob);
+        if (isImportJobActive(nextJob)) {
+          setStatus("loading");
+          setMessage(nextJob.stage || "Đang import dữ liệu...");
+          timer = window.setTimeout(poll, 1200);
+        } else if (nextJob.status === "completed") {
+          setStatus("success");
+          setMessage(`Import xong: ${fmtCount(nextJob.imported.devices)} thiết bị, ${fmtCount(nextJob.imported.measurements)} điểm đo, ${fmtCount(nextJob.imported.spectrum)} phổ.`);
+          clearStoredImportJobId(nextJob.jobId);
+        } else {
+          setStatus("error");
+          setMessage(nextJob.error || "Import thất bại");
+          clearStoredImportJobId(nextJob.jobId);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Không đọc được trạng thái import");
+      }
+    };
+    timer = window.setTimeout(poll, 700);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [activeMode, importJob?.jobId, importJob?.status]);
+
+  useEffect(() => {
     if (activeMode !== "export" || !exportJob || exportJob.status !== "completed") return;
     if (downloadedExportJobIdsRef.current.has(exportJob.jobId)) return;
     downloadedExportJobIdsRef.current.add(exportJob.jobId);
@@ -394,8 +526,9 @@ export function SgpDataPortabilityPanel({
   }, [rangePickerOpen]);
 
   const exportBusy = isExportJobActive(exportJob);
+  const importBusy = isImportJobActive(importJob);
   const exportDisabled = exportBusy || status === "loading" || !from || !to;
-  const importDisabled = status === "loading" || !file || !preview;
+  const importDisabled = importBusy || status === "loading" || !file || !preview;
 
   function setPanelMode(nextMode: SgpPortabilityMode): void {
     if (!mode) setInternalMode(nextMode);
@@ -524,6 +657,32 @@ export function SgpDataPortabilityPanel({
     }
   }
 
+  async function fetchImportJob(jobId: string): Promise<ImportJob> {
+    return requestJson<ImportJob>(`/api/sgpdata/import/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  async function fetchImportJobs(): Promise<ImportJob[]> {
+    const result = await requestJson<ImportJobListResponse>("/api/sgpdata/import/jobs?limit=20");
+    return sortImportJobs(result.items ?? []);
+  }
+
+  function upsertImportJob(job: ImportJob): void {
+    setImportJobs((current) => sortImportJobs([job, ...current.filter((item) => item.jobId !== job.jobId)]).slice(0, 20));
+  }
+
+  async function refreshImportJobs(): Promise<void> {
+    try {
+      const jobs = await fetchImportJobs();
+      setImportJobs(jobs);
+      setImportJob((current) => {
+        if (!current) return current;
+        return jobs.find((job) => job.jobId === current.jobId) ?? current;
+      });
+    } catch {
+      // Keep current UI state; direct job polling still reports actionable errors.
+    }
+  }
+
   async function downloadExportJob(job: ExportJob): Promise<void> {
     const response = await fetch(`/api/sgpdata/export/jobs/${encodeURIComponent(job.jobId)}/download`);
     if (!response.ok) throw new Error(await readError(response));
@@ -607,16 +766,15 @@ export function SgpDataPortabilityPanel({
   async function runImport(): Promise<void> {
     if (!file) return;
     setStatus("loading");
-    setMessage("Đang nhập dữ liệu...");
+    setMessage("Đang tạo job import...");
     try {
       const body = new FormData();
       body.append("file", file);
-      const result = await requestJson<ImportResult>("/api/sgpdata/import", { method: "POST", body });
-      const deviceCount = bucketTotal(result.devices);
-      const measurementCount = bucketTotal(result.measurements);
-      const spectrumCount = bucketTotal(result.spectrum);
-      setStatus("success");
-      setMessage(`Import xong: ${deviceCount} thiết bị, ${measurementCount} điểm đo, ${spectrumCount} phổ.`);
+      const job = await requestJson<ImportJob>("/api/sgpdata/import/jobs", { method: "POST", body });
+      setImportJob(job);
+      upsertImportJob(job);
+      storeImportJobId(job.jobId);
+      setMessage(job.stage || "Đang import dữ liệu...");
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Import thất bại");
@@ -766,6 +924,8 @@ export function SgpDataPortabilityPanel({
               <DevicePreview devices={preview.devices ?? []} />
             </>
           ) : null}
+          {importJob ? <ImportProgressCard job={importJob} /> : null}
+          {importJobs.length > 0 ? <ImportJobList jobs={importJobs} activeJobId={importJob?.jobId} /> : null}
         </section>
       )}
 
@@ -791,7 +951,7 @@ export function SgpDataPortabilityPanel({
             }}
           >
             {status === "loading" ? <Loader2 size={14} style={{ animation: "webSpin 0.8s linear infinite" }} /> : activeMode === "export" ? <Download size={14} /> : <Upload size={14} />}
-            {activeMode === "export" ? (exportBusy ? "Đang export" : "Tạo job export") : "Import"}
+            {activeMode === "export" ? (exportBusy ? "Đang export" : "Tạo job export") : importBusy ? "Đang import" : "Tạo job import"}
           </button>
         </div>
       </footer>
@@ -1203,6 +1363,90 @@ export function SgpDataPortabilityPanel({
             ) : null}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  function ImportProgressCard({ job }: { job: ImportJob }) {
+    const completed = job.status === "completed";
+    const failed = job.status === "failed";
+    const running = isImportJobActive(job);
+    const fg = failed ? C.danger : completed ? C.success : C.primary;
+    const bg = failed ? C.dangerBg : completed ? C.successBg : C.primaryBg;
+    const devices = job.devices.slice(0, 8);
+    return (
+      <div style={{ borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, padding: 11, display: "grid", gap: 9, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ width: 28, height: 28, borderRadius: 7, display: "grid", placeItems: "center", background: bg, color: fg, flexShrink: 0 }}>
+              {running ? <Loader2 size={14} style={{ animation: "webSpin 0.8s linear infinite" }} /> : completed ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.textBright, fontSize: "0.76rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {completed ? "Import hoàn tất" : failed ? "Import thất bại" : "Import đang chạy"}
+              </span>
+              <span style={{ display: "block", color: failed ? C.danger : C.textMuted, fontSize: "0.64rem", fontWeight: 800, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {failed ? job.error || "Không import được dữ liệu" : job.stage}
+              </span>
+            </span>
+          </div>
+          <span style={{ color: fg, fontSize: "0.78rem", fontWeight: 950 }}>{Math.round(job.progress)}%</span>
+        </div>
+        <div style={{ height: 7, borderRadius: 999, overflow: "hidden", background: C.surface, border: `1px solid ${C.border}` }}>
+          <div style={{ height: "100%", width: `${Math.max(4, Math.min(100, job.progress))}%`, background: fg, transition: "width 180ms ease" }} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 8 }}>
+          <MiniStat label="Thiết bị" value={`${fmtCount(job.imported.devices)}/${fmtCount(job.totals.devices)}`} />
+          <MiniStat label="Điểm đo" value={`${fmtCount(job.imported.measurements)}/${fmtCount(job.totals.measurements)}`} />
+          <MiniStat label="Phổ" value={`${fmtCount(job.imported.spectrum)}/${fmtCount(job.totals.spectrum)}`} />
+          <MiniStat label="Current" value={job.currentDeviceId || "--"} />
+        </div>
+        {devices.length > 0 ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {devices.map((device) => {
+              const total = device.measurementsTotal + device.spectrumTotal;
+              const done = device.measurementsImported + device.spectrumImported;
+              const pct = total > 0 ? Math.round((done / total) * 100) : device.status === "completed" ? 100 : 0;
+              const active = device.deviceId === job.currentDeviceId || device.status === "running";
+              return (
+                <div key={device.deviceId} style={{ display: "grid", gap: 4, padding: "7px 8px", borderRadius: 7, background: active ? C.primaryBg : C.surface, border: `1px solid ${C.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: C.textBase, fontSize: "0.64rem", fontWeight: 850 }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{device.deviceId}</span>
+                    <span>{pct}% · {fmtCount(done)}/{fmtCount(total)}</span>
+                  </div>
+                  <div style={{ height: 4, borderRadius: 999, background: C.card, overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, pct))}%`, background: active ? C.primary : C.success }} /></div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function ImportJobList({ jobs, activeJobId }: { jobs: ImportJob[]; activeJobId?: string }) {
+    return (
+      <div style={{ borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ minHeight: 34, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: `1px solid ${C.border}` }}>
+          <span style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 900 }}>Job import chung</span>
+          <span style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 850 }}>{jobs.length} job</span>
+        </div>
+        {jobs.slice(0, 6).map((job, index) => {
+          const failed = job.status === "failed";
+          const completed = job.status === "completed";
+          const active = isImportJobActive(job);
+          const fg = failed ? C.danger : completed ? C.success : C.primary;
+          return (
+            <div key={job.jobId} style={{ padding: "9px 10px", borderTop: index === 0 ? "none" : `1px solid ${C.border}`, display: "grid", gap: 7, background: job.jobId === activeJobId ? C.primaryBg : "transparent" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <span style={{ color: C.textBright, fontSize: "0.7rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.fileName}</span>
+                <span style={{ color: fg, fontSize: "0.66rem", fontWeight: 900 }}>{exportStatusLabel(job.status)} · {Math.round(job.progress)}%</span>
+              </div>
+              <div style={{ height: 5, borderRadius: 999, background: C.surface, overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, job.progress))}%`, background: fg }} /></div>
+              <div style={{ color: failed ? C.danger : C.textMuted, fontSize: "0.6rem", fontWeight: 760 }}>{failed ? job.error : `${fmtCount(job.imported.measurements)}/${fmtCount(job.totals.measurements)} điểm đo · ${fmtDateTime(job.updatedAt)}`}</div>
+            </div>
+          );
+        })}
       </div>
     );
   }
