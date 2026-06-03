@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
@@ -14,6 +14,7 @@ import { AlertService } from '../alert/alert.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AuthService } from '../auth/index.js';
 import { CommandService } from '../command/command.service.js';
+import type { DataExportJob, DataExportJobRepository } from '../data-export/data-export-job.repository.js';
 import { DeviceService } from '../device/device.service.js';
 import type { MySqlPersistenceStatus } from '../persistence/mysql-access.js';
 import type { RealtimeGateway } from '../realtime/realtime.gateway.js';
@@ -34,6 +35,8 @@ type RegisterRoutesDeps = {
   realtimeGateway: RealtimeGateway;
   zoneService: ZoneService;
   spectrumStorageService: SpectrumStorageService;
+  dataExportJobRepository: DataExportJobRepository;
+  dataExportJobWorkerRunId?: string;
   persistenceStatus: MySqlPersistenceStatus;
 };
 
@@ -48,6 +51,8 @@ export function registerRoutes({
   realtimeGateway,
   zoneService,
   spectrumStorageService,
+  dataExportJobRepository,
+  dataExportJobWorkerRunId,
   persistenceStatus,
 }: RegisterRoutesDeps): void {
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
@@ -94,6 +99,9 @@ export function registerRoutes({
   });
   const sgpDataExportJobParamsSchema = z.object({
     jobId: z.string().min(1),
+  });
+  const sgpDataExportJobListQuerySchema = z.object({
+    limit: z.coerce.number().int().positive().max(100).optional(),
   });
   const sgpDataImportQuerySchema = z.object({
     mode: z.enum(['merge', 'idempotent']).optional().default('merge'),
@@ -161,32 +169,18 @@ export function registerRoutes({
   type SgpDataArchive = z.infer<typeof sgpDataArchiveSchema>;
   type SgpDataDevice = z.infer<typeof sgpDataDeviceSchema>;
   type SgpDataTelemetryPoint = z.infer<typeof sgpDataTelemetryPointSchema>;
-  type SgpDataExportRange = { from: string; to: string };
-  type SgpDataExportJobStatus = 'queued' | 'running' | 'completed' | 'failed';
-  type SgpDataExportJob = {
-    jobId: string;
-    status: SgpDataExportJobStatus;
-    progress: number;
-    stage: string;
-    createdAt: string;
-    updatedAt: string;
-    range: SgpDataExportRange;
-    deviceId?: string;
-    fileName?: string;
-    filePath?: string;
-    sizeBytes?: number;
-    error?: string;
-    manifest?: SgpDataArchive['manifest'];
-  };
   type SgpDataExportResult = {
     compressed: Buffer;
     fileName: string;
     manifest: SgpDataArchive['manifest'];
   };
 
-  const sgpDataExportJobs = new Map<string, SgpDataExportJob>();
   const sgpDataExportDir = join(process.cwd(), 'storage', 'exports');
   const sgpDataExportJobTtlMs = 24 * 60 * 60 * 1000;
+  const sgpDataExportConcurrency = 1;
+  const sgpDataExportQueue: string[] = [];
+  let sgpDataExportRunning = 0;
+  let sgpDataExportDraining = false;
 
   function isAllowedDeviceProxyIp(ip: string): boolean {
     const normalized = ip.replace(/^::ffff:/, '').trim();
@@ -532,7 +526,7 @@ export function registerRoutes({
     return value.replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 80);
   }
 
-  function toSgpDataExportJobResponse(job: SgpDataExportJob) {
+  function toSgpDataExportJobResponse(job: DataExportJob) {
     return {
       jobId: job.jobId,
       status: job.status,
@@ -546,24 +540,21 @@ export function registerRoutes({
       sizeBytes: job.sizeBytes,
       error: job.error,
       manifest: job.manifest,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
+      expiresAt: job.expiresAt,
     };
   }
 
-  function updateSgpDataExportJob(job: SgpDataExportJob, patch: Partial<SgpDataExportJob>): void {
+  async function updateSgpDataExportJob(job: DataExportJob, patch: Partial<DataExportJob>): Promise<void> {
     Object.assign(job, patch, { updatedAt: new Date().toISOString() });
     job.progress = clampExportProgress(job.progress);
+    await dataExportJobRepository.update(job);
   }
 
   async function cleanupSgpDataExportJobs(): Promise<void> {
-    const cutoffMs = Date.now() - sgpDataExportJobTtlMs;
-    const deleteJobs: SgpDataExportJob[] = [];
-    for (const job of sgpDataExportJobs.values()) {
-      if (Date.parse(job.createdAt) < cutoffMs) {
-        deleteJobs.push(job);
-      }
-    }
-    for (const job of deleteJobs) {
-      sgpDataExportJobs.delete(job.jobId);
+    const expiredJobs = await dataExportJobRepository.deleteExpired(new Date().toISOString());
+    for (const job of expiredJobs) {
       if (job.filePath) {
         await unlink(job.filePath).catch(() => undefined);
       }
@@ -576,12 +567,12 @@ export function registerRoutes({
     actor,
     onProgress,
   }: {
-    range: SgpDataExportRange;
+    range: DataExportJob['range'];
     deviceId?: string;
     actor: string;
-    onProgress?: (progress: number, stage: string) => void;
+    onProgress?: (progress: number, stage: string) => void | Promise<void>;
   }): Promise<SgpDataExportResult> {
-    onProgress?.(8, 'Đang tải danh sách thiết bị');
+    await onProgress?.(8, 'Đang tải danh sách thiết bị');
     const deviceMetadata = deviceId
       ? [deviceService.getMetadata(deviceId)].filter((device): device is NonNullable<typeof device> => Boolean(device))
       : deviceService.list().map((device) => device.metadata).filter((device): device is NonNullable<typeof device> => Boolean(device));
@@ -589,19 +580,19 @@ export function registerRoutes({
       throw new Error('device_not_found');
     }
 
-    onProgress?.(22, 'Đang xuất telemetry');
+    await onProgress?.(22, 'Đang xuất telemetry');
     const measurements = await telemetryService.exportHistory({
       from: range.from,
       to: range.to,
       deviceId,
     });
 
-    onProgress?.(48, 'Đang xuất phổ FFT');
+    await onProgress?.(48, 'Đang xuất phổ FFT');
     const spectrumFrames = (
       await Promise.all(deviceMetadata.map((device) => spectrumStorageService.exportFrames(device.deviceId, range.from, range.to)))
     ).flat();
 
-    onProgress?.(66, 'Đang gom cấu hình thiết bị');
+    await onProgress?.(66, 'Đang gom cấu hình thiết bị');
     const selectedDeviceIds = new Set<string>([
       ...measurements.map((point) => point.deviceId),
       ...spectrumFrames.map((frame) => frame.deviceId),
@@ -636,7 +627,7 @@ export function registerRoutes({
     };
     archive.manifest.checksumSha256 = createSgpDataChecksum(archive);
 
-    onProgress?.(82, 'Đang nén gói dữ liệu');
+    await onProgress?.(82, 'Đang nén gói dữ liệu');
     const body = Buffer.from(JSON.stringify(archive));
     const compressed = await gzipAsync(body);
     const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
@@ -661,35 +652,83 @@ export function registerRoutes({
     return { compressed, fileName, manifest: archive.manifest };
   }
 
-  async function runSgpDataExportJob(job: SgpDataExportJob, actor: string): Promise<void> {
+  async function runSgpDataExportJob(job: DataExportJob, actor: string): Promise<void> {
     try {
-      updateSgpDataExportJob(job, { status: 'running', progress: 3, stage: 'Đang khởi tạo export' });
+      const startedAt = new Date().toISOString();
+      await updateSgpDataExportJob(job, {
+        status: 'running',
+        progress: 3,
+        stage: 'Đang khởi tạo export',
+        startedAt,
+        workerRunId: dataExportJobWorkerRunId,
+      });
       const result = await buildSgpDataExportArchive({
         range: job.range,
         deviceId: job.deviceId,
         actor,
         onProgress: (progress, stage) => updateSgpDataExportJob(job, { progress, stage }),
       });
-      updateSgpDataExportJob(job, { progress: 92, stage: 'Đang ghi file export' });
+      await updateSgpDataExportJob(job, { progress: 92, stage: 'Đang ghi file export' });
       await mkdir(sgpDataExportDir, { recursive: true });
       const filePath = join(sgpDataExportDir, `${job.jobId}-${result.fileName}`);
       await writeFile(filePath, result.compressed);
-      updateSgpDataExportJob(job, {
+      const completedAt = new Date().toISOString();
+      await updateSgpDataExportJob(job, {
         status: 'completed',
         progress: 100,
         stage: 'Hoàn tất',
         fileName: result.fileName,
         filePath,
         sizeBytes: result.compressed.byteLength,
-        manifest: result.manifest,
+        manifest: { ...result.manifest },
+        completedAt,
       });
     } catch (error) {
-      updateSgpDataExportJob(job, {
+      await updateSgpDataExportJob(job, {
         status: 'failed',
         progress: 100,
         stage: 'Export thất bại',
         error: error instanceof Error ? error.message : 'sgpdata_export_failed',
+        completedAt: new Date().toISOString(),
       });
+    }
+  }
+
+  function enqueueSgpDataExportJob(jobId: string): void {
+    if (!sgpDataExportQueue.includes(jobId)) {
+      sgpDataExportQueue.push(jobId);
+    }
+    void drainSgpDataExportQueue();
+  }
+
+  async function drainSgpDataExportQueue(): Promise<void> {
+    if (sgpDataExportDraining) {
+      return;
+    }
+
+    sgpDataExportDraining = true;
+    try {
+      while (sgpDataExportRunning < sgpDataExportConcurrency && sgpDataExportQueue.length > 0) {
+        const jobId = sgpDataExportQueue.shift();
+        if (!jobId) {
+          continue;
+        }
+        const job = await dataExportJobRepository.get(jobId);
+        if (!job || job.status !== 'queued') {
+          continue;
+        }
+
+        sgpDataExportRunning += 1;
+        void runSgpDataExportJob(job, job.createdBy ?? 'anonymous').finally(() => {
+          sgpDataExportRunning = Math.max(0, sgpDataExportRunning - 1);
+          void drainSgpDataExportQueue();
+        });
+      }
+    } finally {
+      sgpDataExportDraining = false;
+      if (sgpDataExportRunning < sgpDataExportConcurrency && sgpDataExportQueue.length > 0) {
+        void drainSgpDataExportQueue();
+      }
     }
   }
 
@@ -1093,7 +1132,7 @@ export function registerRoutes({
 
     await cleanupSgpDataExportJobs();
     const now = new Date().toISOString();
-    const job: SgpDataExportJob = {
+    const job: DataExportJob = {
       jobId: randomUUID(),
       status: 'queued',
       progress: 0,
@@ -1102,11 +1141,27 @@ export function registerRoutes({
       updatedAt: now,
       range,
       deviceId: query.deviceId,
+      createdBy: principalActor(principal),
+      expiresAt: new Date(Date.now() + sgpDataExportJobTtlMs).toISOString(),
     };
-    sgpDataExportJobs.set(job.jobId, job);
-    void runSgpDataExportJob(job, principalActor(principal));
+    await dataExportJobRepository.save(job);
+    enqueueSgpDataExportJob(job.jobId);
 
     return reply.code(202).send({ ok: true, data: toSgpDataExportJobResponse(job) });
+  });
+
+  app.get('/api/sgpdata/export/jobs', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const queryResult = sgpDataExportJobListQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_export_job_query_invalid' });
+    }
+    await cleanupSgpDataExportJobs();
+    const jobs = await dataExportJobRepository.list(queryResult.data.limit ?? 20);
+    return reply.send({ ok: true, data: { items: jobs.map(toSgpDataExportJobResponse) } });
   });
 
   app.get('/api/sgpdata/export/jobs/:jobId', async (request, reply) => {
@@ -1119,7 +1174,7 @@ export function registerRoutes({
       return reply.code(422).send({ ok: false, error: 'sgpdata_job_id_required' });
     }
     await cleanupSgpDataExportJobs();
-    const job = sgpDataExportJobs.get(params.data.jobId);
+    const job = await dataExportJobRepository.get(params.data.jobId);
     if (!job) {
       return reply.code(404).send({ ok: false, error: 'sgpdata_export_job_not_found' });
     }
@@ -1135,19 +1190,22 @@ export function registerRoutes({
     if (!params.success) {
       return reply.code(422).send({ ok: false, error: 'sgpdata_job_id_required' });
     }
-    const job = sgpDataExportJobs.get(params.data.jobId);
+    await cleanupSgpDataExportJobs();
+    const job = await dataExportJobRepository.get(params.data.jobId);
     if (!job) {
       return reply.code(404).send({ ok: false, error: 'sgpdata_export_job_not_found' });
     }
     if (job.status !== 'completed' || !job.filePath || !job.fileName) {
       return reply.code(409).send({ ok: false, error: 'sgpdata_export_job_not_ready', data: toSgpDataExportJobResponse(job) });
     }
+    const fileStat = await stat(job.filePath).catch(() => null);
+    if (!fileStat || !fileStat.isFile()) {
+      return reply.code(404).send({ ok: false, error: 'sgpdata_export_file_not_found', data: toSgpDataExportJobResponse(job) });
+    }
     reply.header('content-type', 'application/vnd.sgpdata');
     reply.header('content-disposition', `attachment; filename="${job.fileName}"`);
     reply.header('cache-control', 'no-store');
-    if (job.sizeBytes) {
-      reply.header('content-length', String(job.sizeBytes));
-    }
+    reply.header('content-length', String(job.sizeBytes ?? fileStat.size));
     return reply.send(createReadStream(job.filePath));
   });
 

@@ -14,6 +14,8 @@ import { AuditService } from './modules/audit/audit.service.js';
 import { createAuthServiceFromEnv } from './modules/auth/index.js';
 import { InMemoryDeviceRepository } from './modules/device/in-memory-device.repository.js';
 import { DeviceService } from './modules/device/device.service.js';
+import { InMemoryDataExportJobRepository } from './modules/data-export/in-memory-data-export-job.repository.js';
+import { MySqlDataExportJobRepository } from './modules/data-export/mysql-data-export-job.repository.js';
 import { MySqlTelemetryRepository } from './modules/telemetry/mysql-telemetry.repository.js';
 import { TelemetryService } from './modules/telemetry/telemetry.service.js';
 import { InMemoryCommandRepository } from './modules/command/in-memory-command.repository.js';
@@ -111,6 +113,12 @@ const telemetryRepository = await MySqlTelemetryRepository.create(mysqlAccess);
 const commandRepository = mysqlAccess
   ? await MySqlCommandRepository.create(mysqlAccess)
   : new InMemoryCommandRepository();
+const dataExportJobRepository = mysqlAccess
+  ? await MySqlDataExportJobRepository.create(mysqlAccess)
+  : new InMemoryDataExportJobRepository();
+if (serverRuntime) {
+  await dataExportJobRepository.markActiveJobsInterrupted(serverRuntime.startedAt, 'server_restarted');
+}
 const alertRepository = await InMemoryAlertRepository.create(mysqlAccess);
 const auditRepository = await InMemoryAuditRepository.create(mysqlAccess);
 
@@ -150,6 +158,8 @@ for (const listener of listeners) {
     realtimeGateway,
     zoneService,
     spectrumStorageService,
+    dataExportJobRepository,
+    dataExportJobWorkerRunId: serverRuntime?.runId,
     persistenceStatus: mysqlRuntime.status,
   });
 }

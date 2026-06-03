@@ -42,9 +42,14 @@ type ExportJob = {
   stage: string;
   createdAt: string;
   updatedAt: string;
+  range?: { from?: string; to?: string };
+  deviceId?: string;
   fileName?: string;
   sizeBytes?: number;
   error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  expiresAt?: string;
   manifest?: {
     deviceCount?: number;
     measurementCount?: number;
@@ -52,6 +57,7 @@ type ExportJob = {
     placementConfigCount?: number;
   };
 };
+type ExportJobListResponse = { items?: ExportJob[] };
 
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"] as const;
 const EXPORT_JOB_STORAGE_KEY = "sgp:data-export-job";
@@ -207,6 +213,14 @@ function clearStoredExportJobId(jobId?: string): void {
   }
 }
 
+function isExportJobActive(job?: ExportJob | null): boolean {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+function sortExportJobs(jobs: ExportJob[]): ExportJob[] {
+  return [...jobs].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
 export function SgpDataPortabilityPanel({
   mode,
   allowModeSwitch = false,
@@ -224,6 +238,7 @@ export function SgpDataPortabilityPanel({
   const [to, setTo] = useState("");
   const [rangePickerOpen, setRangePickerOpen] = useState(false);
   const [exportJob, setExportJob] = useState<ExportJob | null>(null);
+  const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [startCursorMonth, setStartCursorMonth] = useState(() => startOfMonth(new Date()));
   const [endCursorMonth, setEndCursorMonth] = useState(() => startOfMonth(new Date()));
   const [draftStartDate, setDraftStartDate] = useState<Date | null>(null);
@@ -246,6 +261,7 @@ export function SgpDataPortabilityPanel({
       to: preview?.dateRange?.to ?? meta.dateTo ?? meta.to,
     };
   }, [preview]);
+  const sharedExportBusy = exportJobs.some(isExportJobActive);
 
   useEffect(() => {
     if (!mode) return;
@@ -268,6 +284,7 @@ export function SgpDataPortabilityPanel({
       .then((job) => {
         if (cancelled) return;
         setExportJob(job);
+        upsertExportJob(job);
         if (job.status === "queued" || job.status === "running") {
           setStatus("loading");
           setMessage(job.stage || "Đang export dữ liệu...");
@@ -284,6 +301,17 @@ export function SgpDataPortabilityPanel({
   }, [activeMode, exportJob]);
 
   useEffect(() => {
+    if (activeMode !== "export") return;
+    void refreshExportJobs();
+  }, [activeMode]);
+
+  useEffect(() => {
+    if (activeMode !== "export" || !sharedExportBusy) return;
+    const timer = window.setInterval(() => void refreshExportJobs(), 1500);
+    return () => window.clearInterval(timer);
+  }, [activeMode, sharedExportBusy]);
+
+  useEffect(() => {
     if (activeMode !== "export" || !exportJob || exportJob.status === "completed" || exportJob.status === "failed") return;
     let cancelled = false;
     let timer: number | undefined;
@@ -292,6 +320,7 @@ export function SgpDataPortabilityPanel({
         const nextJob = await fetchExportJob(exportJob.jobId);
         if (cancelled) return;
         setExportJob(nextJob);
+        upsertExportJob(nextJob);
         if (nextJob.status === "queued" || nextJob.status === "running") {
           setStatus("loading");
           setMessage(nextJob.stage || "Đang export dữ liệu...");
@@ -346,7 +375,7 @@ export function SgpDataPortabilityPanel({
     };
   }, [rangePickerOpen]);
 
-  const exportBusy = exportJob?.status === "queued" || exportJob?.status === "running";
+  const exportBusy = isExportJobActive(exportJob);
   const exportDisabled = exportBusy || status === "loading" || !from || !to;
   const importDisabled = status === "loading" || !file || !preview;
 
@@ -455,6 +484,28 @@ export function SgpDataPortabilityPanel({
     return requestJson<ExportJob>(`/api/sgpdata/export/jobs/${encodeURIComponent(jobId)}`);
   }
 
+  async function fetchExportJobs(): Promise<ExportJob[]> {
+    const result = await requestJson<ExportJobListResponse>("/api/sgpdata/export/jobs?limit=20");
+    return sortExportJobs(result.items ?? []);
+  }
+
+  function upsertExportJob(job: ExportJob): void {
+    setExportJobs((current) => sortExportJobs([job, ...current.filter((item) => item.jobId !== job.jobId)]).slice(0, 20));
+  }
+
+  async function refreshExportJobs(): Promise<void> {
+    try {
+      const jobs = await fetchExportJobs();
+      setExportJobs(jobs);
+      setExportJob((current) => {
+        if (!current) return current;
+        return jobs.find((job) => job.jobId === current.jobId) ?? current;
+      });
+    } catch {
+      // Keep current UI state; direct job polling still reports actionable errors.
+    }
+  }
+
   async function downloadExportJob(job: ExportJob): Promise<void> {
     const response = await fetch(`/api/sgpdata/export/jobs/${encodeURIComponent(job.jobId)}/download`);
     if (!response.ok) throw new Error(await readError(response));
@@ -508,6 +559,7 @@ export function SgpDataPortabilityPanel({
         }),
       });
       setExportJob(job);
+      upsertExportJob(job);
       storeExportJobId(job.jobId);
       setMessage(job.stage || "Đang export dữ liệu...");
     } catch (error) {
@@ -632,6 +684,7 @@ export function SgpDataPortabilityPanel({
             <ScopeItem icon={<CalendarClock size={14} />} title="Range" value={from && to ? formatShortRange(from, to) : "--"} />
           </div>
           {exportJob ? <ExportProgressCard job={exportJob} /> : null}
+          {exportJobs.length > 0 ? <ExportJobList jobs={exportJobs} activeJobId={exportJob?.jobId} /> : null}
         </section>
       ) : (
         <section style={sectionStyle()}>
@@ -1008,6 +1061,68 @@ export function SgpDataPortabilityPanel({
         </div>
         <div style={{ color: C.textBase, fontSize: "0.69rem", marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={value}>
           {value}
+        </div>
+      </div>
+    );
+  }
+
+  function exportStatusLabel(status: ExportJobStatus): string {
+    if (status === "queued") return "Chờ";
+    if (status === "running") return "Đang chạy";
+    if (status === "completed") return "Xong";
+    return "Lỗi";
+  }
+
+  function ExportJobList({ jobs, activeJobId }: { jobs: ExportJob[]; activeJobId?: string }) {
+    return (
+      <div style={{ borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ minHeight: 34, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: `1px solid ${C.border}` }}>
+          <span style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 900 }}>Job export chung</span>
+          <span style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 850 }}>{jobs.length} job</span>
+        </div>
+        <div style={{ display: "grid", gap: 0 }}>
+          {jobs.slice(0, 6).map((job, index) => {
+            const completed = job.status === "completed";
+            const failed = job.status === "failed";
+            const active = isExportJobActive(job);
+            const fg = failed ? C.danger : completed ? C.success : C.primary;
+            const rangeLabel = job.range?.from && job.range?.to ? formatShortRange(job.range.from, job.range.to) : "--";
+            return (
+              <div key={job.jobId} style={{ padding: "9px 10px", borderTop: index === 0 ? "none" : `1px solid ${C.border}`, display: "grid", gap: 7, background: job.jobId === activeJobId ? C.primaryBg : "transparent" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: fg, flexShrink: 0 }} />
+                      <span style={{ color: C.textBright, fontSize: "0.7rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={job.fileName ?? job.stage}>
+                        {job.fileName ?? job.stage}
+                      </span>
+                    </div>
+                    <div style={{ color: failed ? C.danger : C.textMuted, fontSize: "0.62rem", fontWeight: 760, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={failed ? job.error : rangeLabel}>
+                      {failed ? job.error || "Export thất bại" : rangeLabel}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+                    <span style={{ color: fg, fontSize: "0.66rem", fontWeight: 900 }}>{exportStatusLabel(job.status)} · {Math.round(job.progress)}%</span>
+                    {active ? <Loader2 size={13} color={fg} style={{ animation: "webSpin 0.8s linear infinite" }} /> : null}
+                    {completed ? (
+                      <button type="button" onClick={() => void handleExportJobDownload(job)} style={{ ...secondaryButtonStyle(), height: 28, padding: "0 9px", fontSize: "0.64rem" }}>
+                        <Download size={12} />
+                        Tải
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ height: 5, borderRadius: 999, background: C.surface, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, job.progress))}%`, background: fg, transition: "width 180ms ease" }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.6rem", fontWeight: 760, minWidth: 0 }}>
+                  <span>{fmtDateTime(job.updatedAt)}</span>
+                  <span>{job.sizeBytes ? fmtBytes(job.sizeBytes) : "--"}</span>
+                  {job.manifest ? <span>{fmtCount(job.manifest.measurementCount)} điểm đo</span> : null}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     );

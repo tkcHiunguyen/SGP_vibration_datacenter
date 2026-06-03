@@ -543,6 +543,39 @@ CREATE TABLE IF NOT EXISTS device_commands (
     ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS data_export_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  job_id VARCHAR(191) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  progress SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  stage VARCHAR(255) NOT NULL,
+  date_from DATETIME(3) NOT NULL,
+  date_to DATETIME(3) NOT NULL,
+  device_id VARCHAR(191) NULL,
+  created_by VARCHAR(191) NULL,
+  worker_run_id VARCHAR(191) NULL,
+  file_name VARCHAR(255) NULL,
+  file_path VARCHAR(1024) NULL,
+  size_bytes BIGINT UNSIGNED NULL,
+  manifest_json JSON NULL,
+  error TEXT NULL,
+  created_at DATETIME(3) NOT NULL,
+  started_at DATETIME(3) NULL,
+  completed_at DATETIME(3) NULL,
+  expires_at DATETIME(3) NULL,
+  updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_data_export_jobs_job_id (job_id),
+  KEY idx_data_export_jobs_status_created (status, created_at),
+  KEY idx_data_export_jobs_created_at (created_at),
+  KEY idx_data_export_jobs_expires_at (expires_at),
+  KEY idx_data_export_jobs_device_created (device_id, created_at),
+  CONSTRAINT fk_data_export_jobs_device
+    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    ON UPDATE CASCADE
+    ON DELETE SET NULL
+);
+
 -- Legacy table rename: keep old data when upgrading telemetry table name.
 SET @has_legacy_telemetry_messages := (
   SELECT COUNT(*)
