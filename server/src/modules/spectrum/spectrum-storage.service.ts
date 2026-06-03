@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
 import type { SpectrumAxis, TelemetrySpectrumMessage } from '../../shared/types.js';
@@ -78,6 +78,23 @@ type SpectrumFrameSummary = {
   totalBytes: number;
 };
 
+export type SpectrumArchiveFrame = {
+  deviceId: string;
+  capturedAt: string;
+  telemetryUuid?: string;
+  deviceDataId?: number;
+  storagePath: string;
+  fileSizeBytes?: number;
+  checksumSha256?: string;
+  contentBase64: string;
+};
+
+export type SpectrumArchiveImportResult = {
+  inserted: number;
+  updated: number;
+  skipped: number;
+};
+
 export type PlacementConfigPayload = Record<string, unknown> & {
   version?: number;
   deviceId?: string;
@@ -103,6 +120,26 @@ function sanitizePathSegment(input: string, fallback: string): string {
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return normalized || fallback;
+}
+
+function assertSafeRelativePath(path: string): string {
+  const normalized = normalize(path).replaceAll('\\', '/');
+  if (!normalized || normalized.startsWith('../') || normalized === '..' || normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) {
+    throw new Error('unsafe_spectrum_path');
+  }
+  return normalized;
+}
+
+function isInsideBase(baseDir: string, absolutePath: string): boolean {
+  const rel = relative(baseDir, absolutePath);
+  return Boolean(rel) && !rel.startsWith('..') && !rel.includes(`..${sep}`) && !rel.startsWith(sep);
+}
+
+function createArchiveSpectrumTelemetryUuid(row: SpectrumFrameRow): string {
+  if (row.telemetry_uuid && row.telemetry_uuid.trim()) {
+    return row.telemetry_uuid.trim().slice(0, 255);
+  }
+  return `sgp-frame:${row.device_id}:${toIsoTimestamp(row.captured_at)}`.slice(0, 255);
 }
 
 export class SpectrumStorageService {
@@ -378,7 +415,8 @@ export class SpectrumStorageService {
 
   private findOrCreateFrame(point: TelemetrySpectrumMessage, timestampMs: number): PendingSpectrumFrame {
     if (point.telemetryUuid) {
-      const uuidKey = `${point.deviceId}:uuid:${point.telemetryUuid}`;
+      const uuidPart = point.uuid?.trim() || point.deviceId;
+      const uuidKey = `${uuidPart}:uuid:${point.telemetryUuid}`;
       const existing = this.pendingFrames.get(uuidKey);
       if (existing) {
         return existing;
@@ -584,6 +622,146 @@ export class SpectrumStorageService {
         new Date().toISOString(),
       ],
     );
+  }
+
+  async exportFrames(deviceId: string, from: string, to: string): Promise<SpectrumArchiveFrame[]> {
+    if (!this.mysql) {
+      return [];
+    }
+    const rows = await this.mysql.query<SpectrumFrameRow>(
+      `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
+         FROM device_spectrum_frames
+        WHERE device_id = ? AND captured_at >= ? AND captured_at <= ?
+        ORDER BY captured_at ASC`,
+      [deviceId, from, to],
+    );
+    const frames: SpectrumArchiveFrame[] = [];
+    for (const row of rows) {
+      const safePath = assertSafeRelativePath(row.storage_path);
+      const absolutePath = join(this.baseDir, safePath);
+      if (!isInsideBase(this.baseDir, absolutePath)) {
+        continue;
+      }
+      try {
+        const content = await readFile(absolutePath);
+        const checksum = createHash('sha256').update(content).digest('hex');
+        if (row.checksum_sha256 && checksum !== row.checksum_sha256) {
+          continue;
+        }
+        const telemetryUuid = createArchiveSpectrumTelemetryUuid(row);
+        frames.push({
+          deviceId: row.device_id,
+          capturedAt: toIsoTimestamp(row.captured_at),
+          telemetryUuid,
+          storagePath: safePath,
+          fileSizeBytes: typeof row.file_size_bytes === 'number' ? row.file_size_bytes : content.byteLength,
+          checksumSha256: row.checksum_sha256 ?? checksum,
+          contentBase64: content.toString('base64'),
+        });
+      } catch {
+        continue;
+      }
+    }
+    return frames;
+  }
+
+  async importFrames(frames: SpectrumArchiveFrame[]): Promise<SpectrumArchiveImportResult> {
+    const result: SpectrumArchiveImportResult = { inserted: 0, updated: 0, skipped: 0 };
+    for (const frame of frames) {
+      try {
+        const safePath = assertSafeRelativePath(frame.storagePath);
+        const absolutePath = join(this.baseDir, safePath);
+        if (!isInsideBase(this.baseDir, absolutePath)) {
+          throw new Error('unsafe_spectrum_path');
+        }
+        const content = Buffer.from(frame.contentBase64, 'base64');
+        const checksum = createHash('sha256').update(content).digest('hex');
+        if (frame.checksumSha256 && checksum !== frame.checksumSha256) {
+          result.skipped += 1;
+          continue;
+        }
+        await mkdir(dirname(absolutePath), { recursive: true });
+        const temporaryPath = `${absolutePath}.tmp`;
+        await writeFile(temporaryPath, content);
+        await rename(temporaryPath, absolutePath);
+
+        if (!this.mysql) {
+          result.inserted += 1;
+          continue;
+        }
+        const payload = await this.readPersistedPayload(safePath);
+        const axes = payload?.axes ?? { x: null, y: null, z: null };
+        const deviceDataId = await this.resolveDeviceDataId(frame.deviceId, frame.telemetryUuid);
+        const affectedRows = await this.mysql.execute(
+          `INSERT INTO device_spectrum_frames (
+             device_id,
+             device_data_id,
+             captured_at,
+             telemetry_uuid,
+             storage_path,
+             file_size_bytes,
+             checksum_sha256,
+             bin_count,
+             sample_rate_hz,
+             bin_hz,
+             magnitude_unit,
+             peak_x_freq_hz,
+             peak_x_amplitude,
+             peak_y_freq_hz,
+             peak_y_amplitude,
+             peak_z_freq_hz,
+             peak_z_amplitude,
+             created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             device_data_id = VALUES(device_data_id),
+             captured_at = VALUES(captured_at),
+             storage_path = VALUES(storage_path),
+             file_size_bytes = VALUES(file_size_bytes),
+             checksum_sha256 = VALUES(checksum_sha256),
+             bin_count = VALUES(bin_count),
+             sample_rate_hz = VALUES(sample_rate_hz),
+             bin_hz = VALUES(bin_hz),
+             magnitude_unit = VALUES(magnitude_unit),
+             peak_x_freq_hz = VALUES(peak_x_freq_hz),
+             peak_x_amplitude = VALUES(peak_x_amplitude),
+             peak_y_freq_hz = VALUES(peak_y_freq_hz),
+             peak_y_amplitude = VALUES(peak_y_amplitude),
+             peak_z_freq_hz = VALUES(peak_z_freq_hz),
+             peak_z_amplitude = VALUES(peak_z_amplitude)`,
+          [
+            frame.deviceId,
+            deviceDataId,
+            frame.capturedAt,
+            frame.telemetryUuid ?? null,
+            safePath,
+            content.byteLength,
+            checksum,
+            axes.x?.binCount ?? axes.y?.binCount ?? axes.z?.binCount ?? null,
+            axes.x?.sampleRateHz ?? axes.y?.sampleRateHz ?? axes.z?.sampleRateHz ?? null,
+            axes.x?.binHz ?? axes.y?.binHz ?? axes.z?.binHz ?? null,
+            axes.x?.magnitudeUnit ?? axes.y?.magnitudeUnit ?? axes.z?.magnitudeUnit ?? null,
+            axes.x?.peakFrequencyHz ?? null,
+            axes.x?.peakAmplitude ?? null,
+            axes.y?.peakFrequencyHz ?? null,
+            axes.y?.peakAmplitude ?? null,
+            axes.z?.peakFrequencyHz ?? null,
+            axes.z?.peakAmplitude ?? null,
+            new Date().toISOString(),
+          ],
+        );
+        if (affectedRows === 1) {
+          result.inserted += 1;
+        } else if (affectedRows > 1) {
+          result.updated += 1;
+        } else {
+          result.skipped += 1;
+        }
+      } catch {
+        result.skipped += 1;
+      }
+    }
+    return result;
   }
 
   async readPlacementConfig(deviceId: string): Promise<PlacementConfigPayload | null> {

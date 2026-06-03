@@ -25,6 +25,7 @@ import { SocketIoGateway } from './modules/realtime/socket-io.gateway.js';
 import { registerRoutes } from './modules/http/register-routes.js';
 import { registerSocketHandlers } from './modules/realtime/socket.handlers.js';
 import { TelemetryIngressGuard } from './modules/reliability/telemetry-ingress-guard.js';
+import { ServerRuntimeTracker } from './modules/reliability/server-runtime-tracker.js';
 import { SpectrumStorageService } from './modules/spectrum/spectrum-storage.service.js';
 import { ZoneService } from './modules/zone/zone.service.js';
 
@@ -100,8 +101,12 @@ const mysqlRuntime = await resolveActiveMySqlAccess({
 });
 const mysqlAccess = mysqlRuntime.access;
 const persistenceMode = mysqlRuntime.status.mode;
+const serverRuntimeTracker = new ServerRuntimeTracker(mysqlAccess, serviceName, env.SERVER_HEARTBEAT_MS);
+const serverRuntime = await serverRuntimeTracker.start();
 
-const deviceRepository = await InMemoryDeviceRepository.create(mysqlAccess);
+const deviceRepository = await InMemoryDeviceRepository.create(mysqlAccess, {
+  staleSessionClosedAt: serverRuntime?.previousShutdownAt,
+});
 const telemetryRepository = await MySqlTelemetryRepository.create(mysqlAccess);
 const commandRepository = mysqlAccess
   ? await MySqlCommandRepository.create(mysqlAccess)
@@ -194,6 +199,7 @@ const shutdown = async (signal: string) => {
   clearInterval(commandTimeoutSweep);
   realtimeGateway.close();
   await Promise.all(listeners.map((listener) => listener.app.close()));
+  await serverRuntimeTracker.stop(signal);
   await mysqlAccess?.close();
   process.exit(0);
 };
@@ -210,6 +216,7 @@ try {
   app.log.error({ err: error, port: env.PORT, hosts: listenHosts }, 'Failed to start server');
   realtimeGateway.close();
   await Promise.allSettled(listeners.map((listener) => listener.app.close()));
+  await serverRuntimeTracker.stop('startup_failed');
   await mysqlAccess?.close();
   throw error;
 }

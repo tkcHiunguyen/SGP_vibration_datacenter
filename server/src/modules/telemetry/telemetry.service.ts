@@ -3,9 +3,12 @@ import type { TelemetryPayload, TelemetryMessage } from '../../shared/types.js';
 import type {
   DeviceTelemetryAvailabilityDay,
   DeviceTelemetrySummary,
+  TelemetryArchiveQuery,
   TelemetryAvailabilityQuery,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
+  TelemetryImportPoint,
+  TelemetryImportResult,
   TelemetryRepository,
 } from './telemetry.repository.js';
 import { DeviceService } from '../device/device.service.js';
@@ -48,6 +51,14 @@ export class TelemetryService {
 
   async summarizeDevice(deviceId: string): Promise<DeviceTelemetrySummary> {
     return await this.repository.summarizeDevice(deviceId);
+  }
+
+  async exportHistory(query: TelemetryArchiveQuery): Promise<TelemetryImportPoint[]> {
+    return await this.repository.exportHistory(query);
+  }
+
+  async importHistory(points: TelemetryImportPoint[]): Promise<TelemetryImportResult> {
+    return await this.repository.importHistory(points);
   }
 
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {

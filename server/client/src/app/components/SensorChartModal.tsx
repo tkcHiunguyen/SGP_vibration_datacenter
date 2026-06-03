@@ -1,5 +1,5 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine } from "lucide-react";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
 import {
@@ -41,11 +41,6 @@ import {
   TELEMETRY_HISTORY_PRESETS,
   TELEMETRY_HISTORY_BUCKET_STEPS_MS,
   TOP_TREND_CHART_HEIGHT,
-  TREND_BUTTON_PAN_ACCELERATION_MS,
-  TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND,
-  TREND_BUTTON_PAN_CLICK_RATIO,
-  TREND_BUTTON_PAN_FRAME_MS,
-  TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND,
   TREND_LATEST_EPSILON_MS,
   TREND_MAX_GAP_STEP_RATIO,
   TREND_MAX_RENDER_POINTS,
@@ -53,7 +48,6 @@ import {
   TREND_MIN_VIEW_WINDOW_MS,
   TREND_OVERVIEW_HEIGHT,
   TREND_OVERVIEW_MAX_POINTS,
-  TREND_PAN_CLICK_SUPPRESS_MS,
   TREND_TILE_PIXEL_WIDTH,
   TREND_ZOOM_STEP,
   TelemetryTrendChart,
@@ -66,12 +60,10 @@ import {
   asSpectrumAxis,
   asTimestampMs,
   buildCalendarDayCells,
-  buildNullGapRanges,
   buildOverviewTelemetryRows,
   buildTiledTrendRows,
   clampAccelAmplitudeLimit,
   clampTrendViewport,
-  clipGapRangesToWindow,
   downsampleSpectrumChartData,
   formatAbsoluteAxisTime,
   formatByteSize,
@@ -87,7 +79,6 @@ import {
   formatTrendAxisTime,
   getDefaultTrendViewWindowMs,
   getTelemetryHistoryBucketMs,
-  getPrimaryWheelDelta,
   parseAmplitudeArray,
   parseDateInputValue,
   parseDeviceDataSummaryPayload,
@@ -105,9 +96,7 @@ import {
 } from "./sensor-chart-modal/chart-parts";
 import { useChartModalLayout } from "./sensor-chart-modal/useChartModalLayout";
 import type {
-  ButtonPanState,
   CalendarDayCell,
-  ChartPanState,
   DenseTelemetryRow,
   DeviceDataSummary,
   HistoryPresetKey,
@@ -118,6 +107,7 @@ import type {
   TrendGapSegment,
   TrendRow,
   TrendSeriesConfig,
+  TrendStatusBand,
   TrendViewport,
 } from "./sensor-chart-modal/chart-parts";
 
@@ -326,9 +316,45 @@ const easePlacementInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * 
 const PLAYBACK_BASE_STEP_MS = 500;
 const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
 const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
+const MISSING_DATA_THRESHOLD_MS = 5 * 60 * 1000;
 const TEMP_Y_DOMAIN_FIXED: [number, number] = [20, 120];
 const ACCEL_TREND_DEFAULT_Y_MAX = 16 * GRAVITY_MS2;
+const VRMS_TREND_DEFAULT_Y_MAX = 20;
+const DRMS_TREND_DEFAULT_Y_MAX = 1;
+const TREND_Y_MIN = 0.001;
+const TREND_Y_MAX = 1_000_000;
 const STORAGE_CHART_HISTORY_PRESET_KEY = "sgp_ui_chart_history_preset";
+const STORAGE_CHART_Y_AXIS_ZOOM_KEY = "sgp_ui_chart_y_axis_zoom";
+
+type ChartYAxisZoomStorage = {
+  accel: number;
+  vrms: number;
+  drms: number;
+  spectrum: number | null;
+};
+
+const DEFAULT_CHART_Y_AXIS_ZOOM: ChartYAxisZoomStorage = {
+  accel: ACCEL_TREND_DEFAULT_Y_MAX,
+  vrms: VRMS_TREND_DEFAULT_Y_MAX,
+  drms: DRMS_TREND_DEFAULT_Y_MAX,
+  spectrum: null,
+};
+
+function clampStoredTrendYMax(value: unknown, fallback: number): number {
+  const parsed = asFiniteNumber(value);
+  if (typeof parsed !== "number") {
+    return fallback;
+  }
+  return Math.max(TREND_Y_MIN, Math.min(TREND_Y_MAX, parsed));
+}
+
+function clampStoredSpectrumYMax(value: unknown): number | null {
+  const parsed = asFiniteNumber(value);
+  if (typeof parsed !== "number") {
+    return null;
+  }
+  return Math.max(SPECTRUM_RMS_Y_MIN_MS2, Math.min(10_000, parsed));
+}
 
 type DetailTileUxPhase = "idle" | "queued" | "loading" | "ready";
 type DetailTileUxState = {
@@ -354,6 +380,13 @@ type DetailTileCacheEntry = {
   tile: TelemetryDetailTileRequest;
   points: DeviceTelemetryPoint[];
   loadedAtMs: number;
+};
+
+type DeviceStatusHistoryItem = {
+  status: "online" | "offline";
+  startedAt: string;
+  endedAt?: string;
+  reason?: string;
 };
 
 function firstArray(...values: unknown[]): unknown[] {
@@ -385,6 +418,16 @@ function parseTelemetryHistoryPoint(item: unknown): DeviceTelemetryPoint | null 
     ax: asFiniteNumber(row.ax ?? body.ax),
     ay: asFiniteNumber(row.ay ?? body.ay),
     az: asFiniteNumber(row.az ?? body.az),
+    vrmsXMms: asFiniteNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
+    vrmsYMms: asFiniteNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
+    vrmsZMms: asFiniteNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
+    vrmsUnit: asNonEmptyString(row.vrmsUnit ?? row.vrms_unit ?? body.vrmsUnit ?? body.vrms_unit),
+    drmsXUm: asFiniteNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
+    drmsYUm: asFiniteNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
+    drmsZUm: asFiniteNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
+    drmsBandMinHz: asFiniteNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
+    drmsBandMaxHz: asFiniteNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
+    drmsUnit: asNonEmptyString(row.drmsUnit ?? row.drms_unit ?? body.drmsUnit ?? body.drms_unit),
     uuid: asNonEmptyString(row.uuid ?? body.uuid),
     telemetryUuid: asNonEmptyString(row.telemetryUuid ?? row.telemetry_uuid ?? body.telemetryUuid ?? body.telemetry_uuid),
   };
@@ -401,8 +444,32 @@ function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] 
     .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
 }
 
+function parseDeviceStatusHistoryPayload(payload: unknown): DeviceStatusHistoryItem[] {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const source = firstArray(data.items, root.items, payload);
+
+  return source
+    .map((item): DeviceStatusHistoryItem | null => {
+      const row = asRecord(item);
+      const status = row.status === "online" ? "online" : row.status === "offline" ? "offline" : null;
+      const startedAt = asNonEmptyString(row.startedAt ?? row.started_at);
+      if (!status || !startedAt) {
+        return null;
+      }
+      return {
+        status,
+        startedAt,
+        endedAt: asNonEmptyString(row.endedAt ?? row.ended_at),
+        reason: asNonEmptyString(row.reason),
+      };
+    })
+    .filter((item): item is DeviceStatusHistoryItem => Boolean(item))
+    .sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
 function hasDenseTelemetryValue(row: DenseTelemetryRow): boolean {
-  return row.temp !== null || row.ax !== null || row.ay !== null || row.az !== null;
+  return row.temp !== null || row.ax !== null || row.ay !== null || row.az !== null || row.vrmsX !== null || row.vrmsY !== null || row.vrmsZ !== null || row.drmsX !== null || row.drmsY !== null || row.drmsZ !== null;
 }
 
 function buildDenseTelemetryRowsFromPoints(
@@ -418,6 +485,12 @@ function buildDenseTelemetryRowsFromPoints(
     ax: null,
     ay: null,
     az: null,
+    vrmsX: null,
+    vrmsY: null,
+    vrmsZ: null,
+    drmsX: null,
+    drmsY: null,
+    drmsZ: null,
   });
 
   const rawRows = points
@@ -445,6 +518,30 @@ function buildDenseTelemetryRowsFromPoints(
         az:
           typeof point.az === "number" && Number.isFinite(point.az)
             ? Number(point.az.toFixed(4))
+            : null,
+        vrmsX:
+          typeof point.vrmsXMms === "number" && Number.isFinite(point.vrmsXMms)
+            ? Number(point.vrmsXMms.toFixed(4))
+            : null,
+        vrmsY:
+          typeof point.vrmsYMms === "number" && Number.isFinite(point.vrmsYMms)
+            ? Number(point.vrmsYMms.toFixed(4))
+            : null,
+        vrmsZ:
+          typeof point.vrmsZMms === "number" && Number.isFinite(point.vrmsZMms)
+            ? Number(point.vrmsZMms.toFixed(4))
+            : null,
+        drmsX:
+          typeof point.drmsXUm === "number" && Number.isFinite(point.drmsXUm)
+            ? Number((point.drmsXUm / 1000).toFixed(6))
+            : null,
+        drmsY:
+          typeof point.drmsYUm === "number" && Number.isFinite(point.drmsYUm)
+            ? Number((point.drmsYUm / 1000).toFixed(6))
+            : null,
+        drmsZ:
+          typeof point.drmsZUm === "number" && Number.isFinite(point.drmsZUm)
+            ? Number((point.drmsZUm / 1000).toFixed(6))
             : null,
       }];
     })
@@ -542,6 +639,69 @@ function estimateTelemetryGapStepMs(rows: DenseTelemetryRow[], windowMs: number)
   return Math.max(1000, Math.min(maxAllowedStepMs, Math.round(median)));
 }
 
+function buildOnlineMissingDataBands(
+  rows: DenseTelemetryRow[],
+  statusBands: TrendStatusBand[],
+  thresholdMs: number,
+  windowStartMs: number,
+  windowEndMs: number,
+): TrendGapSegment[] {
+  const safeStartMs = Math.min(windowStartMs, windowEndMs);
+  const safeEndMs = Math.max(windowStartMs, windowEndMs);
+  if (thresholdMs <= 0 || safeEndMs <= safeStartMs) {
+    return [];
+  }
+
+  const dataTimestamps = Array.from(new Set(
+    rows
+      .filter(hasDenseTelemetryValue)
+      .map((row) => row.ts)
+      .filter((ts) => Number.isFinite(ts) && ts >= safeStartMs && ts <= safeEndMs),
+  )).sort((left, right) => left - right);
+
+  const missingBands: TrendGapSegment[] = [];
+  for (const band of statusBands) {
+    if (band.status !== "online") {
+      continue;
+    }
+    const from = asFiniteNumber(band.from);
+    const to = asFiniteNumber(band.to);
+    if (typeof from !== "number" || typeof to !== "number") {
+      continue;
+    }
+
+    const bandStart = Math.max(safeStartMs, Math.min(from, to));
+    const bandEnd = Math.min(safeEndMs, Math.max(from, to));
+    if (bandEnd - bandStart <= thresholdMs) {
+      continue;
+    }
+
+    const bandPoints = dataTimestamps.filter((ts) => ts >= bandStart && ts <= bandEnd);
+    let previousTs = bandStart;
+    for (const ts of bandPoints) {
+      if (ts - previousTs > thresholdMs) {
+        missingBands.push({ from: previousTs, to: ts });
+      }
+      previousTs = ts;
+    }
+    if (bandEnd - previousTs > thresholdMs) {
+      missingBands.push({ from: previousTs, to: bandEnd });
+    }
+  }
+
+  return missingBands
+    .sort((left, right) => left.from - right.from)
+    .reduce<TrendGapSegment[]>((merged, band) => {
+      const previous = merged[merged.length - 1];
+      if (previous && band.from <= previous.to + 1) {
+        previous.to = Math.max(previous.to, band.to);
+      } else {
+        merged.push({ ...band });
+      }
+      return merged;
+    }, []);
+}
+
 type DenseTelemetryBucketAccumulator = {
   ts: number;
   telemetryUuid?: string;
@@ -554,6 +714,18 @@ type DenseTelemetryBucketAccumulator = {
   ayCount: number;
   azSum: number;
   azCount: number;
+  vrmsXSum: number;
+  vrmsXCount: number;
+  vrmsYSum: number;
+  vrmsYCount: number;
+  vrmsZSum: number;
+  vrmsZCount: number;
+  drmsXSum: number;
+  drmsXCount: number;
+  drmsYSum: number;
+  drmsYCount: number;
+  drmsZSum: number;
+  drmsZCount: number;
 };
 
 function bucketDenseTelemetryRows(
@@ -571,6 +743,12 @@ function bucketDenseTelemetryRows(
     ax: null,
     ay: null,
     az: null,
+    vrmsX: null,
+    vrmsY: null,
+    vrmsZ: null,
+    drmsX: null,
+    drmsY: null,
+    drmsZ: null,
   });
 
   const buckets = new Map<number, DenseTelemetryBucketAccumulator>();
@@ -593,6 +771,18 @@ function bucketDenseTelemetryRows(
       ayCount: 0,
       azSum: 0,
       azCount: 0,
+      vrmsXSum: 0,
+      vrmsXCount: 0,
+      vrmsYSum: 0,
+      vrmsYCount: 0,
+      vrmsZSum: 0,
+      vrmsZCount: 0,
+      drmsXSum: 0,
+      drmsXCount: 0,
+      drmsYSum: 0,
+      drmsYCount: 0,
+      drmsZSum: 0,
+      drmsZCount: 0,
     };
 
     current.valueRows += 1;
@@ -615,6 +805,12 @@ function bucketDenseTelemetryRows(
       current.azSum += row.az;
       current.azCount += 1;
     }
+    if (typeof row.vrmsX === "number" && Number.isFinite(row.vrmsX)) { current.vrmsXSum += row.vrmsX; current.vrmsXCount += 1; }
+    if (typeof row.vrmsY === "number" && Number.isFinite(row.vrmsY)) { current.vrmsYSum += row.vrmsY; current.vrmsYCount += 1; }
+    if (typeof row.vrmsZ === "number" && Number.isFinite(row.vrmsZ)) { current.vrmsZSum += row.vrmsZ; current.vrmsZCount += 1; }
+    if (typeof row.drmsX === "number" && Number.isFinite(row.drmsX)) { current.drmsXSum += row.drmsX; current.drmsXCount += 1; }
+    if (typeof row.drmsY === "number" && Number.isFinite(row.drmsY)) { current.drmsYSum += row.drmsY; current.drmsYCount += 1; }
+    if (typeof row.drmsZ === "number" && Number.isFinite(row.drmsZ)) { current.drmsZSum += row.drmsZ; current.drmsZCount += 1; }
 
     buckets.set(safeBucketTs, current);
   }
@@ -627,6 +823,12 @@ function bucketDenseTelemetryRows(
       ax: bucket.axCount > 0 ? Number((bucket.axSum / bucket.axCount).toFixed(4)) : null,
       ay: bucket.ayCount > 0 ? Number((bucket.aySum / bucket.ayCount).toFixed(4)) : null,
       az: bucket.azCount > 0 ? Number((bucket.azSum / bucket.azCount).toFixed(4)) : null,
+      vrmsX: bucket.vrmsXCount > 0 ? Number((bucket.vrmsXSum / bucket.vrmsXCount).toFixed(4)) : null,
+      vrmsY: bucket.vrmsYCount > 0 ? Number((bucket.vrmsYSum / bucket.vrmsYCount).toFixed(4)) : null,
+      vrmsZ: bucket.vrmsZCount > 0 ? Number((bucket.vrmsZSum / bucket.vrmsZCount).toFixed(4)) : null,
+      drmsX: bucket.drmsXCount > 0 ? Number((bucket.drmsXSum / bucket.drmsXCount).toFixed(3)) : null,
+      drmsY: bucket.drmsYCount > 0 ? Number((bucket.drmsYSum / bucket.drmsYCount).toFixed(3)) : null,
+      drmsZ: bucket.drmsZCount > 0 ? Number((bucket.drmsZSum / bucket.drmsZCount).toFixed(3)) : null,
     }))
     .sort((left, right) => left.ts - right.ts);
 
@@ -700,6 +902,12 @@ function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySn
       typeof point.az === "number" && Number.isFinite(point.az)
         ? Number(point.az.toFixed(3))
         : undefined,
+    vrmsX: typeof point.vrmsXMms === "number" && Number.isFinite(point.vrmsXMms) ? Number(point.vrmsXMms.toFixed(3)) : undefined,
+    vrmsY: typeof point.vrmsYMms === "number" && Number.isFinite(point.vrmsYMms) ? Number(point.vrmsYMms.toFixed(3)) : undefined,
+    vrmsZ: typeof point.vrmsZMms === "number" && Number.isFinite(point.vrmsZMms) ? Number(point.vrmsZMms.toFixed(3)) : undefined,
+    drmsX: typeof point.drmsXUm === "number" && Number.isFinite(point.drmsXUm) ? Number((point.drmsXUm / 1000).toFixed(6)) : undefined,
+    drmsY: typeof point.drmsYUm === "number" && Number.isFinite(point.drmsYUm) ? Number((point.drmsYUm / 1000).toFixed(6)) : undefined,
+    drmsZ: typeof point.drmsZUm === "number" && Number.isFinite(point.drmsZUm) ? Number((point.drmsZUm / 1000).toFixed(6)) : undefined,
   };
 }
 
@@ -750,6 +958,40 @@ function writeStoredHistoryPreset(preset: HistoryPresetKey): void {
   }
 }
 
+function readStoredChartYAxisZoom(): ChartYAxisZoomStorage {
+  if (typeof window === "undefined") {
+    return DEFAULT_CHART_Y_AXIS_ZOOM;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(STORAGE_CHART_Y_AXIS_ZOOM_KEY);
+    if (!raw) {
+      return DEFAULT_CHART_Y_AXIS_ZOOM;
+    }
+    const stored = asRecord(JSON.parse(raw));
+    return {
+      accel: clampAccelAmplitudeLimit(asFiniteNumber(stored.accel) ?? DEFAULT_CHART_Y_AXIS_ZOOM.accel),
+      vrms: clampStoredTrendYMax(stored.vrms, DEFAULT_CHART_Y_AXIS_ZOOM.vrms),
+      drms: clampStoredTrendYMax(stored.drms, DEFAULT_CHART_Y_AXIS_ZOOM.drms),
+      spectrum: clampStoredSpectrumYMax(stored.spectrum),
+    };
+  } catch {
+    return DEFAULT_CHART_Y_AXIS_ZOOM;
+  }
+}
+
+function writeStoredChartYAxisZoom(value: ChartYAxisZoomStorage): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_CHART_Y_AXIS_ZOOM_KEY, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures (private mode/quota); chart still works in-memory.
+  }
+}
+
 interface Props {
   sensor: Sensor | null;
   telemetryPoints?: DeviceTelemetryPoint[];
@@ -782,9 +1024,19 @@ export function SensorChartModal({
   onClose,
 }: Props) {
   const { C } = useTheme();
+
+  useEffect(() => {
+    document.body.classList.add("sgp-chart-modal-open");
+    return () => {
+      document.body.classList.remove("sgp-chart-modal-open");
+    };
+  }, []);
+
   const [visible, setVisible] = useState(false);
-  const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(ACCEL_TREND_DEFAULT_Y_MAX);
-  const [spectrumYAxisMax, setSpectrumYAxisMax] = useState<number | null>(null);
+  const [accelAmplitudeLimit, setAccelAmplitudeLimit] = useState(() => readStoredChartYAxisZoom().accel);
+  const [vrmsAmplitudeLimit, setVrmsAmplitudeLimit] = useState(() => readStoredChartYAxisZoom().vrms);
+  const [drmsAmplitudeLimit, setDrmsAmplitudeLimit] = useState(() => readStoredChartYAxisZoom().drms);
+  const [spectrumYAxisMax, setSpectrumYAxisMax] = useState<number | null>(() => readStoredChartYAxisZoom().spectrum);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
   const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(() => readStoredHistoryPreset());
@@ -799,10 +1051,12 @@ export function SensorChartModal({
   const [telemetryWindowAnchorMs, setTelemetryWindowAnchorMs] = useState<number>(() => Date.now());
   const [historyPresetLoading, setHistoryPresetLoading] = useState<HistoryPresetKey | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  const [statusHistoryItems, setStatusHistoryItems] = useState<DeviceStatusHistoryItem[]>([]);
   const [hoverSpectrumPoints, setHoverSpectrumPoints] = useState<DeviceSpectrumPoint[] | null>(null);
   const [hoverSpectrumLoading, setHoverSpectrumLoading] = useState(false);
   const [hoverSpectrumDebouncing, setHoverSpectrumDebouncing] = useState(false);
   const [spectrumPinnedTarget, setSpectrumPinnedTarget] = useState<SpectrumHoverTarget | null>(null);
+  const [trendHoverTarget, setTrendHoverTarget] = useState<SpectrumHoverTarget | null>(null);
   const [hoverTelemetrySnapshot, setHoverTelemetrySnapshot] = useState<HoverTelemetrySnapshot | null>(null);
   const [settingsTooltipVisible, setSettingsTooltipVisible] = useState(false);
   const [dataSettingsOpen, setDataSettingsOpen] = useState(false);
@@ -863,10 +1117,20 @@ export function SensorChartModal({
   const detailTileInFlightRef = useRef<Set<string>>(new Set());
   const detailTileEntriesRef = useRef<Map<string, DetailTileCacheEntry>>(new Map());
   const detailTileRequestSeqRef = useRef(0);
+  const statusHistoryRequestSeqRef = useRef(0);
   const autoPresetLoadedSensorIdRef = useRef<string | null>(null);
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
   const controlsBusy = Boolean(historyPresetLoading) || calendarLoading;
+
+  useEffect(() => {
+    writeStoredChartYAxisZoom({
+      accel: accelAmplitudeLimit,
+      vrms: vrmsAmplitudeLimit,
+      drms: drmsAmplitudeLimit,
+      spectrum: spectrumYAxisMax,
+    });
+  }, [accelAmplitudeLimit, drmsAmplitudeLimit, spectrumYAxisMax, vrmsAmplitudeLimit]);
 
   useEffect(() => {
     onSensorUpdatedRef.current = onSensorUpdated;
@@ -1001,6 +1265,7 @@ export function SensorChartModal({
 
   useEffect(() => {
     setSpectrumYAxisMax(null);
+    setTrendHoverTarget(null);
   }, [sensor?.id]);
   const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
 
@@ -1464,6 +1729,8 @@ export function SensorChartModal({
     setCalendarAvailabilityByMonth({});
     setCalendarAvailabilityLoadingKey(null);
     setCalendarAvailabilityError("");
+    setStatusHistoryItems([]);
+    statusHistoryRequestSeqRef.current += 1;
   }, [sensor?.id]);
 
   const animatePlacementRotation = useCallback((target: PlacementRotationValue, objectKey = positionConfigStep === 1 ? "motor" : "sensor") => {
@@ -1778,6 +2045,7 @@ export function SensorChartModal({
       if (!target) {
         return;
       }
+      setTrendHoverTarget(target);
       setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
 
       if (spectrumHoverTimerRef.current !== null) {
@@ -1811,6 +2079,7 @@ export function SensorChartModal({
       setSpectrumYAxisMax(null);
       setHoverSpectrumDebouncing(false);
       setSpectrumPinnedTarget(target);
+      setTrendHoverTarget(target);
       setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
       setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
       setHoverSpectrumLoading(false);
@@ -1831,6 +2100,7 @@ export function SensorChartModal({
     setHoverSpectrumDebouncing(false);
     setHoverSpectrumLoading(false);
     setHoverSpectrumPoints(null);
+    setTrendHoverTarget(null);
     setHoverTelemetrySnapshot(null);
     lastSpectrumHoverTsRef.current = null;
   }, [spectrumPinnedTarget]);
@@ -1849,6 +2119,7 @@ export function SensorChartModal({
     setHoverSpectrumLoading(false);
     setHoverSpectrumPoints(null);
     setSpectrumPinnedTarget(null);
+    setTrendHoverTarget(null);
     lastSpectrumHoverTsRef.current = null;
   }, [spectrumPinnedTarget]);
 
@@ -2035,6 +2306,13 @@ export function SensorChartModal({
     return telemetryWindowAnchorMs - activePresetConfig.windowMs;
   }, [activePresetConfig, telemetryWindowAnchorMs]);
 
+  const latestTelemetryPointMs = useMemo(() => {
+    return telemetryPoints.reduce((latest, point) => {
+      const parsed = Date.parse(point.receivedAt);
+      return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+    }, Number.NEGATIVE_INFINITY);
+  }, [telemetryPoints]);
+
   const timelineTelemetryData = useMemo<DenseTelemetryRow[]>(() => {
     if (!sensor || !activePresetConfig) {
       return [];
@@ -2197,6 +2475,91 @@ export function SensorChartModal({
   const trendCanPanOlder = trendVisibleWindow.startMs > telemetryWindowStartMs + Math.max(1_000, telemetryGapStepMs);
   const trendCanPanNewer = trendVisibleWindow.endMs < telemetryWindowAnchorMs - Math.max(1_000, telemetryGapStepMs);
 
+  useEffect(() => {
+    if (!sensor) {
+      return;
+    }
+
+    const requestSeq = statusHistoryRequestSeqRef.current + 1;
+    statusHistoryRequestSeqRef.current = requestSeq;
+    const timer = window.setTimeout(() => {
+      const query = new URLSearchParams({
+        from: new Date(telemetryWindowStartMs).toISOString(),
+        to: new Date(telemetryWindowAnchorMs).toISOString(),
+        limit: "5000",
+      });
+      void fetch(`/api/devices/${encodeURIComponent(sensor.id)}/status-history?${query.toString()}`, {
+        headers: { Accept: "application/json" },
+      })
+        .then((response) => response.json().then((body) => ({ ok: response.ok, body })).catch(() => ({ ok: response.ok, body: null })))
+        .then(({ ok, body }) => {
+          if (requestSeq !== statusHistoryRequestSeqRef.current) {
+            return;
+          }
+          setStatusHistoryItems(ok && body ? parseDeviceStatusHistoryPayload(body) : []);
+        })
+        .catch(() => {
+          if (requestSeq === statusHistoryRequestSeqRef.current) {
+            setStatusHistoryItems([]);
+          }
+        });
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [sensor, telemetryWindowAnchorMs, telemetryWindowStartMs]);
+
+  const trendStatusBands = useMemo<TrendStatusBand[]>(() => {
+    const fallbackEnd = telemetryWindowAnchorMs;
+    return statusHistoryItems.reduce<TrendStatusBand[]>((bands, item) => {
+        const from = Date.parse(item.startedAt);
+        const to = item.endedAt ? Date.parse(item.endedAt) : fallbackEnd;
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+          return bands;
+        }
+        bands.push({
+          from,
+          to,
+          status: item.status,
+          reason: item.reason,
+        });
+        return bands;
+      }, []);
+  }, [statusHistoryItems, telemetryWindowAnchorMs]);
+
+  useEffect(() => {
+    if (!sensor || selectedCalendarDate || !Number.isFinite(latestTelemetryPointMs)) {
+      return;
+    }
+    if (latestTelemetryPointMs <= telemetryWindowAnchorMs) {
+      return;
+    }
+
+    const nextAnchorMs = Math.round(latestTelemetryPointMs);
+    if (trendAtLatest) {
+      const currentDurationMs = Math.max(
+        trendMinViewWindowMs,
+        Math.min(loadedTrendWindowMs, trendVisibleWindow.endMs - trendVisibleWindow.startMs),
+      );
+      setTrendViewWindow({
+        startMs: nextAnchorMs - currentDurationMs,
+        endMs: nextAnchorMs,
+      });
+    }
+    setTelemetryWindowAnchorMs(nextAnchorMs);
+  }, [
+    latestTelemetryPointMs,
+    loadedTrendWindowMs,
+    selectedCalendarDate,
+    sensor,
+    telemetryWindowAnchorMs,
+    trendAtLatest,
+    trendMinViewWindowMs,
+    trendVisibleWindow.endMs,
+    trendVisibleWindow.startMs,
+  ]);
+
   const handleResetTrendViewToLatest = useCallback(() => {
     const nextDurationMs = Math.max(
       trendMinViewWindowMs,
@@ -2272,6 +2635,18 @@ export function SensorChartModal({
     setAccelAmplitudeLimit((current) => clampAccelAmplitudeLimit(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
   }, []);
 
+  const clampGenericTrendYMax = useCallback((value: number) => Math.max(TREND_Y_MIN, Math.min(TREND_Y_MAX, value)), []);
+
+  const handleVrmsYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
+    const zoomOut = deltaY > 0;
+    setVrmsAmplitudeLimit((current) => clampGenericTrendYMax(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
+  }, [clampGenericTrendYMax]);
+
+  const handleDrmsYAxisZoom = useCallback(({ deltaY }: { deltaY: number }) => {
+    const zoomOut = deltaY > 0;
+    setDrmsAmplitudeLimit((current) => clampGenericTrendYMax(current * (zoomOut ? TREND_ZOOM_STEP : 1 / TREND_ZOOM_STEP)));
+  }, [clampGenericTrendYMax]);
+
   const handleSpectrumYAxisZoom = useCallback((deltaY: number) => {
     const zoomOut = deltaY > 0;
     setSpectrumYAxisMax((current) => {
@@ -2280,6 +2655,21 @@ export function SensorChartModal({
       return Math.max(SPECTRUM_RMS_Y_MIN_MS2, Math.min(10000, Number(next.toFixed(next < 10 ? 2 : 1))));
     });
   }, [spectrumAutoYAxisMax]);
+
+  const hasYAxisZoom = useMemo(() => {
+    const same = (left: number, right: number) => Math.abs(left - right) <= 0.0001;
+    return !same(accelAmplitudeLimit, ACCEL_TREND_DEFAULT_Y_MAX)
+      || !same(vrmsAmplitudeLimit, VRMS_TREND_DEFAULT_Y_MAX)
+      || !same(drmsAmplitudeLimit, DRMS_TREND_DEFAULT_Y_MAX)
+      || spectrumYAxisMax !== null;
+  }, [accelAmplitudeLimit, drmsAmplitudeLimit, spectrumYAxisMax, vrmsAmplitudeLimit]);
+
+  const handleResetYAxisZoom = useCallback(() => {
+    setAccelAmplitudeLimit(ACCEL_TREND_DEFAULT_Y_MAX);
+    setVrmsAmplitudeLimit(VRMS_TREND_DEFAULT_Y_MAX);
+    setDrmsAmplitudeLimit(DRMS_TREND_DEFAULT_Y_MAX);
+    setSpectrumYAxisMax(null);
+  }, []);
 
   const handleTrendViewportPanChange = useCallback(
     (nextWindow: TrendViewport) => {
@@ -2397,6 +2787,46 @@ export function SensorChartModal({
       trendVisibleWindow.startMs,
     ],
   );
+  const displayTrendStatusBands = useMemo(
+    () => trendStatusBands.filter((band) => {
+      const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
+      if (!isServerOffline) {
+        return true;
+      }
+      return !displayTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
+    }),
+    [displayTelemetryData, trendStatusBands],
+  );
+  const overviewTrendStatusBands = useMemo(
+    () => trendStatusBands.filter((band) => {
+      const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
+      if (!isServerOffline) {
+        return true;
+      }
+      return !timelineTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
+    }),
+    [timelineTelemetryData, trendStatusBands],
+  );
+  const trendMissingDataBands = useMemo(
+    () => buildOnlineMissingDataBands(
+      activeTelemetryData,
+      trendStatusBands,
+      MISSING_DATA_THRESHOLD_MS,
+      trendVisibleWindow.startMs,
+      trendVisibleWindow.endMs,
+    ),
+    [activeTelemetryData, trendStatusBands, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const overviewMissingDataBands = useMemo(
+    () => buildOnlineMissingDataBands(
+      timelineTelemetryData,
+      trendStatusBands,
+      MISSING_DATA_THRESHOLD_MS,
+      telemetryWindowStartMs,
+      telemetryWindowAnchorMs,
+    ),
+    [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData, trendStatusBands],
+  );
   const activeTempData = useMemo(
     () =>
       displayTelemetryData.map((row) => ({
@@ -2417,24 +2847,34 @@ export function SensorChartModal({
     [displayTelemetryData],
   );
 
+
+  const activeVrmsData = useMemo(
+    () => displayTelemetryData.map((row) => ({
+      ts: row.ts,
+      vrmsX: row.vrmsX,
+      vrmsY: row.vrmsY,
+      vrmsZ: row.vrmsZ,
+      telemetryUuid: row.telemetryUuid,
+    })),
+    [displayTelemetryData],
+  );
+  const activeDrmsData = useMemo(
+    () => displayTelemetryData.map((row) => ({
+      ts: row.ts,
+      drmsX: row.drmsX,
+      drmsY: row.drmsY,
+      drmsZ: row.drmsZ,
+      telemetryUuid: row.telemetryUuid,
+    })),
+    [displayTelemetryData],
+  );
+
   const tempVisible = useMemo(
     () =>
       activeTempData.filter(
         (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
       ),
     [activeTempData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const tempGapRangesAll = useMemo(() => {
-    return buildNullGapRanges(
-      activeTempData,
-      (row) => typeof row.temp === "number" && Number.isFinite(row.temp),
-      (row) => row.ts,
-      displayTelemetryStepMs,
-    );
-  }, [displayTelemetryStepMs, activeTempData]);
-  const tempGapRanges = useMemo(
-    () => clipGapRangesToWindow(tempGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
-    [tempGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
   const tempDisplayData = tempVisible;
   const accelVisible = useMemo(
@@ -2444,22 +2884,19 @@ export function SensorChartModal({
       ),
     [activeAccelData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
-  const accelGapRangesAll = useMemo(() => {
-    return buildNullGapRanges(
-      activeAccelData,
-      (row) =>
-        (typeof row.ax === "number" && Number.isFinite(row.ax))
-        || (typeof row.ay === "number" && Number.isFinite(row.ay))
-        || (typeof row.az === "number" && Number.isFinite(row.az)),
-      (row) => row.ts,
-      displayTelemetryStepMs,
-    );
-  }, [activeAccelData, displayTelemetryStepMs]);
-  const accelGapRanges = useMemo(
-    () => clipGapRangesToWindow(accelGapRangesAll, trendVisibleWindow.startMs, trendVisibleWindow.endMs),
-    [accelGapRangesAll, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
   const accelDisplayData = accelVisible;
+
+  const vrmsVisible = useMemo(
+    () => activeVrmsData.filter((row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs),
+    [activeVrmsData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const vrmsDisplayData = vrmsVisible;
+  const drmsVisible = useMemo(
+    () => activeDrmsData.filter((row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs),
+    [activeDrmsData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const drmsDisplayData = drmsVisible;
+
   const playbackRows = useMemo(
     () =>
       displayTelemetryData.filter(
@@ -2471,6 +2908,12 @@ export function SensorChartModal({
             || (typeof row.ax === "number" && Number.isFinite(row.ax))
             || (typeof row.ay === "number" && Number.isFinite(row.ay))
             || (typeof row.az === "number" && Number.isFinite(row.az))
+            || (typeof row.vrmsX === "number" && Number.isFinite(row.vrmsX))
+            || (typeof row.vrmsY === "number" && Number.isFinite(row.vrmsY))
+            || (typeof row.vrmsZ === "number" && Number.isFinite(row.vrmsZ))
+            || (typeof row.drmsX === "number" && Number.isFinite(row.drmsX))
+            || (typeof row.drmsY === "number" && Number.isFinite(row.drmsY))
+            || (typeof row.drmsZ === "number" && Number.isFinite(row.drmsZ))
           ),
       ),
     [displayTelemetryData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
@@ -2505,19 +2948,16 @@ export function SensorChartModal({
     () => [0, accelAmplitudeLimit],
     [accelAmplitudeLimit],
   );
+  const vrmsTrendYDomain = useMemo<[number, number]>(
+    () => [0, vrmsAmplitudeLimit],
+    [vrmsAmplitudeLimit],
+  );
+  const drmsTrendYDomain = useMemo<[number, number]>(
+    () => [0, drmsAmplitudeLimit],
+    [drmsAmplitudeLimit],
+  );
   const showInitialLoading = telemetryLoading && telemetryPoints.length === 0;
-  const trendOverviewGapRanges = useMemo(() => {
-    return buildNullGapRanges(
-      timelineTelemetryData,
-      (row) =>
-        (typeof row.temp === "number" && Number.isFinite(row.temp))
-        || (typeof row.ax === "number" && Number.isFinite(row.ax))
-        || (typeof row.ay === "number" && Number.isFinite(row.ay))
-        || (typeof row.az === "number" && Number.isFinite(row.az)),
-      (row) => row.ts,
-      telemetryGapStepMs,
-    );
-  }, [telemetryGapStepMs, timelineTelemetryData]);
+  const chartHasTelemetry = telemetryPoints.length > 0;
   const trendOverviewResetKey = useMemo(
     () =>
       `${sensor?.id ?? "no-sensor"}:${activeHistoryPreset ?? "none"}:${Math.round(telemetryWindowStartMs / 1000)}:${Math.round(telemetryWindowAnchorMs / 1000)}`,
@@ -2699,8 +3139,6 @@ export function SensorChartModal({
     resetDetailTileCache();
     setTelemetryWindowAnchorMs(Date.now());
     const storedHistoryPreset = readStoredHistoryPreset();
-    setAccelAmplitudeLimit(ACCEL_TREND_DEFAULT_Y_MAX);
-    setSpectrumYAxisMax(null);
     setTrendViewWindow(null);
     setTrendPanning(false);
     setActiveHistoryPreset(storedHistoryPreset);
@@ -2711,6 +3149,8 @@ export function SensorChartModal({
     setCalendarAvailabilityByMonth({});
     setCalendarAvailabilityLoadingKey(null);
     setCalendarAvailabilityError("");
+    setStatusHistoryItems([]);
+    statusHistoryRequestSeqRef.current += 1;
     setHistoryPresetLoading(null);
     setCalendarLoading(false);
     setPlaybackRunning(false);
@@ -2757,35 +3197,37 @@ export function SensorChartModal({
           position: "relative",
           display: "inline-flex",
           alignItems: "center",
-          gap: 6,
-          maxWidth: "100%",
-          minHeight: 28,
+          gap: 3,
+          flex: "0 1 auto",
+          width: "fit-content",
+          maxWidth: "46%",
+          minHeight: 22,
           minWidth: 0,
           boxSizing: "border-box",
           border: `1px solid ${color}38`,
-          borderRadius: 999,
+          borderRadius: 6,
           background: `${color}12`,
           color,
-          fontSize: "0.7rem",
+          fontSize: "0.56rem",
           fontWeight: 800,
-          lineHeight: 1.25,
-          padding: "5px 26px 5px 9px",
+          lineHeight: 1.15,
+          padding: "2px 18px 2px 6px",
           cursor: axisRenameSaving ? "wait" : "pointer",
           opacity: axisRenameSaving ? 0.68 : 1,
           transition: "transform 0.14s ease, border-color 0.14s ease, background 0.14s ease",
         }}
       >
-        <span aria-hidden="true" style={{ flex: "0 0 auto", lineHeight: 1 }}>■</span>
-        <span style={{ display: "block", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.25 }}>
+        <span aria-hidden="true" style={{ flex: "0 0 auto", fontSize: "0.48rem", lineHeight: 1 }}>■</span>
+        <span style={{ display: "inline-block", minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.15 }}>
           {chartAxisLabels[axis]} <span style={{ opacity: 0.72 }}>({spectrumAxis})</span>
         </span>
         <PencilLine
-          size={10}
+          size={8}
           strokeWidth={2.3}
           aria-hidden="true"
           style={{
             position: "absolute",
-            right: 9,
+            right: 5,
             top: "50%",
             transform: "translateY(-50%)",
             pointerEvents: "none",
@@ -2812,15 +3254,16 @@ export function SensorChartModal({
           minWidth: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 5, padding: "0 4px", minHeight: 30 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 1, padding: 0, minHeight: 22, minWidth: 0, overflow: "hidden" }}>
           {renderFftAxisLabelButton(deviceAxis, spectrumAxis)}
           <div
             style={{
               color: C.textMuted,
-              fontSize: "0.62rem",
+              fontSize: "0.56rem",
               fontWeight: 600,
               minWidth: 0,
-              maxWidth: "72%",
+              maxWidth: "54%",
+              flex: "0 1 auto",
               textAlign: "right",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -2914,18 +3357,30 @@ export function SensorChartModal({
           display: "grid",
           gridTemplateColumns: modalLayout.viewportWidth < 1180 ? "1fr" : "minmax(0, 1fr) auto",
           alignItems: "start",
-          gap: 12,
+          gap: 5,
           flexShrink: 0,
           overflow: "visible",
           position: "relative",
           zIndex: 30,
         }}>
 
-	          <div style={{ minWidth: 0, display: "grid", gap: 4 }}>
-	            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, minWidth: 0 }}>
-	              <div style={{ color: C.textMuted, fontSize: "0.58rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-	                Phân tích dữ liệu cảm biến
-	              </div>
+	          <div style={{ minWidth: 0, display: "grid", gap: 1 }}>
+	            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, minWidth: 0, minHeight: 32 }}>
+	              <span
+	                title={sensor.name}
+	                style={{
+	                  color: C.textBright,
+	                  fontSize: "0.84rem",
+	                  fontWeight: 800,
+	                  lineHeight: 1.18,
+	                  minWidth: 0,
+	                  overflow: "hidden",
+	                  textOverflow: "ellipsis",
+	                  whiteSpace: "nowrap",
+	                }}
+	              >
+	                {sensor.name}
+	              </span>
 	              <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
                 <button
                   type="button"
@@ -2933,9 +3388,9 @@ export function SensorChartModal({
                   onClick={openDataSettings}
                   disabled={clearingDeviceData}
                   style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
+                    width: 32,
+                    height: 32,
+                    borderRadius: 7,
                     border: `1px solid ${C.border}`,
                     background: C.surface,
                     color: C.textMuted,
@@ -2996,31 +3451,14 @@ export function SensorChartModal({
                 </div>
               </div>
             </div>
-	            <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
-	              <span
-	                title={sensor.name}
-	                style={{
-	                  color: C.textBright,
-	                  fontSize: "0.93rem",
-	                  fontWeight: 700,
-	                  minWidth: 0,
-	                  overflow: "hidden",
-	                  textOverflow: "ellipsis",
-	                  whiteSpace: "nowrap",
-	                  flex: "1 1 auto",
-	                }}
-	              >
-	                {sensor.name}
-	              </span>
-	            </div>
 	          </div>
 
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              rowGap: 8,
+              gap: 6,
+              rowGap: 5,
               flexWrap: "wrap",
               justifyContent: "flex-end",
               minWidth: 0,
@@ -3032,10 +3470,10 @@ export function SensorChartModal({
                 disabled={!onRequestTelemetryHistory || controlsBusy}
                 onClick={handleToggleCalendarPopover}
                 style={{
-                  height: 32,
+                  height: 34,
                   borderRadius: 999,
                   border: `1px solid ${calendarPopoverOpen ? C.primary : C.border}`,
-                  padding: "0 10px",
+                  padding: "0 9px",
                   background: calendarPopoverOpen ? C.primaryBg : C.surface,
                   color: calendarPopoverOpen ? C.primary : C.textBase,
                   fontSize: "0.66rem",
@@ -3044,7 +3482,7 @@ export function SensorChartModal({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  minWidth: 128,
+                  minWidth: 116,
                   justifyContent: "space-between",
                   opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
                   transition: "all 0.14s ease",
@@ -3093,8 +3531,8 @@ export function SensorChartModal({
                       title="Chuyển sang tháng trước"
                       onClick={() => handleCalendarMonthShift(-1)}
                       style={{
-                        width: 28,
-                        height: 28,
+                        width: 34,
+                        height: 34,
                         borderRadius: 8,
                         border: `1px solid ${C.border}`,
                         background: C.surface,
@@ -3123,8 +3561,8 @@ export function SensorChartModal({
                       title="Chuyển sang tháng sau"
                       onClick={() => handleCalendarMonthShift(1)}
                       style={{
-                        width: 28,
-                        height: 28,
+                        width: 34,
+                        height: 34,
                         borderRadius: 8,
                         border: `1px solid ${C.border}`,
                         background: C.surface,
@@ -3288,11 +3726,7 @@ export function SensorChartModal({
                       minHeight: 18,
                     }}
                   >
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.6rem" }}>
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, display: "inline-block" }} />
-                      Có dữ liệu
-                    </div>
-                    <div style={{ color: C.textMuted, fontSize: "0.6rem" }}>
+                    <div style={{ color: C.textMuted, fontSize: "0.6rem", marginLeft: "auto" }}>
                       {calendarMonthLoading
                         ? "Đang tải ngày dữ liệu..."
                         : calendarAvailabilityError
@@ -3311,10 +3745,10 @@ export function SensorChartModal({
                   setTimePresetMenuOpen((open) => !open);
                 }}
                 style={{
-                  height: 32,
+                  height: 34,
                   borderRadius: 999,
                   border: `1px solid ${C.border}`,
-                  padding: "0 10px",
+                  padding: "0 9px",
                   background: C.surface,
                   color: C.textBase,
                   fontSize: "0.66rem",
@@ -3323,7 +3757,7 @@ export function SensorChartModal({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 7,
-                  minWidth: 120,
+                  minWidth: 108,
                   justifyContent: "space-between",
                   opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
                 }}
@@ -3414,16 +3848,43 @@ export function SensorChartModal({
               ) : null}
             </div>
 
+            {hasYAxisZoom ? (
+              <button
+                type="button"
+                onClick={handleResetYAxisZoom}
+                title="Reset zoom trục Y"
+                aria-label="Reset zoom trục Y"
+                style={{
+                  height: 34,
+                  borderRadius: 999,
+                  border: `1px solid ${C.primary}`,
+                  padding: "0 9px",
+                  background: C.primaryBg,
+                  color: C.primary,
+                  fontSize: "0.66rem",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexShrink: 0,
+                }}
+              >
+                <RotateCcw size={13} strokeWidth={2.2} />
+                <span>Reset zoom</span>
+              </button>
+            ) : null}
+
             <button
               type="button"
               onClick={toggleVisualizeSidebar}
               aria-pressed={visualizeOpen ? "true" : "false"}
               title={visualizeOpen ? "Ẩn mô hình 3D" : "Mở mô hình 3D"}
               style={{
-                height: 32,
+                height: 34,
                 borderRadius: 999,
                 border: `1px solid ${visualizeOpen ? C.primary : C.border}`,
-                padding: "0 12px",
+                padding: "0 10px",
                 background: visualizeOpen
                   ? `linear-gradient(135deg, ${C.primaryBg}, ${C.surface})`
                   : C.surface,
@@ -3447,10 +3908,10 @@ export function SensorChartModal({
               disabled={trendAtLatest}
               onClick={handleResetTrendViewToLatest}
               style={{
-                height: 32,
+                height: 34,
                 borderRadius: 999,
                 border: `1px solid ${trendAtLatest ? C.border : C.primary}`,
-                padding: "0 12px",
+                padding: "0 10px",
                 background: trendAtLatest ? C.surface : C.primaryBg,
                 color: trendAtLatest ? C.textMuted : C.primary,
                 fontSize: "0.66rem",
@@ -3464,8 +3925,10 @@ export function SensorChartModal({
 
             {/* X close button – prominent */}
             <button
+              type="button"
               onClick={handleClose}
               title="Đóng"
+              aria-label="Đóng khung dữ liệu thiết bị"
               disabled={clearingDeviceData}
               style={{
                 width: 34, height: 34, borderRadius: 8,
@@ -3512,13 +3975,14 @@ export function SensorChartModal({
               minWidth: 0,
               minHeight: 0,
               overflowY: "auto",
+              overflowX: "hidden",
               padding: modalLayout.contentPadding,
               overscrollBehavior: "contain",
-              scrollbarGutter: "stable",
             }}
           >
           <style>{`
             @keyframes chartSpin { to { transform: rotate(360deg); } }
+            @keyframes chartDotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
             @keyframes detailTilePulse {
               0%, 100% { opacity: 0.45; transform: scale(0.85); }
               50% { opacity: 1; transform: scale(1.18); }
@@ -3699,9 +4163,11 @@ export function SensorChartModal({
                         latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
                       },
                     ]}
-                    gapSegmentsBySeries={{ temp: tempGapRanges }}
+                    statusBands={displayTrendStatusBands}
+                    missingDataBands={trendMissingDataBands}
                     timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
                     yDomain={tempDomain}
+                    hoverTarget={trendHoverTarget}
                     pinnedTarget={spectrumPinnedTarget}
                     playheadTimestampMs={playbackCursorTs}
                     gridColor={gridColor}
@@ -3736,7 +4202,7 @@ export function SensorChartModal({
                   <div>Đang tải dữ liệu lịch sử...</div>
                 </div>
               ) : (
-                <div onContextMenu={handleTelemetryChartUnpin}>
+                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
                   <TelemetryTrendChart
                     data={accelDisplayData}
                     hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
@@ -3745,13 +4211,11 @@ export function SensorChartModal({
                       { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: "#60a5fa", strokeWidth: 1.8 },
                       { key: "az", name: `${chartAxisLabels.az} RMS`, color: "#a78bfa", strokeWidth: 1.8 },
                     ]}
-                    gapSegmentsBySeries={{
-                      ax: accelGapRanges,
-                      ay: accelGapRanges,
-                      az: accelGapRanges,
-                    }}
+                    statusBands={displayTrendStatusBands}
+                    missingDataBands={trendMissingDataBands}
                     timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
                     yDomain={accelTrendYDomain}
+                    hoverTarget={trendHoverTarget}
                     pinnedTarget={spectrumPinnedTarget}
                     playheadTimestampMs={playbackCursorTs}
                     gridColor={gridColor}
@@ -3770,125 +4234,131 @@ export function SensorChartModal({
                     onViewportPanStateChange={handleTrendPanStateChange}
                     onLeave={handleTelemetryChartLeave}
                   />
+                  {!chartHasTelemetry ? (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.74rem", pointerEvents: "none", padding: "0 12px", boxSizing: "border-box", maxWidth: "100%", textAlign: "center", overflow: "hidden" }}>
+                      <span style={{ display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Chưa có dữ liệu</span>
+                    </div>
+                  ) : telemetryLoading ? (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.10)", backdropFilter: "blur(1px)", color: C.textMuted, fontSize: "0.72rem", pointerEvents: "none" }}>Đang cập nhật...</div>
+                  ) : null}
+                </div>
+              )}
+            </ChartSection>
+
+            <ChartSection
+              title="Xu hướng vận tốc RMS (mm/s)"
+              icon={<Activity size={13} strokeWidth={2} />}
+              C={C}
+              titleGap={modalLayout.chartTitleGap}
+              cardPadding={modalLayout.chartCardPadding}
+            >
+              {showInitialLoading ? (
+                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                  <div>Đang tải dữ liệu lịch sử...</div>
+                </div>
+              ) : (
+                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
+                  <TelemetryTrendChart
+                    data={vrmsDisplayData}
+                    hoverPoints={vrmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
+                    series={[
+                      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: "#f97316", strokeWidth: 1.8 },
+                      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: "#22c55e", strokeWidth: 1.8 },
+                      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: "#06b6d4", strokeWidth: 1.8 },
+                    ]}
+                    statusBands={displayTrendStatusBands}
+                    missingDataBands={trendMissingDataBands}
+                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
+                    yDomain={vrmsTrendYDomain}
+                    hoverTarget={trendHoverTarget}
+                    pinnedTarget={spectrumPinnedTarget}
+                    playheadTimestampMs={playbackCursorTs}
+                    gridColor={gridColor}
+                    axisLabelColor={chartTextStyle.fill}
+                    C={C}
+                    height={modalLayout.chartHeight}
+                    showLegend
+                    panActive={trendPanning}
+                    canPanOlder={trendCanPanOlder}
+                    canPanNewer={trendCanPanNewer}
+                    onHoverTarget={handleTelemetryChartHover}
+                    onPinTarget={handleTelemetryChartPin}
+                    onViewportZoom={handleTrendViewportZoom}
+                    onYAxisZoom={handleVrmsYAxisZoom}
+                    onViewportPanChange={handleTrendViewportPanChange}
+                    onViewportPanStateChange={handleTrendPanStateChange}
+                    onLeave={handleTelemetryChartLeave}
+                  />
+                </div>
+              )}
+            </ChartSection>
+
+            <ChartSection
+              title="Xu hướng biên độ RMS (mm)"
+              icon={<Activity size={13} strokeWidth={2} />}
+              C={C}
+              titleGap={modalLayout.chartTitleGap}
+              cardPadding={modalLayout.chartCardPadding}
+            >
+              {showInitialLoading ? (
+                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                  <div>Đang tải dữ liệu lịch sử...</div>
+                </div>
+              ) : (
+                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
+                  <TelemetryTrendChart
+                    data={drmsDisplayData}
+                    hoverPoints={drmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
+                    series={[
+                      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: "#fb7185", strokeWidth: 1.8 },
+                      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: "#38bdf8", strokeWidth: 1.8 },
+                      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: "#c084fc", strokeWidth: 1.8 },
+                    ]}
+                    statusBands={displayTrendStatusBands}
+                    missingDataBands={trendMissingDataBands}
+                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
+                    yDomain={drmsTrendYDomain}
+                    hoverTarget={trendHoverTarget}
+                    pinnedTarget={spectrumPinnedTarget}
+                    playheadTimestampMs={playbackCursorTs}
+                    gridColor={gridColor}
+                    axisLabelColor={chartTextStyle.fill}
+                    C={C}
+                    height={modalLayout.chartHeight}
+                    showLegend
+                    panActive={trendPanning}
+                    canPanOlder={trendCanPanOlder}
+                    canPanNewer={trendCanPanNewer}
+                    onHoverTarget={handleTelemetryChartHover}
+                    onPinTarget={handleTelemetryChartPin}
+                    onViewportZoom={handleTrendViewportZoom}
+                    onYAxisZoom={handleDrmsYAxisZoom}
+                    onViewportPanChange={handleTrendViewportPanChange}
+                    onViewportPanStateChange={handleTrendPanStateChange}
+                    onLeave={handleTelemetryChartLeave}
+                  />
                 </div>
               )}
             </ChartSection>
           </div>
 
-          {!showInitialLoading ? (
-            <div style={{ marginBottom: modalLayout.sectionGap }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginBottom: modalLayout.chartTitleGap,
-                  flexWrap: "nowrap",
-                  minWidth: 0,
-                  overflowX: "auto",
-                  overflowY: "hidden",
-                  scrollbarWidth: "none",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
-                <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Toàn cảnh dữ liệu đã tải</span>
-                <label
-                  title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
-                  style={{
-                    marginLeft: "auto",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    minHeight: 22,
-                    padding: "0 8px",
-                    borderRadius: 999,
-                    border: `1px solid ${C.border}`,
-                    background: C.surface,
-                    color: C.textMuted,
-                    fontSize: "0.61rem",
-                    fontWeight: 800,
-                    letterSpacing: "0.01em",
-                    whiteSpace: "nowrap",
-                    flexShrink: 0,
-                    maxWidth: 180,
-                  }}
-                >
-                  <span>Độ phân giải</span>
-                  <select
-                    value={selectedTelemetryStepMs === "auto" ? "auto" : String(selectedTelemetryStepMs)}
-                    onChange={(event) => {
-                      const nextValue = event.currentTarget.value;
-                      setSelectedTelemetryStepMs(nextValue === "auto" ? "auto" : Number(nextValue));
-                    }}
-                    style={{
-                      height: 20,
-                      border: "none",
-                      outline: "none",
-                      background: "transparent",
-                      color: C.textBright,
-                      fontSize: "0.61rem",
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      maxWidth: 112,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    <option value="auto">Tự động ({formatTelemetryStepMs(activeTelemetryGapStepMs)}/điểm)</option>
-                    {TELEMETRY_HISTORY_BUCKET_STEPS_MS.map((stepMs) => (
-                      <option
-                        key={stepMs}
-                        value={stepMs}
-                        disabled={stepMs < activeTelemetryGapStepMs}
-                      >
-                        {formatTelemetryStepMs(stepMs)}/điểm
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div
-                style={{
-                  background: C.card,
-                  border: `1px solid ${C.cardBorder}`,
-                  borderRadius: 10,
-                  padding: modalLayout.overviewCardPadding,
-                }}
-              >
-                <TrendOverviewBrush
-                  rows={timelineTelemetryData}
-                  gapSegments={trendOverviewGapRanges}
-                  selectedStartTs={trendOverviewDisplayWindow.startMs}
-                  selectedEndTs={trendOverviewDisplayWindow.endMs}
-                  resetKey={trendOverviewResetKey}
-                  axisLabelColor={chartTextStyle.fill}
-                  C={C}
-                  height={modalLayout.overviewHeight}
-                  minWindowMs={trendMinViewWindowMs}
-                  onRangeCommit={(startTs, endTs) => {
-                    handleTrendViewportPanChange({ startMs: startTs, endMs: endTs });
-                  }}
-                />
-              </div>
-            </div>
-          ) : null}
-
-	          {/* Bottom row: FFT axes in one row */}
-	          <div>
+          {/* Bottom row: FFT axes in one row */}
+          <div>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                gap: 10,
+                gap: 6,
                 marginBottom: modalLayout.fftHeaderGap,
-                minHeight: 18,
+                minHeight: 16,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", minWidth: 0 }}>
                 <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
-                <span style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 700 }}>Phổ tần số FFT</span>
+                <span style={{ color: C.textBright, fontSize: "0.74rem", fontWeight: 700 }}>Phổ tần số FFT</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -3897,6 +4367,7 @@ export function SensorChartModal({
                     setPositionConfigOpen(true);
                   }}
                   title="Mở cấu hình vị trí motor và cảm biến"
+                  aria-label="Mở cấu hình vị trí motor và cảm biến"
                   onMouseEnter={(event) => {
                     event.currentTarget.style.transform = "translateY(-1px)";
                     event.currentTarget.style.borderColor = "rgba(20,184,166,0.55)";
@@ -3908,23 +4379,23 @@ export function SensorChartModal({
                     event.currentTarget.style.boxShadow = "none";
                   }}
                   style={{
-                    height: 24,
-                    borderRadius: 999,
+                    height: 22,
+                    borderRadius: 6,
                     border: `1px solid ${C.border}`,
-                    padding: "0 9px",
+                    padding: "0 6px",
                     background: C.surface,
                     color: C.textBase,
-                    fontSize: "0.62rem",
+                    fontSize: "0.58rem",
                     fontWeight: 800,
                     cursor: "pointer",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 5,
+                    gap: 4,
                     flexShrink: 0,
                     transition: "transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease",
                   }}
                 >
-                  <Box size={11} strokeWidth={2.2} />
+                  <Box size={10} strokeWidth={2.2} />
                   <span>Cấu hình</span>
                 </button>
               </div>
@@ -3965,6 +4436,122 @@ export function SensorChartModal({
               </div>
 
             </div>
+
+            {!showInitialLoading ? (
+              <div
+                style={{
+                  marginTop: modalLayout.sectionGap,
+                  marginLeft: -4,
+                  marginRight: -4,
+                  width: "calc(100% + 8px)",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    marginBottom: modalLayout.chartTitleGap,
+                    flexWrap: "wrap",
+                    minWidth: 0,
+                    overflowX: "hidden",
+                    overflowY: "hidden",
+                    scrollbarWidth: "none",
+                    whiteSpace: "normal",
+                  }}
+                >
+                  <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
+                  <span style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Toàn cảnh dữ liệu đã tải</span>
+                  <label
+                    title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
+                    style={{
+                      marginLeft: "auto",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      minHeight: 22,
+                      height: 22,
+                      padding: "0 5px",
+                      borderRadius: 6,
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                      color: C.textMuted,
+                      fontSize: "0.56rem",
+                      fontWeight: 800,
+                      letterSpacing: "0.01em",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                      maxWidth: "min(100%, 168px)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <span>Độ phân giải</span>
+                    <select
+                      aria-label="Độ phân giải dữ liệu đã tải"
+                      value={selectedTelemetryStepMs === "auto" ? "auto" : String(selectedTelemetryStepMs)}
+                      onChange={(event) => {
+                        const nextValue = event.currentTarget.value;
+                        setSelectedTelemetryStepMs(nextValue === "auto" ? "auto" : Number(nextValue));
+                      }}
+                      style={{
+                        height: 20,
+                        border: "none",
+                        outline: "none",
+                        background: "transparent",
+                        color: C.textBright,
+                        fontSize: "0.56rem",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        maxWidth: 104,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      <option value="auto">Tự động ({formatTelemetryStepMs(activeTelemetryGapStepMs)}/điểm)</option>
+                      {TELEMETRY_HISTORY_BUCKET_STEPS_MS.map((stepMs) => (
+                        <option
+                          key={stepMs}
+                          value={stepMs}
+                          disabled={stepMs < activeTelemetryGapStepMs}
+                        >
+                          {formatTelemetryStepMs(stepMs)}/điểm
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div
+                  style={{
+                    background: C.card,
+                    border: `1px solid ${C.cardBorder}`,
+                    borderRadius: 10,
+                    padding: modalLayout.overviewCardPadding,
+                    width: "100%",
+                    minWidth: 0,
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <TrendOverviewBrush
+                    rows={timelineTelemetryData}
+                    statusBands={overviewTrendStatusBands}
+                    missingDataBands={overviewMissingDataBands}
+                    selectedStartTs={trendOverviewDisplayWindow.startMs}
+                    selectedEndTs={trendOverviewDisplayWindow.endMs}
+                    resetKey={trendOverviewResetKey}
+                    axisLabelColor={chartTextStyle.fill}
+                    C={C}
+                    height={modalLayout.overviewHeight}
+                    minWindowMs={trendMinViewWindowMs}
+                    onRangeCommit={(startTs, endTs) => {
+                      handleTrendViewportPanChange({ startMs: startTs, endMs: endTs });
+                    }}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
           </div>
 

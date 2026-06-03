@@ -260,8 +260,18 @@ function parseTelemetryEvent(payload: unknown): { deviceId: string; point: Devic
     ax: asNumber(body.ax),
     ay: asNumber(body.ay),
     az: asNumber(body.az),
+    vrmsXMms: asNumber(root.vrmsXMms ?? root.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
+    vrmsYMms: asNumber(root.vrmsYMms ?? root.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
+    vrmsZMms: asNumber(root.vrmsZMms ?? root.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
+    vrmsUnit: safeString(root.vrmsUnit || root.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
+    drmsXUm: asNumber(root.drmsXUm ?? root.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
+    drmsYUm: asNumber(root.drmsYUm ?? root.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
+    drmsZUm: asNumber(root.drmsZUm ?? root.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
+    drmsBandMinHz: asNumber(root.drmsBandMinHz ?? root.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
+    drmsBandMaxHz: asNumber(root.drmsBandMaxHz ?? root.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
+    drmsUnit: safeString(root.drmsUnit || root.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
     uuid: safeString(body.uuid) || undefined,
-    telemetryUuid: safeString(body.telemetryUuid || body.telemetry_uuid) || undefined,
+    telemetryUuid: safeString(root.telemetryUuid || root.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
   };
 
   return { deviceId, point };
@@ -328,8 +338,18 @@ function parseTelemetryPoint(item: unknown): DeviceTelemetryPoint | null {
     ax: asNumber(body.ax),
     ay: asNumber(body.ay),
     az: asNumber(body.az),
+    vrmsXMms: asNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
+    vrmsYMms: asNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
+    vrmsZMms: asNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
+    vrmsUnit: safeString(row.vrmsUnit || row.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
+    drmsXUm: asNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
+    drmsYUm: asNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
+    drmsZUm: asNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
+    drmsBandMinHz: asNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
+    drmsBandMaxHz: asNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
+    drmsUnit: safeString(row.drmsUnit || row.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
     uuid: safeString(body.uuid) || undefined,
-    telemetryUuid: safeString(body.telemetryUuid || body.telemetry_uuid) || undefined,
+    telemetryUuid: safeString(row.telemetryUuid || row.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
   };
 }
 
@@ -345,7 +365,12 @@ function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] 
 }
 
 function telemetryKey(point: DeviceTelemetryPoint): string {
-  return point.telemetryUuid || `${point.receivedAt}|${point.ax ?? ""}|${point.ay ?? ""}|${point.az ?? ""}|${point.temperature ?? ""}`;
+  return point.telemetryUuid || point.receivedAt;
+}
+
+function telemetryTimestampMs(point: DeviceTelemetryPoint): number {
+  const parsed = Date.parse(point.receivedAt);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
 function mergeTelemetryPoints(
@@ -474,9 +499,9 @@ function DashboardShell({
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
       const raw = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY);
-      return raw === null ? true : raw === "true";
+      return raw === null ? false : raw === "true";
     } catch {
-      return true;
+      return false;
     }
   });
   const [pinnedNavLabels, setPinnedNavLabels] = useState<string[]>(() => {
@@ -568,7 +593,7 @@ function DashboardShell({
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        height: "100dvh",
         overflow: "hidden",
         background: C.bg,
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
@@ -603,6 +628,10 @@ function DashboardShell({
             navItems={sidebarNavItems}
             pinnedNavItems={pinnedNavLabels}
             onTogglePin={togglePinnedNav}
+            totalSensors={sensors.length}
+            onlineSensors={sensors.filter((sensor) => sensor.online).length}
+            offlineSensors={sensors.filter((sensor) => !sensor.online).length}
+            alertCount={signalAlerts.length}
           />
         </div>
 
@@ -627,7 +656,7 @@ export default function App() {
   const pathname = window.location.pathname;
   if (pathname === "/threed" || pathname === "/app/threed") {
     return (
-      <Suspense fallback={<div style={{ width: "100vw", height: "100dvh", background: "#000000" }} />}>
+      <Suspense fallback={<div style={{ width: "100vw", height: "100dvh", background: "#020617" }} />}>
         <ThreeDPage />
       </Suspense>
     );
@@ -645,6 +674,7 @@ export default function App() {
   const telemetryRetentionByDeviceRef = useRef<Map<string, number>>(new Map());
   const telemetryFetchStateRef = useRef<Map<string, { lastAttemptAt: number; cooldownUntil: number }>>(new Map());
   const telemetryPendingCountRef = useRef<Map<string, number>>(new Map());
+  const telemetryRequestSeqRef = useRef<Map<string, number>>(new Map());
   const spectrumPendingByDeviceRef = useRef<Map<string, DeviceSpectrumPoint[]>>(new Map());
   const spectrumFlushTimerRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Map<number, { auto?: number; remove?: number }>>(new Map());
@@ -811,6 +841,9 @@ export default function App() {
           );
     telemetryRetentionByDeviceRef.current.set(targetDeviceId, nextRetention);
 
+    const requestSeq = (telemetryRequestSeqRef.current.get(targetDeviceId) || 0) + 1;
+    telemetryRequestSeqRef.current.set(targetDeviceId, requestSeq);
+
     const pendingBefore = telemetryPendingCountRef.current.get(targetDeviceId) || 0;
     telemetryPendingCountRef.current.set(targetDeviceId, pendingBefore + 1);
     setTelemetryLoadingByDevice((previous) => ({ ...previous, [targetDeviceId]: true }));
@@ -848,6 +881,9 @@ export default function App() {
       if (!result.ok || !result.payload) {
         return;
       }
+      if (telemetryRequestSeqRef.current.get(targetDeviceId) !== requestSeq) {
+        return;
+      }
 
       const points = parseTelemetryHistoryPayload(result.payload);
       if (points.length === 0) {
@@ -858,8 +894,19 @@ export default function App() {
         const current = previous[targetDeviceId] || [];
         const retentionLimit =
           telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_VISIBLE_POINTS;
+        const incomingLatestMs = points.reduce(
+          (latest, point) => Math.max(latest, telemetryTimestampMs(point)),
+          Number.NEGATIVE_INFINITY,
+        );
+        const requestedToMs = Date.parse(to);
+        const shouldKeepNewerRealtime = replace && (
+          !Number.isFinite(requestedToMs) || requestedToMs >= Date.now() - 60_000
+        );
+        const newerRealtimePoints = shouldKeepNewerRealtime && Number.isFinite(incomingLatestMs)
+          ? current.filter((point) => telemetryTimestampMs(point) > incomingLatestMs)
+          : [];
         const nextPoints = replace
-          ? points.slice(-retentionLimit)
+          ? mergeTelemetryPoints(points, newerRealtimePoints, retentionLimit)
           : mergeTelemetryPoints(current, points, retentionLimit);
         return {
           ...previous,
@@ -886,6 +933,7 @@ export default function App() {
 
     telemetryFetchStateRef.current.delete(targetDeviceId);
     telemetryPendingCountRef.current.delete(targetDeviceId);
+    telemetryRequestSeqRef.current.set(targetDeviceId, (telemetryRequestSeqRef.current.get(targetDeviceId) || 0) + 1);
     telemetryRetentionByDeviceRef.current.delete(targetDeviceId);
     spectrumPendingByDeviceRef.current.delete(targetDeviceId);
     telemetryByDeviceRef.current = {

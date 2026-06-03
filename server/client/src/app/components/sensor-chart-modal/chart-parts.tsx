@@ -97,69 +97,61 @@ export function getChartModalLayout(): ChartModalLayout {
   const narrowWidth = viewportWidth < 1500;
   const compactWidth = viewportWidth < 1280;
   const baseChartHeight = tightHeight
-    ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+    ? 98
     : compactHeight
-      ? 132 + CHART_MODAL_EXPANDED_CHART_PX
+      ? 138
       : midHeight
-        ? 154 + CHART_MODAL_EXPANDED_CHART_PX
+        ? 138
         : scaledDesktopHeight
-          ? 172 + CHART_MODAL_EXPANDED_CHART_PX
-          : TOP_TREND_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX;
-  const baseOverviewHeight = tightHeight
-    ? 48
-    : compactHeight
-      ? 56
-      : midHeight
-        ? 66
-        : scaledDesktopHeight
-          ? 78
-          : TREND_OVERVIEW_HEIGHT;
+          ? 150
+          : 164;
+  const baseOverviewHeight = 40;
   const baseSpectrumHeight = tightHeight
-    ? 78 + CHART_MODAL_EXPANDED_CHART_PX
+    ? 70
     : compactHeight
-      ? 96 + CHART_MODAL_EXPANDED_CHART_PX
+      ? 125
       : midHeight
-        ? 112 + CHART_MODAL_EXPANDED_CHART_PX
+        ? 102
         : scaledDesktopHeight
-          ? 124 + CHART_MODAL_EXPANDED_CHART_PX
-          : SPECTRUM_CHART_HEIGHT + CHART_MODAL_EXPANDED_CHART_PX;
+          ? 114
+          : 128;
   const verticalFill = viewportWidth >= 900
-    ? Math.max(0, Math.min(180, Math.round((viewportHeight - 760) * 0.5)))
+    ? Math.max(0, Math.min(80, Math.round((viewportHeight - 760) * 0.35)))
     : 0;
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: baseChartHeight + Math.round(verticalFill * 0.55),
-    overviewHeight: baseOverviewHeight + Math.round(verticalFill * 0.1),
-    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 0.35),
-    topGridGap: tightHeight ? 8 : compactHeight ? 9 : 10,
-    sectionGap: tightHeight ? 7 : compactHeight ? 8 : scaledDesktopHeight ? 9 : 12,
-    chartTitleGap: tightHeight ? 4 : scaledDesktopHeight ? 5 : 8,
+    chartHeight: baseChartHeight + Math.round(verticalFill * 1),
+    overviewHeight: baseOverviewHeight,
+    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9),
+    topGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
+    sectionGap: tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
+    chartTitleGap: tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,
     chartCardPadding: tightHeight
-      ? "6px 6px 5px"
+      ? "3px 5px 2px"
       : compactHeight
-        ? "7px 6px 5px"
+        ? "4px 5px 2px"
         : scaledDesktopHeight
-          ? "8px 7px 6px"
-          : "12px 8px 8px",
+          ? "4px 6px 2px"
+          : "6px 7px 3px",
     overviewCardPadding: tightHeight
-      ? "6px 7px 5px"
+      ? "3px 6px 5px"
       : compactHeight
-        ? "7px 8px 6px"
+        ? "4px 7px 5px"
         : scaledDesktopHeight
-          ? "8px 9px 6px"
-          : "10px 10px 8px",
-    fftHeaderGap: tightHeight ? 5 : compactHeight ? 6 : 7,
-    fftGridGap: tightHeight ? 7 : compactHeight ? 8 : 10,
+          ? "4px 8px 5px"
+          : "6px 9px 5px",
+    fftHeaderGap: tightHeight ? 2 : compactHeight ? 3 : 3,
+    fftGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
     fftCardPadding: tightHeight
-      ? "7px 5px 5px"
+      ? "4px 4px 2px"
       : compactHeight
-        ? "8px 5px 5px"
+        ? "5px 4px 2px"
         : scaledDesktopHeight
-          ? "8px 6px 5px"
-          : "10px 6px 6px",
-    fftAxisFooterHeight: tightHeight ? 8 : 10,
+          ? "5px 5px 2px"
+          : "6px 5px 3px",
+    fftAxisFooterHeight: tightHeight ? 5 : 6,
     topGridColumns: viewportWidth < 980 ? "1fr" : "repeat(2, minmax(0, 1fr))",
     spectrumGridColumns:
       viewportWidth < 900
@@ -168,27 +160,21 @@ export function getChartModalLayout(): ChartModalLayout {
           ? "repeat(2, minmax(0, 1fr))"
           : "repeat(3, minmax(0, 1fr))",
     headerPadding: tightHeight
-      ? "8px 11px 7px"
+      ? "4px 9px 3px"
       : compactHeight
-        ? "9px 12px 8px"
+        ? "5px 9px 4px"
         : scaledDesktopHeight
-          ? "10px 14px 9px"
-          : "14px 18px 12px",
+          ? "5px 10px 4px"
+          : "7px 11px 5px",
     contentPadding: tightHeight
-      ? "8px 10px 10px"
+      ? "4px 8px 1px"
       : compactHeight
-        ? "10px 12px 12px"
+        ? "5px 9px 1px"
         : scaledDesktopHeight
-          ? "12px 14px 14px"
-          : "16px 20px",
+          ? "5px 10px 1px"
+          : "8px 14px 2px",
     modalWidth: narrowWidth ? "calc(100vw - 24px)" : "min(94vw, 1440px)",
-    modalMaxHeight: tightHeight
-      ? "calc(100dvh - 16px)"
-      : compactHeight
-        ? "calc(100dvh - 24px)"
-        : scaledDesktopHeight
-          ? "min(calc(100dvh - 48px), 900px)"
-          : "min(90dvh, 880px)",
+    modalMaxHeight: "100%",
   };
 }
 
@@ -198,10 +184,7 @@ export function stopWheelScroll(event: React.WheelEvent<HTMLElement | SVGElement
 
 export function getPrimaryWheelDelta(event: React.WheelEvent<HTMLElement | SVGElement>): number {
   const { deltaX, deltaY } = event;
-  if (Math.abs(deltaX) > Math.abs(deltaY)) {
-    return deltaX;
-  }
-  return deltaY;
+  return Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
 }
 
 export function useNonPassiveWheelBlock(ref: React.RefObject<HTMLElement | null>) {
@@ -481,7 +464,7 @@ export function normalizeSpectrumUnit(input: unknown): string {
     return "m/s²";
   }
 
-  return input.trim();
+  return input.trim() || "m/s²";
 }
 
 export function formatPeakSummary(frequencyHz?: number, amplitude?: number, unit = "m/s²"): string {
@@ -637,69 +620,6 @@ export function parseTelemetryAvailabilityPayload(payload: unknown): TelemetryAv
   return mapped.sort((left, right) => left.date.localeCompare(right.date));
 }
 
-export function buildNullGapRanges<T>(
-  rows: T[],
-  isValueAvailable: (row: T) => boolean,
-  getTs: (row: T) => number,
-  stepMs: number,
-): TrendGapSegment[] {
-  if (rows.length === 0 || stepMs <= 0) {
-    return [];
-  }
-
-  const ranges: TrendGapSegment[] = [];
-  let gapStartIndex: number | null = null;
-
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const hasValue = isValueAvailable(row);
-    if (!hasValue) {
-      if (gapStartIndex === null) {
-        gapStartIndex = index;
-      }
-      continue;
-    }
-
-    if (gapStartIndex !== null) {
-      const from = getTs(rows[gapStartIndex]);
-      const to = getTs(rows[index - 1]) + stepMs;
-      if (Number.isFinite(from) && Number.isFinite(to) && to > from) {
-        ranges.push({ from, to });
-      }
-      gapStartIndex = null;
-    }
-  }
-
-  if (gapStartIndex !== null) {
-    const from = getTs(rows[gapStartIndex]);
-    const to = getTs(rows[rows.length - 1]) + stepMs;
-    if (Number.isFinite(from) && Number.isFinite(to) && to > from) {
-      ranges.push({ from, to });
-    }
-  }
-
-  return ranges;
-}
-
-export function clipGapRangesToWindow(
-  ranges: TrendGapSegment[],
-  windowStartTs: number,
-  windowEndTs: number,
-): TrendGapSegment[] {
-  const safeStartTs = Math.min(windowStartTs, windowEndTs);
-  const safeEndTs = Math.max(windowStartTs, windowEndTs);
-  return ranges
-    .map((range) => {
-      const from = Math.max(safeStartTs, range.from);
-      const to = Math.min(safeEndTs, range.to);
-      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-        return null;
-      }
-      return { from, to };
-    })
-    .filter((range): range is TrendGapSegment => Boolean(range));
-}
-
 export function spectrumBinHz(point: DeviceSpectrumPoint | null): number | undefined {
   if (!point) {
     return undefined;
@@ -785,20 +705,6 @@ export function downsampleSpectrumChartData(
   return reduced;
 }
 
-export type ChartPanState = {
-  startClientX: number;
-  startDomainStartMs: number;
-  startDomainEndMs: number;
-  plotWidth: number;
-  moved: boolean;
-};
-
-export type ButtonPanState = {
-  direction: -1 | 1;
-  startedAt: number;
-  lastTickAt: number;
-};
-
 export type TrendViewport = {
   startMs: number;
   endMs: number;
@@ -813,12 +719,79 @@ export type HoverTelemetrySnapshot = {
   ax?: number;
   ay?: number;
   az?: number;
+  vrmsX?: number;
+  vrmsY?: number;
+  vrmsZ?: number;
+  drmsX?: number;
+  drmsY?: number;
+  drmsZ?: number;
 };
 
 export type SpectrumHoverTarget = {
   timestampMs: number;
   telemetryUuid?: string;
 };
+
+function thinAxisTicks(values: number[], maxTicks: number): number[] {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (finiteValues.length <= maxTicks) {
+    return finiteValues;
+  }
+
+  if (maxTicks <= 1) {
+    return [finiteValues[0]];
+  }
+
+  const lastIndex = finiteValues.length - 1;
+  const selected: number[] = [];
+  for (let index = 0; index < maxTicks; index += 1) {
+    const sourceIndex = Math.round((index * lastIndex) / (maxTicks - 1));
+    const value = finiteValues[sourceIndex];
+    if (typeof value === "number" && selected[selected.length - 1] !== value) {
+      selected.push(value);
+    }
+  }
+  return selected;
+}
+
+function trimFixedNumber(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function formatCompactAxisNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    return `${trimFixedNumber(value / 1_000_000, 1)}M`;
+  }
+  if (abs >= 1_000) {
+    return `${trimFixedNumber(value / 1_000, 1)}k`;
+  }
+  if (abs >= 100) {
+    return String(Math.round(value));
+  }
+  if (abs >= 10) {
+    return trimFixedNumber(value, 1);
+  }
+  if (abs >= 1) {
+    return trimFixedNumber(value, 2);
+  }
+  return trimFixedNumber(value, 3);
+}
+
+function formatTooltipDateOnly(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+function formatTooltipTimeOnly(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
 
 export type TrendRow = {
   ts: number;
@@ -839,6 +812,86 @@ export type TrendGapSegment = {
   to: number;
 };
 
+export type TrendStatusBand = TrendGapSegment & {
+  status: "online" | "offline";
+  reason?: string;
+};
+
+function statusBandOverlapsInterval(band: TrendStatusBand, from: number, to: number): boolean {
+  const bandFrom = asFiniteNumber(band.from);
+  const bandTo = asFiniteNumber(band.to);
+  if (typeof bandFrom !== 'number' || typeof bandTo !== 'number') {
+    return false;
+  }
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  return Math.max(start, Math.min(bandFrom, bandTo)) < Math.min(end, Math.max(bandFrom, bandTo));
+}
+
+function intervalHasOfflineStatus(statusBands: TrendStatusBand[], from: number, to: number): boolean {
+  return statusBands.some((band) => band.status === 'offline' && statusBandOverlapsInterval(band, from, to));
+}
+
+function gapBandOverlapsInterval(band: TrendGapSegment, from: number, to: number): boolean {
+  const bandFrom = asFiniteNumber(band.from);
+  const bandTo = asFiniteNumber(band.to);
+  if (typeof bandFrom !== 'number' || typeof bandTo !== 'number') {
+    return false;
+  }
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  return Math.max(start, Math.min(bandFrom, bandTo)) < Math.min(end, Math.max(bandFrom, bandTo));
+}
+
+function intervalHasMissingDataBand(missingDataBands: TrendGapSegment[], from: number, to: number): boolean {
+  return missingDataBands.some((band) => gapBandOverlapsInterval(band, from, to));
+}
+
+function findOfflineStatusBandAt(statusBands: TrendStatusBand[], timestampMs: number): TrendStatusBand | null {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+  return statusBands.find((band) => {
+    if (band.status !== 'offline') {
+      return false;
+    }
+    const from = asFiniteNumber(band.from);
+    const to = asFiniteNumber(band.to);
+    if (typeof from !== 'number' || typeof to !== 'number') {
+      return false;
+    }
+    return timestampMs >= Math.min(from, to) && timestampMs <= Math.max(from, to);
+  }) ?? null;
+}
+
+function findMissingDataBandAt(missingDataBands: TrendGapSegment[], timestampMs: number): TrendGapSegment | null {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+  return missingDataBands.find((band) => {
+    const from = asFiniteNumber(band.from);
+    const to = asFiniteNumber(band.to);
+    if (typeof from !== 'number' || typeof to !== 'number') {
+      return false;
+    }
+    return timestampMs >= Math.min(from, to) && timestampMs <= Math.max(from, to);
+  }) ?? null;
+}
+
+export type ChartPanState = {
+  startClientX: number;
+  startDomainStartMs: number;
+  startDomainEndMs: number;
+  plotWidth: number;
+  moved: boolean;
+};
+
+export type ButtonPanState = {
+  direction: -1 | 1;
+  startedAt: number;
+  lastTickAt: number;
+};
+
 export type DenseTelemetryRow = {
   ts: number;
   telemetryUuid?: string;
@@ -846,6 +899,12 @@ export type DenseTelemetryRow = {
   ax: number | null;
   ay: number | null;
   az: number | null;
+  vrmsX: number | null;
+  vrmsY: number | null;
+  vrmsZ: number | null;
+  drmsX: number | null;
+  drmsY: number | null;
+  drmsZ: number | null;
 };
 
 export function buildRollingRmsAccelRows(
@@ -967,6 +1026,19 @@ export function buildTiledTrendRows(
   const safeTileCount = Math.max(1, Math.min(tileCount, totalRows));
   const tileSize = Math.max(1, Math.ceil(totalRows / safeTileCount));
   const selected = new Set<number>();
+  const critical = new Set<number>([0, totalRows - 1]);
+
+  for (const seriesKey of seriesKeys) {
+    for (let index = totalRows - 1; index >= 0; index -= 1) {
+      const rawValue = rows[index]?.[seriesKey];
+      if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+        critical.add(index);
+        break;
+      }
+    }
+  }
+
+  critical.forEach((index) => selected.add(index));
 
   for (let tileStart = 0; tileStart < totalRows; tileStart += tileSize) {
     const tileEnd = Math.min(totalRows, tileStart + tileSize);
@@ -1040,7 +1112,10 @@ export function buildTiledTrendRows(
   }
 
   const selectedIndices = Array.from(selected).sort((left, right) => left - right);
-  const trimmedIndices = thinSampleIndices(selectedIndices, safeMaxPoints);
+  const trimmedIndices = Array.from(new Set([
+    ...thinSampleIndices(selectedIndices, safeMaxPoints),
+    ...critical,
+  ])).sort((left, right) => left - right);
   return trimmedIndices
     .map((index) => rows[index])
     .filter((row): row is TrendRow => Boolean(row));
@@ -1058,6 +1133,12 @@ export function buildOverviewTelemetryRows(rows: DenseTelemetryRow[], maxPoints 
       ax: typeof row.ax === "number" ? row.ax : null,
       ay: typeof row.ay === "number" ? row.ay : null,
       az: typeof row.az === "number" ? row.az : null,
+      vrmsX: typeof row.vrmsX === "number" ? row.vrmsX : null,
+      vrmsY: typeof row.vrmsY === "number" ? row.vrmsY : null,
+      vrmsZ: typeof row.vrmsZ === "number" ? row.vrmsZ : null,
+      drmsX: typeof row.drmsX === "number" ? row.drmsX : null,
+      drmsY: typeof row.drmsY === "number" ? row.drmsY : null,
+      drmsZ: typeof row.drmsZ === "number" ? row.drmsZ : null,
     }));
 }
 
@@ -1130,7 +1211,8 @@ export function parseSpectrumHoverTarget(state: unknown): SpectrumHoverTarget | 
 
 export function TrendOverviewBrush({
   rows,
-  gapSegments,
+  statusBands,
+  missingDataBands = [],
   selectedStartTs,
   selectedEndTs,
   resetKey,
@@ -1141,7 +1223,8 @@ export function TrendOverviewBrush({
   onRangeCommit,
 }: {
   rows: DenseTelemetryRow[];
-  gapSegments: TrendGapSegment[];
+  statusBands: TrendStatusBand[];
+  missingDataBands?: TrendGapSegment[];
   selectedStartTs: number;
   selectedEndTs: number;
   resetKey: string;
@@ -1165,7 +1248,7 @@ export function TrendOverviewBrush({
   const lastBrushRangeRef = useRef<{ startTs: number; endTs: number } | null>(null);
   const suppressBrushChangeRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
-  const margin = useMemo(() => ({ top: 10, right: 12, bottom: 24, left: 12 }), []);
+  const margin = useMemo(() => ({ top: 2, right: 10, bottom: 16, left: 10 }), []);
   const handleOverviewContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
   }, []);
@@ -1215,7 +1298,6 @@ export function TrendOverviewBrush({
   const xMax = Math.max(1, chartWidth - margin.left - margin.right);
   const yMax = Math.max(1, height - margin.top - margin.bottom);
   const overviewTickCount = Math.max(2, Math.min(6, Math.floor(xMax / 150)));
-  const overviewRows = useMemo(() => buildOverviewTelemetryRows(rows), [rows]);
 
   const xScale = useMemo(
     () =>
@@ -1225,46 +1307,43 @@ export function TrendOverviewBrush({
       }),
     [firstTs, lastTs, xMax],
   );
-
-  const lineData = useMemo(
-    () =>
-      overviewRows
-        .map((row) => {
-          const values = [row.temp, row.ax, row.ay, row.az].filter(
-            (value): value is number => typeof value === "number" && Number.isFinite(value),
-          );
-          if (values.length === 0) {
-            return null;
-          }
-          const magnitude = values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length;
-          return { ts: row.ts, value: magnitude };
-        })
-        .filter((item): item is { ts: number; value: number } => Boolean(item)),
-    [overviewRows],
-  );
-
-  const [yMin, yMaxValue] = useMemo(() => {
-    if (lineData.length === 0) {
-      return [0, 1] as const;
-    }
-    const min = Math.min(...lineData.map((point) => point.value));
-    const max = Math.max(...lineData.map((point) => point.value));
-    if (max <= min) {
-      return [Math.max(0, min - 0.5), max + 0.5] as const;
-    }
-    const padding = (max - min) * 0.14;
-    return [Math.max(0, min - padding), max + padding] as const;
-  }, [lineData]);
-  const hasOverviewLineData = lineData.length > 1;
   const canRenderOverviewBrush = rows.length > 0;
-
-  const yScale = useMemo(
-    () =>
-      scaleLinear<number>({
-        domain: [yMin, yMaxValue],
-        range: [yMax, 0],
-      }),
-    [yMax, yMaxValue, yMin],
+  const overviewTicks = useMemo(() => xScale.ticks(overviewTickCount), [overviewTickCount, xScale]);
+  const brushYScale = useMemo(
+    () => scaleLinear<number>({ domain: [0, 1], range: [yMax, 0] }),
+    [yMax],
+  );
+  const overviewStatusBands = useMemo(
+    () => statusBands
+      .map((band) => {
+        const from = asFiniteNumber(band.from);
+        const to = asFiniteNumber(band.to);
+        if (typeof from !== 'number' || typeof to !== 'number') {
+          return null;
+        }
+        const clippedFrom = Math.max(firstTs, Math.min(lastTs, Math.min(from, to)));
+        const clippedTo = Math.max(firstTs, Math.min(lastTs, Math.max(from, to)));
+        return clippedTo > clippedFrom ? { ...band, from: clippedFrom, to: clippedTo } : null;
+      })
+      .filter((band): band is TrendStatusBand => Boolean(band))
+      .sort((left, right) => left.from - right.from),
+    [firstTs, lastTs, statusBands],
+  );
+  const overviewMissingDataBands = useMemo(
+    () => missingDataBands
+      .map((band) => {
+        const from = asFiniteNumber(band.from);
+        const to = asFiniteNumber(band.to);
+        if (typeof from !== 'number' || typeof to !== 'number') {
+          return null;
+        }
+        const clippedFrom = Math.max(firstTs, Math.min(lastTs, Math.min(from, to)));
+        const clippedTo = Math.max(firstTs, Math.min(lastTs, Math.max(from, to)));
+        return clippedTo > clippedFrom ? { from: clippedFrom, to: clippedTo } : null;
+      })
+      .filter((band): band is TrendGapSegment => Boolean(band))
+      .sort((left, right) => left.from - right.from),
+    [firstTs, lastTs, missingDataBands],
   );
 
   const initialBrushPosition = useMemo(() => {
@@ -1482,55 +1561,59 @@ export function TrendOverviewBrush({
               stroke={C.border}
             />
 
-            {gapSegments.map((segment, index) => {
-              const rawX1 = xScale(new Date(segment.from));
-              const rawX2 = xScale(new Date(segment.to));
-              const x1 = Math.max(0, Math.min(xMax, rawX1));
-              const x2 = Math.max(0, Math.min(xMax, rawX2));
+            {overviewStatusBands.map((band, index) => {
+              const x1 = Math.max(0, Math.min(xMax, xScale(new Date(band.from))));
+              const x2 = Math.max(0, Math.min(xMax, xScale(new Date(band.to))));
+              if (Math.abs(x2 - x1) < 0.5) {
+                return null;
+              }
+              const isServerOffline = band.reason === 'server_offline' || band.reason === 'unclean_shutdown';
+              const fill = band.status === 'online'
+                ? 'rgba(34, 197, 94, 0.34)'
+                : isServerOffline ? 'rgba(245, 158, 11, 0.42)' : 'rgba(248, 113, 113, 0.44)';
+              const stroke = band.status === 'online'
+                ? 'rgba(34, 197, 94, 0.62)'
+                : isServerOffline ? 'rgba(245, 158, 11, 0.72)' : 'rgba(248, 113, 113, 0.74)';
+              return (
+                <rect
+                  key={`overview-status-${band.status}-${String(band.from)}-${index}`}
+                  x={Math.min(x1, x2)}
+                  y={1}
+                  width={Math.max(1, Math.abs(x2 - x1))}
+                  height={Math.max(1, yMax - 2)}
+                  fill={fill}
+                  stroke={stroke}
+                  strokeWidth={0.8}
+                />
+              );
+            })}
+
+            {overviewMissingDataBands.map((band, index) => {
+              const x1 = Math.max(0, Math.min(xMax, xScale(new Date(band.from))));
+              const x2 = Math.max(0, Math.min(xMax, xScale(new Date(band.to))));
               if (Math.abs(x2 - x1) < 0.5) {
                 return null;
               }
               return (
                 <rect
-                  key={`overview-gap-${index}`}
+                  key={'overview-missing-' + String(band.from) + '-' + String(index)}
                   x={Math.min(x1, x2)}
-                  y={0}
+                  y={1}
                   width={Math.max(1, Math.abs(x2 - x1))}
-                  height={yMax}
-                  fill="rgba(254, 240, 138, 0.42)"
-                  stroke="rgba(245, 158, 11, 0.22)"
-                  strokeWidth={0.6}
+                  height={Math.max(1, yMax - 2)}
+                  fill="rgba(96, 165, 250, 0.34)"
+                  stroke="rgba(96, 165, 250, 0.64)"
+                  strokeWidth={0.8}
                 />
               );
             })}
-
-            {hasOverviewLineData ? (
-              <>
-                <LinePath
-                  data={lineData}
-                  x={(point) => xScale(new Date(point.ts))}
-                  y={(point) => yScale(point.value)}
-                  stroke={C.primary}
-                  strokeWidth={4.2}
-                  strokeOpacity={0.12}
-                />
-                <LinePath
-                  data={lineData}
-                  x={(point) => xScale(new Date(point.ts))}
-                  y={(point) => yScale(point.value)}
-                  stroke={C.primary}
-                  strokeWidth={1.7}
-                  strokeOpacity={0.88}
-                />
-              </>
-            ) : null}
 
             {canRenderOverviewBrush ? (
               <Brush
                 key={resetKey}
                 innerRef={brushRef}
                 xScale={xScale}
-                yScale={yScale}
+                yScale={brushYScale}
                 width={xMax}
                 height={yMax}
                 initialBrushPosition={initialBrushPosition}
@@ -1580,57 +1663,34 @@ export function TrendOverviewBrush({
 
           </Group>
 
-          <AxisBottom
-            scale={xScale}
-            left={margin.left}
-            top={margin.top + yMax}
-            numTicks={overviewTickCount}
-            tickFormat={(value) => formatTrendAxisTime(Number(value), firstTs, lastTs)}
-            tickLabelProps={() => ({
-              fill: axisLabelColor,
-              fontSize: 9,
-              textAnchor: "middle",
+          <g aria-hidden="true">
+            {overviewTicks.map((tick) => {
+              const x = margin.left + xScale(tick);
+              return (
+                <g key={`overview-tick-${tick.getTime()}`} transform={`translate(${x},0)`}>
+                  <line y1={height - 15} y2={height - 12} stroke={C.border} strokeWidth={0.8} />
+                  <text y={height - 7} fill={axisLabelColor} fontSize={7.5} textAnchor="middle">
+                    {formatTrendAxisTime(tick.getTime(), firstTs, lastTs)}
+                  </text>
+                </g>
+              );
             })}
-            stroke={C.border}
-            tickStroke={C.border}
-          />
+          </g>
         </svg>
       ) : null}
     </div>
   );
 }
 
-export function TelemetryTrendChart({
-  data,
-  hoverPoints,
-  series,
-  gapSegmentsBySeries,
-  timeDomain,
-  yDomain,
-  pinnedTarget,
-  playheadTimestampMs = null,
-  showLegend = false,
-  gridColor,
-  axisLabelColor,
-  C,
-  height = 150,
-  panActive = false,
-  canPanOlder = false,
-  canPanNewer = false,
-  onHoverTarget,
-  onPinTarget,
-  onViewportZoom,
-  onYAxisZoom,
-  onViewportPanChange,
-  onViewportPanStateChange,
-  onLeave,
-}: {
+type TelemetryTrendChartProps = {
   data: TrendRow[];
   hoverPoints: Array<{ ts: number; telemetryUuid?: string }>;
   series: TrendSeriesConfig[];
-  gapSegmentsBySeries?: Record<string, TrendGapSegment[]>;
+  statusBands?: TrendStatusBand[];
+  missingDataBands?: TrendGapSegment[];
   timeDomain?: [number, number];
   yDomain: [number, number];
+  hoverTarget?: SpectrumHoverTarget | null;
   pinnedTarget?: SpectrumHoverTarget | null;
   playheadTimestampMs?: number | null;
   showLegend?: boolean;
@@ -1653,12 +1713,40 @@ export function TelemetryTrendChart({
   onViewportPanChange?: (next: TrendViewport) => void;
   onViewportPanStateChange?: (active: boolean) => void;
   onLeave?: () => void;
-}) {
+};
+
+export function TelemetryTrendChart({
+  data,
+  hoverPoints,
+  series,
+  statusBands = [],
+  missingDataBands = [],
+  timeDomain,
+  yDomain,
+  hoverTarget: syncedHoverTarget = null,
+  pinnedTarget,
+  playheadTimestampMs = null,
+  showLegend = false,
+  gridColor,
+  axisLabelColor,
+  C,
+  height = 150,
+  panActive = false,
+  canPanOlder = false,
+  canPanNewer = false,
+  onHoverTarget,
+  onPinTarget,
+  onViewportZoom,
+  onYAxisZoom,
+  onViewportPanChange,
+  onViewportPanStateChange,
+  onLeave,
+}: TelemetryTrendChartProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   useNonPassiveWheelBlock(wrapperRef);
   const rawPlotClipId = useId();
   const plotClipId = useMemo(
-    () => `trend-plot-${rawPlotClipId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
+    () => 'trend-plot-' + rawPlotClipId.replace(/[^a-zA-Z0-9_-]/g, ''),
     [rawPlotClipId],
   );
   const panStateRef = useRef<ChartPanState | null>(null);
@@ -1668,24 +1756,14 @@ export function TelemetryTrendChart({
   const buttonPanAvailabilityRef = useRef({ older: false, newer: false });
   const suppressNextClickRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
-  const [hoverTarget, setHoverTarget] = useState<SpectrumHoverTarget | null>(null);
+  const [localHoverTarget, setLocalHoverTarget] = useState<SpectrumHoverTarget | null>(null);
+  const [localPointerHover, setLocalPointerHover] = useState<{ x: number; y: number; timestampMs: number } | null>(null);
+  const activeHoverTarget = syncedHoverTarget ?? localHoverTarget;
 
   const margin = useMemo(
-    () => ({
-      left: 58,
-      right: 12,
-      top: showLegend ? 24 : 10,
-      bottom: 24,
-    }),
+    () => ({ left: 20, right: 8, top: showLegend ? 18 : 8, bottom: 18 }),
     [showLegend],
   );
-
-  const orderedHoverPoints = useMemo(() => {
-    const source = hoverPoints.length > 0 ? hoverPoints : data.map((item) => ({ ts: item.ts, telemetryUuid: asNonEmptyString(item.telemetryUuid) }));
-    return source
-      .filter((item) => Number.isFinite(item.ts))
-      .sort((left, right) => left.ts - right.ts);
-  }, [data, hoverPoints]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -1695,63 +1773,28 @@ export function TelemetryTrendChart({
 
     const updateWidth = () => {
       const measuredWidth = wrapper.clientWidth || wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
-      const next = Math.max(0, Math.round(measuredWidth));
-      setChartWidth(next);
+      setChartWidth(Math.max(0, Math.round(measuredWidth)));
     };
     updateWidth();
 
     const observer = new ResizeObserver(updateWidth);
     observer.observe(wrapper);
-    window.addEventListener("resize", updateWidth);
+    window.addEventListener('resize', updateWidth);
 
     return () => {
-      window.removeEventListener("resize", updateWidth);
+      window.removeEventListener('resize', updateWidth);
       observer.disconnect();
     };
   }, []);
 
-  useEffect(() => {
-    const handleMove = (event: MouseEvent) => {
-      const panState = panStateRef.current;
-      if (!panState || !onViewportPanChange) {
-        return;
-      }
-      const deltaX = event.clientX - panState.startClientX;
-      if (!panState.moved && Math.abs(deltaX) >= 2) {
-        panState.moved = true;
-      }
-      const msPerPixel =
-        (panState.startDomainEndMs - panState.startDomainStartMs) / Math.max(1, panState.plotWidth);
-      const deltaMs = -deltaX * msPerPixel;
-      onViewportPanChange({
-        startMs: panState.startDomainStartMs + deltaMs,
-        endMs: panState.startDomainEndMs + deltaMs,
-      });
-    };
-
-    const handleUp = () => {
-      const panState = panStateRef.current;
-      if (!panState) {
-        return;
-      }
-      panStateRef.current = null;
-      onViewportPanStateChange?.(false);
-      if (panState.moved) {
-        suppressNextClickRef.current = true;
-        window.setTimeout(() => {
-          suppressNextClickRef.current = false;
-        }, TREND_PAN_CLICK_SUPPRESS_MS);
-      }
-    };
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-    };
-  }, [onViewportPanChange, onViewportPanStateChange]);
+  const orderedHoverPoints = useMemo(() => {
+    const source = hoverPoints.length > 0
+      ? hoverPoints
+      : data.map((item) => ({ ts: item.ts, telemetryUuid: asNonEmptyString(item.telemetryUuid) }));
+    return source
+      .filter((item) => Number.isFinite(item.ts))
+      .sort((left, right) => left.ts - right.ts);
+  }, [data, hoverPoints]);
 
   const resolveNearestTarget = useCallback(
     (targetTs: number): SpectrumHoverTarget | null => {
@@ -1773,38 +1816,10 @@ export function TelemetryTrendChart({
       const right = orderedHoverPoints[low] ?? null;
       const left = orderedHoverPoints[Math.max(0, low - 1)] ?? null;
       const best = !left ? right : !right ? left : Math.abs(left.ts - targetTs) <= Math.abs(right.ts - targetTs) ? left : right;
-      if (!best) {
-        return null;
-      }
-      return {
-        timestampMs: best.ts,
-        telemetryUuid: best.telemetryUuid,
-      };
+      return best ? { timestampMs: best.ts, telemetryUuid: best.telemetryUuid } : null;
     },
     [orderedHoverPoints],
   );
-
-  const gapBands = useMemo(() => {
-    const mapped = Object.values(gapSegmentsBySeries ?? {})
-      .flatMap((segments) => segments)
-      .map((segment) => {
-        const from = asFiniteNumber(segment.from);
-        const to = asFiniteNumber(segment.to);
-        if (typeof from !== "number" || typeof to !== "number" || !Number.isFinite(from) || !Number.isFinite(to)) {
-          return null;
-        }
-        const safeFrom = Math.min(from, to);
-        const safeTo = Math.max(from, to);
-        if (safeTo <= safeFrom) {
-          return null;
-        }
-        return { from: safeFrom, to: safeTo };
-      })
-      .filter((segment): segment is { from: number; to: number } => Boolean(segment));
-    return [...new Map(mapped.map((segment) => [`${segment.from}:${segment.to}`, segment])).values()].sort(
-      (left, right) => left.from - right.from,
-    );
-  }, [gapSegmentsBySeries]);
 
   const renderData = useMemo(() => {
     if (data.length <= TREND_MIN_RENDER_POINTS) {
@@ -1819,34 +1834,39 @@ export function TelemetryTrendChart({
     return buildTiledTrendRows(data, seriesKeys, targetPoints, tileCount);
   }, [chartWidth, data, series]);
 
-  const plottedSeries = useMemo(() => {
-    return series.map((seriesConfig) => {
-      const segments: Array<Array<{ ts: number; value: number }>> = [];
-      let currentSegment: Array<{ ts: number; value: number }> = [];
-      let latest: { ts: number; value: number } | null = null;
+  const plottedSeries = useMemo(() => series.map((seriesConfig) => {
+    const segments: Array<Array<{ ts: number; value: number }>> = [];
+    let currentSegment: Array<{ ts: number; value: number }> = [];
+    let latest: { ts: number; value: number } | null = null;
+    let lastPoint: { ts: number; value: number } | null = null;
 
-      for (const row of renderData) {
-        const rawValue = row[seriesConfig.key];
-        if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
-          const point = { ts: row.ts, value: rawValue };
-          currentSegment.push(point);
-          latest = point;
-        } else if (currentSegment.length > 0) {
+    for (const row of renderData) {
+      const rawValue = row[seriesConfig.key];
+      if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+        const point = { ts: row.ts, value: rawValue };
+        if (
+          currentSegment.length > 0
+          && lastPoint
+          && (
+            intervalHasOfflineStatus(statusBands, lastPoint.ts, point.ts)
+            || intervalHasMissingDataBand(missingDataBands, lastPoint.ts, point.ts)
+          )
+        ) {
           segments.push(currentSegment);
-          currentSegment = [];
+          currentSegment = [point];
+        } else {
+          currentSegment.push(point);
         }
+        latest = point;
+        lastPoint = point;
       }
-      if (currentSegment.length > 0) {
-        segments.push(currentSegment);
-      }
+    }
+    if (currentSegment.length > 0) {
+      segments.push(currentSegment);
+    }
 
-      return {
-        config: seriesConfig,
-        segments,
-        latest,
-      };
-    });
-  }, [renderData, series]);
+    return { config: seriesConfig, segments, latest };
+  }), [missingDataBands, renderData, series, statusBands]);
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
@@ -1859,6 +1879,54 @@ export function TelemetryTrendChart({
   const domainMaxRaw = timeDomain?.[1] ?? (data.length > 0 ? data[data.length - 1]?.ts ?? Date.now() : Date.now());
   const domainMax = domainMaxRaw > domainMin ? domainMaxRaw : domainMin + 1000;
 
+  const xScale = useMemo(
+    () => scaleTime<number>({
+      domain: [new Date(domainMin), new Date(domainMax)],
+      range: [margin.left, margin.left + innerWidth],
+    }),
+    [domainMax, domainMin, innerWidth, margin.left],
+  );
+
+  const yScale = useMemo(
+    () => scaleLinear<number>({
+      domain: [yDomain[0], yDomain[1]],
+      range: [margin.top + innerHeight, margin.top],
+    }),
+    [innerHeight, margin.top, yDomain],
+  );
+  const yAxisTicks = useMemo(() => thinAxisTicks(yScale.ticks(6), 3), [yScale]);
+
+  const visibleStatusBands = useMemo(
+    () => statusBands
+      .map((band) => {
+        const from = asFiniteNumber(band.from);
+        const to = asFiniteNumber(band.to);
+        if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !Number.isFinite(to)) {
+          return null;
+        }
+        const clippedFrom = Math.max(domainMin, Math.min(domainMax, Math.min(from, to)));
+        const clippedTo = Math.max(domainMin, Math.min(domainMax, Math.max(from, to)));
+        return clippedTo > clippedFrom ? { ...band, from: clippedFrom, to: clippedTo } : null;
+      })
+      .filter((band): band is TrendStatusBand => Boolean(band)),
+    [domainMax, domainMin, statusBands],
+  );
+  const visibleMissingDataBands = useMemo(
+    () => missingDataBands
+      .map((band) => {
+        const from = asFiniteNumber(band.from);
+        const to = asFiniteNumber(band.to);
+        if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !Number.isFinite(to)) {
+          return null;
+        }
+        const clippedFrom = Math.max(domainMin, Math.min(domainMax, Math.min(from, to)));
+        const clippedTo = Math.max(domainMin, Math.min(domainMax, Math.max(from, to)));
+        return clippedTo > clippedFrom ? { from: clippedFrom, to: clippedTo } : null;
+      })
+      .filter((band): band is TrendGapSegment => Boolean(band)),
+    [domainMax, domainMin, missingDataBands],
+  );
+
   useEffect(() => {
     buttonPanDomainRef.current = { startMs: domainMin, endMs: domainMax };
   }, [domainMax, domainMin]);
@@ -1867,25 +1935,8 @@ export function TelemetryTrendChart({
     buttonPanAvailabilityRef.current = { older: canPanOlder, newer: canPanNewer };
   }, [canPanNewer, canPanOlder]);
 
-  const xScale = useMemo(
-    () =>
-      scaleTime<number>({
-        domain: [new Date(domainMin), new Date(domainMax)],
-        range: [margin.left, margin.left + innerWidth],
-      }),
-    [domainMax, domainMin, innerWidth, margin.left],
-  );
-
-  const yScale = useMemo(
-    () =>
-      scaleLinear<number>({
-        domain: [yDomain[0], yDomain[1]],
-        range: [margin.top + innerHeight, margin.top],
-      }),
-    [innerHeight, margin.top, yDomain],
-  );
   const playheadX = useMemo(() => {
-    if (typeof playheadTimestampMs !== "number" || !Number.isFinite(playheadTimestampMs)) {
+    if (typeof playheadTimestampMs !== 'number' || !Number.isFinite(playheadTimestampMs)) {
       return null;
     }
     if (playheadTimestampMs < domainMin || playheadTimestampMs > domainMax) {
@@ -1911,20 +1962,16 @@ export function TelemetryTrendChart({
       }
       const right = data[low] ?? null;
       const left = data[Math.max(0, low - 1)] ?? null;
-      if (!left) {
-        return right;
-      }
-      if (!right) {
-        return left;
-      }
+      if (!left) return right;
+      if (!right) return left;
       return Math.abs(left.ts - targetTs) <= Math.abs(right.ts - targetTs) ? left : right;
     },
     [data],
   );
 
   const hoverRow = useMemo(
-    () => (hoverTarget ? findNearestDataRow(hoverTarget.timestampMs) : null),
-    [findNearestDataRow, hoverTarget],
+    () => (activeHoverTarget ? findNearestDataRow(activeHoverTarget.timestampMs) : null),
+    [activeHoverTarget, findNearestDataRow],
   );
 
   const hoverSeriesRows = useMemo(() => {
@@ -1938,29 +1985,156 @@ export function TelemetryTrendChart({
           key: seriesConfig.key,
           name: seriesConfig.name,
           color: seriesConfig.color,
-          value: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
+          value: typeof raw === 'number' && Number.isFinite(raw) ? raw : null,
+          displayValue: typeof raw === 'number' && Number.isFinite(raw)
+            ? (seriesConfig.latestLabelFormatter?.(raw) ?? formatCompactAxisNumber(raw))
+            : '',
         };
       })
       .filter((row) => row.value !== null);
   }, [hoverRow, series]);
 
+  const activeStatusTooltip = useMemo(() => {
+    if (!localPointerHover) {
+      return null;
+    }
+    const band = findOfflineStatusBandAt(visibleStatusBands, localPointerHover.timestampMs);
+    if (!band) {
+      return null;
+    }
+    const isServerOffline = band.reason === 'server_offline' || band.reason === 'unclean_shutdown';
+    return {
+      band,
+      title: isServerOffline ? 'Server offline' : 'Thiết bị offline',
+      note: band.reason === 'unclean_shutdown' ? 'Server dừng đột ngột' : isServerOffline ? 'Server không hoạt động' : 'Socket đã mất kết nối',
+      color: isServerOffline ? '#f59e0b' : '#f87171',
+    };
+  }, [localPointerHover, visibleStatusBands]);
+  const activeMissingDataTooltip = useMemo(() => {
+    if (!localPointerHover) {
+      return null;
+    }
+    const band = findMissingDataBandAt(visibleMissingDataBands, localPointerHover.timestampMs);
+    if (!band) {
+      return null;
+    }
+    return {
+      band,
+      title: 'Không có dữ liệu',
+      note: 'Thiết bị online nhưng không gửi dữ liệu > 5 phút',
+      color: '#60a5fa',
+    };
+  }, [localPointerHover, visibleMissingDataBands]);
+
+  const tooltipAnchorX = localPointerHover?.x ?? (activeHoverTarget ? xScale(new Date(activeHoverTarget.timestampMs)) : 0);
+  const tooltipAnchorY = localPointerHover?.y
+    ?? (hoverSeriesRows[0]?.value !== null && hoverSeriesRows[0]?.value !== undefined
+      ? yScale(hoverSeriesRows[0].value)
+      : margin.top + 8);
+  const tooltipEstimatedWidth = activeStatusTooltip || activeMissingDataTooltip ? 170 : 112;
+  const tooltipEstimatedHeight = activeStatusTooltip || activeMissingDataTooltip ? 104 : Math.max(58, 36 + hoverSeriesRows.length * 18);
+  const tooltipPlacement = useMemo(() => {
+    const offset = 14;
+    const safeLeft = 8;
+    const safeTop = 8;
+    const safeRight = Math.max(safeLeft, chartWidth - tooltipEstimatedWidth - 8);
+    const safeBottom = Math.max(safeTop, height - tooltipEstimatedHeight - 8);
+    const clampX = (value: number) => Math.min(Math.max(safeLeft, value), safeRight);
+    const clampY = (value: number) => Math.min(Math.max(safeTop, value), safeBottom);
+    const centeredX = tooltipAnchorX - tooltipEstimatedWidth / 2;
+    const centeredY = tooltipAnchorY - tooltipEstimatedHeight / 2;
+
+    if (tooltipAnchorX + offset + tooltipEstimatedWidth <= chartWidth - 8) {
+      return { left: tooltipAnchorX + offset, top: clampY(centeredY) };
+    }
+    if (tooltipAnchorX - offset - tooltipEstimatedWidth >= 8) {
+      return { left: tooltipAnchorX - offset - tooltipEstimatedWidth, top: clampY(centeredY) };
+    }
+    if (tooltipAnchorY + offset + tooltipEstimatedHeight <= height - 8) {
+      return { left: clampX(centeredX), top: tooltipAnchorY + offset };
+    }
+    return { left: clampX(centeredX), top: clampY(tooltipAnchorY - offset - tooltipEstimatedHeight) };
+  }, [chartWidth, height, tooltipAnchorX, tooltipAnchorY, tooltipEstimatedHeight, tooltipEstimatedWidth]);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      const panState = panStateRef.current;
+      if (!panState || !onViewportPanChange) {
+        return;
+      }
+      const deltaX = event.clientX - panState.startClientX;
+      if (!panState.moved && Math.abs(deltaX) >= 2) {
+        panState.moved = true;
+      }
+      const msPerPixel = (panState.startDomainEndMs - panState.startDomainStartMs) / Math.max(1, panState.plotWidth);
+      const deltaMs = -deltaX * msPerPixel;
+      onViewportPanChange({
+        startMs: panState.startDomainStartMs + deltaMs,
+        endMs: panState.startDomainEndMs + deltaMs,
+      });
+    };
+
+    const handleUp = () => {
+      const panState = panStateRef.current;
+      if (!panState) {
+        return;
+      }
+      panStateRef.current = null;
+      onViewportPanStateChange?.(false);
+      if (panState.moved) {
+        suppressNextClickRef.current = true;
+        window.setTimeout(() => {
+          suppressNextClickRef.current = false;
+        }, TREND_PAN_CLICK_SUPPRESS_MS);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [onViewportPanChange, onViewportPanStateChange]);
+
   const handlePointerMove = useCallback(
     (event: React.MouseEvent<SVGRectElement>) => {
-      if (data.length === 0) {
-        return;
-      }
       const rect = event.currentTarget.getBoundingClientRect();
       const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
       const chartX = Math.max(margin.left, Math.min(margin.left + innerWidth, margin.left + localX));
+      const chartY = Math.max(margin.top, Math.min(margin.top + innerHeight, margin.top + localY));
       const ts = xScale.invert(chartX).getTime();
-      const target = resolveNearestTarget(ts);
-      if (!target) {
+      setLocalPointerHover({ x: chartX, y: chartY, timestampMs: ts });
+
+      if (findOfflineStatusBandAt(visibleStatusBands, ts)) {
+        setLocalHoverTarget(null);
+        onLeave?.();
         return;
       }
-      setHoverTarget(target);
+
+      if (findMissingDataBandAt(visibleMissingDataBands, ts)) {
+        setLocalHoverTarget(null);
+        onLeave?.();
+        return;
+      }
+
+      if (data.length === 0) {
+        setLocalHoverTarget(null);
+        onLeave?.();
+        return;
+      }
+      const target = resolveNearestTarget(ts);
+      if (!target) {
+        setLocalHoverTarget(null);
+        onLeave?.();
+        return;
+      }
+      setLocalHoverTarget(target);
       onHoverTarget?.(target);
     },
-    [data.length, innerWidth, margin.left, onHoverTarget, resolveNearestTarget, xScale],
+    [data.length, innerHeight, innerWidth, margin.left, margin.top, onHoverTarget, onLeave, resolveNearestTarget, visibleMissingDataBands, visibleStatusBands, xScale],
   );
 
   const handleViewportWheel = useCallback(
@@ -2011,7 +2185,8 @@ export function TelemetryTrendChart({
   );
 
   const handlePointerLeave = useCallback(() => {
-    setHoverTarget(null);
+    setLocalHoverTarget(null);
+    setLocalPointerHover(null);
     onLeave?.();
   }, [onLeave]);
 
@@ -2020,11 +2195,12 @@ export function TelemetryTrendChart({
       suppressNextClickRef.current = false;
       return;
     }
-    if (!hoverTarget || !onPinTarget) {
+    const clickTarget = localHoverTarget ?? activeHoverTarget;
+    if (!clickTarget || !onPinTarget) {
       return;
     }
-    onPinTarget(hoverTarget);
-  }, [hoverTarget, onPinTarget]);
+    onPinTarget(clickTarget);
+  }, [activeHoverTarget, localHoverTarget, onPinTarget]);
 
   const stopButtonPan = useCallback(() => {
     if (buttonPanTimerRef.current !== null) {
@@ -2114,20 +2290,13 @@ export function TelemetryTrendChart({
       panButtonViewportBy(direction * currentWindowMs * TREND_BUTTON_PAN_CLICK_RATIO);
       buttonPanTimerRef.current = window.setTimeout(runButtonPanTick, TREND_BUTTON_PAN_FRAME_MS);
     },
-    [
-      domainMax,
-      domainMin,
-      onViewportPanChange,
-      onViewportPanStateChange,
-      panButtonViewportBy,
-      runButtonPanTick,
-    ],
+    [domainMax, domainMin, onViewportPanChange, onViewportPanStateChange, panButtonViewportBy, runButtonPanTick],
   );
 
   useEffect(() => {
-    window.addEventListener("blur", stopButtonPan);
+    window.addEventListener('blur', stopButtonPan);
     return () => {
-      window.removeEventListener("blur", stopButtonPan);
+      window.removeEventListener('blur', stopButtonPan);
       stopButtonPan();
     };
   }, [stopButtonPan]);
@@ -2137,13 +2306,13 @@ export function TelemetryTrendChart({
       ref={wrapperRef}
       onWheel={stopWheelScroll}
       style={{
-        width: "100%",
+        width: '100%',
         height,
-        position: "relative",
-        cursor: onViewportPanChange ? (panActive ? "grabbing" : "grab") : "default",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        overscrollBehavior: "contain",
+        position: 'relative',
+        cursor: onViewportPanChange ? (panActive ? 'grabbing' : 'grab') : 'default',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        overscrollBehavior: 'contain',
       }}
     >
       {chartWidth > 0 ? (
@@ -2154,11 +2323,11 @@ export function TelemetryTrendChart({
             </clipPath>
           </defs>
           <Group>
-            {yScale.ticks(4).map((tick) => {
+            {yAxisTicks.map((tick) => {
               const y = yScale(tick);
               return (
                 <line
-                  key={`grid-${tick}`}
+                  key={'grid-' + String(tick)}
                   x1={margin.left}
                   x2={margin.left + innerWidth}
                   y1={y}
@@ -2169,28 +2338,81 @@ export function TelemetryTrendChart({
               );
             })}
 
-            <g clipPath={`url(#${plotClipId})`}>
-              {gapBands.map((segment, index) => {
-                const x1 = xScale(new Date(segment.from));
-                const x2 = xScale(new Date(segment.to));
+            <g clipPath={'url(#' + plotClipId + ')'}>
+              {visibleStatusBands.map((band, index) => {
+                if (band.status === 'online') {
+                  return null;
+                }
+                const x1 = Math.max(margin.left, Math.min(margin.left + innerWidth, xScale(new Date(band.from))));
+                const x2 = Math.max(margin.left, Math.min(margin.left + innerWidth, xScale(new Date(band.to))));
+                const width = Math.max(1, Math.abs(x2 - x1));
+                const isServerOffline = band.reason === 'server_offline' || band.reason === 'unclean_shutdown';
+                const fill = isServerOffline ? 'rgba(245, 158, 11, 0.13)' : 'rgba(248, 113, 113, 0.12)';
+                const stroke = isServerOffline ? 'rgba(245, 158, 11, 0.28)' : 'rgba(248, 113, 113, 0.26)';
+                const label = isServerOffline ? 'Server off' : 'Offline';
                 return (
-                  <rect
-                    key={`gap-${index}`}
-                    x={Math.min(x1, x2)}
-                    y={margin.top}
-                    width={Math.max(1, Math.abs(x2 - x1))}
-                    height={innerHeight}
-                    fill="rgba(254, 240, 138, 0.36)"
-                    stroke="rgba(245, 158, 11, 0.18)"
-                    strokeWidth={0.8}
-                  />
+                  <g key={'status-' + band.status + '-' + String(band.from) + '-' + String(index)} pointerEvents="none">
+                    <rect
+                      x={Math.min(x1, x2)}
+                      y={margin.top}
+                      width={width}
+                      height={innerHeight}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.8}
+                    />
+                    {width >= 56 ? (
+                      <text
+                        x={Math.min(x1, x2) + 6}
+                        y={margin.top + 12}
+                        fill={isServerOffline ? '#b45309' : '#dc2626'}
+                        fontSize={9}
+                        fontWeight={800}
+                      >
+                        {label}
+                      </text>
+                    ) : null}
+                  </g>
+                );
+              })}
+
+              {visibleMissingDataBands.map((band, index) => {
+                const x1 = Math.max(margin.left, Math.min(margin.left + innerWidth, xScale(new Date(band.from))));
+                const x2 = Math.max(margin.left, Math.min(margin.left + innerWidth, xScale(new Date(band.to))));
+                if (Math.abs(x2 - x1) < 0.5) {
+                  return null;
+                }
+                const width = Math.max(1, Math.abs(x2 - x1));
+                return (
+                  <g key={'missing-' + String(band.from) + '-' + String(index)} pointerEvents="none">
+                    <rect
+                      x={Math.min(x1, x2)}
+                      y={margin.top}
+                      width={width}
+                      height={innerHeight}
+                      fill="rgba(96, 165, 250, 0.10)"
+                      stroke="rgba(96, 165, 250, 0.24)"
+                      strokeWidth={0.8}
+                    />
+                    {width >= 70 ? (
+                      <text
+                        x={Math.min(x1, x2) + 6}
+                        y={margin.top + 12}
+                        fill="#2563eb"
+                        fontSize={9}
+                        fontWeight={800}
+                      >
+                        No data
+                      </text>
+                    ) : null}
+                  </g>
                 );
               })}
 
               {plottedSeries.map(({ config, segments }) =>
                 segments.map((segment, index) => (
                   <LinePath
-                    key={`${config.key}-${index}`}
+                    key={config.key + '-' + String(index)}
                     data={segment}
                     x={(point) => xScale(new Date(point.ts))}
                     y={(point) => yScale(point.value)}
@@ -2208,17 +2430,10 @@ export function TelemetryTrendChart({
                 const cy = yScale(latest.value);
                 const latestLabel = config.latestLabelFormatter?.(latest.value);
                 return (
-                  <g key={`latest-${config.key}`}>
+                  <g key={'latest-' + config.key}>
                     <circle cx={cx} cy={cy} r={5} fill={config.color} stroke={C.surface} strokeWidth={2} />
                     {latestLabel ? (
-                      <text
-                        x={cx}
-                        y={cy - 10}
-                        textAnchor="middle"
-                        fill={C.textBright}
-                        fontSize={10}
-                        fontWeight={700}
-                      >
+                      <text x={cx} y={cy - 10} textAnchor="middle" fill={C.textBright} fontSize={10} fontWeight={700}>
                         {latestLabel}
                       </text>
                     ) : null}
@@ -2248,35 +2463,34 @@ export function TelemetryTrendChart({
                 </g>
               ) : null}
 
-              {hoverTarget ? (
-                <line
-                  x1={xScale(new Date(hoverTarget.timestampMs))}
-                  x2={xScale(new Date(hoverTarget.timestampMs))}
-                  y1={margin.top}
-                  y2={margin.top + innerHeight}
-                  stroke="#94a3b8"
-                  strokeDasharray="4 4"
-                />
+              {activeHoverTarget ? (
+                <g pointerEvents="none">
+                  <line
+                    x1={xScale(new Date(activeHoverTarget.timestampMs))}
+                    x2={xScale(new Date(activeHoverTarget.timestampMs))}
+                    y1={margin.top}
+                    y2={margin.top + innerHeight}
+                    stroke="#94a3b8"
+                    strokeDasharray="4 4"
+                  />
+                  {hoverSeriesRows.map((row) => (
+                    <circle
+                      key={'hover-dot-' + row.key}
+                      cx={xScale(new Date(activeHoverTarget.timestampMs))}
+                      cy={yScale(row.value ?? 0)}
+                      r={4}
+                      fill={row.color}
+                      stroke={C.surface}
+                      strokeWidth={1.5}
+                    />
+                  ))}
+                </g>
               ) : null}
 
               {playheadX !== null ? (
                 <g pointerEvents="none">
-                  <line
-                    x1={playheadX}
-                    x2={playheadX}
-                    y1={margin.top}
-                    y2={margin.top + innerHeight}
-                    stroke="#ef4444"
-                    strokeWidth={2.4}
-                  />
-                  <circle
-                    cx={playheadX}
-                    cy={margin.top + 7}
-                    r={4.5}
-                    fill="#ef4444"
-                    stroke={C.surface}
-                    strokeWidth={1.5}
-                  />
+                  <line x1={playheadX} x2={playheadX} y1={margin.top} y2={margin.top + innerHeight} stroke="#ef4444" strokeWidth={2.4} />
+                  <circle cx={playheadX} cy={margin.top + 7} r={4.5} fill="#ef4444" stroke={C.surface} strokeWidth={1.5} />
                 </g>
               ) : null}
             </g>
@@ -2285,35 +2499,35 @@ export function TelemetryTrendChart({
           <AxisLeft
             scale={yScale}
             left={margin.left}
+            tickValues={yAxisTicks}
+            tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 10,
-              textAnchor: "end",
-              dy: "0.33em",
+              fontSize: 7,
+              textAnchor: 'end',
+              dy: '0.33em',
+              dx: '-0.05em',
             })}
             stroke={gridColor}
             tickStroke={gridColor}
+            tickLength={0}
           />
           <AxisBottom
             scale={xScale}
             top={margin.top + innerHeight}
             numTicks={timeAxisTickCount}
             tickFormat={(value) => formatTrendAxisTime(Number(value), domainMin, domainMax)}
-            tickLabelProps={() => ({
-              fill: axisLabelColor,
-              fontSize: 9,
-              textAnchor: "middle",
-            })}
+            tickLabelProps={() => ({ fill: axisLabelColor, fontSize: 8, textAnchor: 'middle' })}
             stroke={gridColor}
             tickStroke={gridColor}
           />
 
           {showLegend ? (
-            <Group top={6} left={margin.left + 6}>
+            <Group top={4} left={margin.left + 4}>
               {series.map((seriesConfig, index) => (
-                <g key={`legend-${seriesConfig.key}`} transform={`translate(${index * legendItemWidth}, 0)`}>
+                <g key={'legend-' + seriesConfig.key} transform={'translate(' + String(index * legendItemWidth) + ', 0)'}>
                   <rect x={0} y={0} width={10} height={3} rx={2} fill={seriesConfig.color} />
-                  <text x={14} y={4} fill={C.textMuted} fontSize={11} fontWeight={600}>
+                  <text x={13} y={4} fill={C.textMuted} fontSize={10} fontWeight={600}>
                     {seriesConfig.name}
                   </text>
                 </g>
@@ -2333,14 +2547,7 @@ export function TelemetryTrendChart({
             onMouseLeave={handlePointerLeave}
             onClick={handlePointerClick}
           />
-          <rect
-            x={0}
-            y={margin.top}
-            width={margin.left}
-            height={innerHeight}
-            fill="transparent"
-            onWheel={handleYAxisWheel}
-          />
+          <rect x={0} y={margin.top} width={margin.left} height={innerHeight} fill="transparent" onWheel={handleYAxisWheel} />
         </svg>
       ) : null}
 
@@ -2359,29 +2566,26 @@ export function TelemetryTrendChart({
             event.stopPropagation();
           }}
           style={{
-            position: "absolute",
+            position: 'absolute',
             left: margin.left + 10,
-            top: margin.top + innerHeight / 2 - 15,
-            width: 30,
-            height: 30,
+            top: margin.top + innerHeight / 2 - 17,
+            width: 34,
+            height: 34,
             padding: 0,
-            appearance: "none",
+            appearance: 'none',
             borderRadius: 999,
-            border: `1px solid ${C.border}cc`,
-            background: `${C.surface}f0`,
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
+            border: '1px solid ' + C.border + 'cc',
+            background: C.surface + 'f0',
+            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
             color: C.textBright,
-            opacity: 0.96,
-            transform: panActive ? "translateX(-2px)" : "translateX(0)",
-            transition: "opacity 0.14s ease, transform 0.14s ease, color 0.14s ease, border-color 0.14s ease",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            pointerEvents: "auto",
-            cursor: "ew-resize",
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'auto',
+            cursor: 'ew-resize',
             zIndex: 3,
-            touchAction: "none",
-            backdropFilter: "blur(4px)",
+            touchAction: 'none',
+            backdropFilter: 'blur(4px)',
           }}
         >
           <ArrowLeft size={15} strokeWidth={2.4} />
@@ -2403,67 +2607,99 @@ export function TelemetryTrendChart({
             event.stopPropagation();
           }}
           style={{
-            position: "absolute",
-            left: chartWidth - margin.right - 40,
-            top: margin.top + innerHeight / 2 - 15,
-            width: 30,
-            height: 30,
+            position: 'absolute',
+            left: chartWidth - margin.right - 44,
+            top: margin.top + innerHeight / 2 - 17,
+            width: 34,
+            height: 34,
             padding: 0,
-            appearance: "none",
+            appearance: 'none',
             borderRadius: 999,
-            border: `1px solid ${C.border}cc`,
-            background: `${C.surface}f0`,
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
+            border: '1px solid ' + C.border + 'cc',
+            background: C.surface + 'f0',
+            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
             color: C.textBright,
-            opacity: 0.96,
-            transform: panActive ? "translateX(2px)" : "translateX(0)",
-            transition: "opacity 0.14s ease, transform 0.14s ease, color 0.14s ease, border-color 0.14s ease",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            pointerEvents: "auto",
-            cursor: "ew-resize",
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'auto',
+            cursor: 'ew-resize',
             zIndex: 3,
-            touchAction: "none",
-            backdropFilter: "blur(4px)",
+            touchAction: 'none',
+            backdropFilter: 'blur(4px)',
           }}
         >
           <ArrowRight size={15} strokeWidth={2.4} />
         </button>
       ) : null}
 
-      {hoverTarget ? (
+      {activeStatusTooltip || activeMissingDataTooltip || activeHoverTarget ? (
         <div
           style={{
-            position: "absolute",
-            left: Math.min(
-              Math.max(8, xScale(new Date(hoverTarget.timestampMs)) + 10),
-              Math.max(8, chartWidth - 210),
-            ),
-            top: 8,
-            pointerEvents: "none",
+            position: 'absolute',
+            left: tooltipPlacement.left,
+            top: tooltipPlacement.top,
+            pointerEvents: 'none',
             background: C.surface,
-            border: `1px solid ${C.border}`,
+            border: '1px solid ' + C.border,
             borderRadius: 8,
-            padding: "7px 9px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            padding: '7px 8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             color: C.textBright,
-            fontSize: "0.68rem",
+            fontSize: '0.68rem',
             lineHeight: 1.35,
-            minWidth: 150,
+            minWidth: activeStatusTooltip || activeMissingDataTooltip ? 152 : 84,
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            {formatTooltipDateTime(hoverTarget.timestampMs)}
-          </div>
-          {hoverSeriesRows.length === 0 ? (
-            <div style={{ color: C.textMuted, fontWeight: 600 }}>Mất dữ liệu tại mốc này</div>
-          ) : (
-            hoverSeriesRows.map((row) => (
-              <div key={`hover-row-${row.key}`} style={{ color: row.color, fontWeight: 700 }}>
-                {row.name}: {row.value?.toFixed(3)}
+          {activeStatusTooltip ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: C.textBright, fontWeight: 900, marginBottom: 5 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: activeStatusTooltip.color }} />
+                <span>{activeStatusTooltip.title}</span>
               </div>
-            ))
+              <div style={{ color: C.textMuted, fontWeight: 700 }}>
+                {formatTooltipDateOnly(localPointerHover?.timestampMs ?? activeStatusTooltip.band.from)}
+              </div>
+              <div style={{ color: C.textBright, fontWeight: 800, marginBottom: 5 }}>
+                {formatTooltipTimeOnly(localPointerHover?.timestampMs ?? activeStatusTooltip.band.from)}
+              </div>
+              <div style={{ color: C.textMuted, fontWeight: 700 }}>
+                Từ {formatTooltipTimeOnly(activeStatusTooltip.band.from)} - đến {formatTooltipTimeOnly(activeStatusTooltip.band.to)}
+              </div>
+              <div style={{ color: activeStatusTooltip.color, fontWeight: 800 }}>{activeStatusTooltip.note}</div>
+            </>
+          ) : activeMissingDataTooltip ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: C.textBright, fontWeight: 900, marginBottom: 5 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: activeMissingDataTooltip.color }} />
+                <span>{activeMissingDataTooltip.title}</span>
+              </div>
+              <div style={{ color: C.textMuted, fontWeight: 700 }}>
+                {formatTooltipDateOnly(localPointerHover?.timestampMs ?? activeMissingDataTooltip.band.from)}
+              </div>
+              <div style={{ color: C.textBright, fontWeight: 800, marginBottom: 5 }}>
+                {formatTooltipTimeOnly(localPointerHover?.timestampMs ?? activeMissingDataTooltip.band.from)}
+              </div>
+              <div style={{ color: C.textMuted, fontWeight: 700 }}>
+                Từ {formatTooltipTimeOnly(activeMissingDataTooltip.band.from)} - đến {formatTooltipTimeOnly(activeMissingDataTooltip.band.to)}
+              </div>
+              <div style={{ color: activeMissingDataTooltip.color, fontWeight: 800 }}>{activeMissingDataTooltip.note}</div>
+            </>
+          ) : (
+            <>
+              <div style={{ color: C.textMuted, fontWeight: 700 }}>
+                {formatTooltipDateOnly(activeHoverTarget?.timestampMs ?? 0)}
+              </div>
+              <div style={{ color: C.textBright, fontWeight: 800, marginBottom: 5 }}>
+                {formatTooltipTimeOnly(activeHoverTarget?.timestampMs ?? 0)}
+              </div>
+              {hoverSeriesRows.map((row) => (
+                <div key={'hover-row-' + row.key} style={{ display: 'grid', gridTemplateColumns: '8px max-content', alignItems: 'center', gap: 7, fontWeight: 800 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: row.color }} />
+                  <span style={{ color: C.textBright, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.displayValue}</span>
+                </div>
+              ))}
+            </>
           )}
         </div>
       ) : null}
@@ -2504,10 +2740,10 @@ export function SpectrumZoomChart({
 
   const margin = useMemo(
     () => ({
-      left: 42,
-      right: 8,
-      top: 18,
-      bottom: 24,
+      left: 20,
+      right: 5,
+      top: 12,
+      bottom: 18,
     }),
     [],
   );
@@ -2556,6 +2792,7 @@ export function SpectrumZoomChart({
       }),
     [innerHeight, margin.top, safeYMax],
   );
+  const yAxisTicks = useMemo(() => thinAxisTicks(yScale.ticks(6), 3), [yScale]);
 
   const xScale = useMemo(
     () =>
@@ -2727,7 +2964,7 @@ export function SpectrumZoomChart({
       {chartWidth > 0 ? (
         <svg width={chartWidth} height={height}>
           <Group>
-            {yScale.ticks(5).map((tick) => {
+            {yAxisTicks.map((tick) => {
               const y = yScale(tick);
               return (
                 <line
@@ -2832,16 +3069,18 @@ export function SpectrumZoomChart({
           <AxisLeft
             scale={yScale}
             left={margin.left}
-            tickValues={yScale.ticks(5)}
-            tickFormat={(value) => `${Number(value)}`}
+            tickValues={yAxisTicks}
+            tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 9,
+              fontSize: 7,
               textAnchor: "end",
               dy: "0.33em",
+              dx: "-0.05em",
             })}
             stroke={gridColor}
             tickStroke={gridColor}
+            tickLength={0}
           />
 
           <AxisBottom
@@ -2857,7 +3096,7 @@ export function SpectrumZoomChart({
             }}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 9,
+              fontSize: 8,
               textAnchor: "middle",
             })}
             stroke={gridColor}
@@ -2934,19 +3173,19 @@ export function ChartSection({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 8,
+          gap: 4,
           marginBottom: titleGap,
           flexWrap: "nowrap",
-          minHeight: 28,
+          minHeight: 18,
         }}
       >
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flex: "1 1 0" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0, flex: "1 1 0" }}>
           <span style={{ color: C.primary, display: "inline-flex", flexShrink: 0 }}>{icon}</span>
           <span
             title={title}
             style={{
               color: C.textBright,
-              fontSize: "0.8rem",
+              fontSize: "0.7rem",
               fontWeight: 700,
               minWidth: 0,
               overflow: "hidden",
@@ -2965,6 +3204,7 @@ export function ChartSection({
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
           padding: cardPadding,
+          position: "relative",
           flex: "1 1 auto",
           minHeight: 0,
         }}

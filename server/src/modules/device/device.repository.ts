@@ -1,4 +1,4 @@
-import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
 
 export type DeviceDeletionImpact = {
   deviceId: string;
@@ -19,6 +19,13 @@ export type DeviceRemovalResult = {
   impact: DeviceDeletionImpact;
 };
 
+export type DeviceStatusHistoryQuery = {
+  deviceId: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
 export interface DeviceRepository {
   upsertMetadata(metadata: DeviceMetadata): Promise<void>;
   inspectRemoval(deviceId: string): Promise<DeviceDeletionImpact | null>;
@@ -30,8 +37,14 @@ export interface DeviceRepository {
   upsertSession(session: DeviceSession): void;
   getSession(deviceId: string): DeviceSession | null;
   listSessions(): DeviceSession[];
-  removeIfSocketMatches(deviceId: string, socketId: string): boolean;
+  removeIfSocketMatches(
+    deviceId: string,
+    socketId: string,
+    disconnectedAt: string,
+    disconnectReason?: string,
+  ): boolean;
   touch(deviceId: string, isoTime: string, heartbeat?: DeviceHeartbeat): DeviceSession | null;
   isConnected(deviceId: string): boolean;
   countConnected(): number;
+  listStatusHistory(query: DeviceStatusHistoryQuery): Promise<DeviceStatusHistoryEntry[]>;
 }

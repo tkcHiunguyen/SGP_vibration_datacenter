@@ -6,7 +6,6 @@ import {
   type RegisterSocketHandlersDeps,
   type SocketConnectionContext,
 } from './socket-handler.types.js';
-import { logPayload } from './socket-payload.utils.js';
 import { normalizeSpectrumMessage } from './spectrum-message.normalizer.js';
 
 export function registerSpectrumIngestHandlers(
@@ -37,7 +36,6 @@ export function registerSpectrumIngestHandlers(
         },
         'Unable to normalize incoming spectrum payload',
       );
-      logPayload(`${label}:invalid`, rawPayload);
       return;
     }
 

@@ -1,6 +1,22 @@
 export type TelemetryPayload = {
   vibration?: number;
   temperature?: number;
+  ax?: number;
+  ay?: number;
+  az?: number;
+  vrms_x_mms?: number;
+  vrms_y_mms?: number;
+  vrms_z_mms?: number;
+  vx_rms_mms?: number;
+  vy_rms_mms?: number;
+  vz_rms_mms?: number;
+  vrms_unit?: string;
+  drms_x_um?: number;
+  drms_y_um?: number;
+  drms_z_um?: number;
+  drms_band_min_hz?: number;
+  drms_band_max_hz?: number;
+  drms_unit?: string;
   [key: string]: unknown;
 };
 
@@ -100,6 +116,18 @@ export type DeviceHeartbeat = {
   staConnected?: boolean;
   signal?: number;
   uptimeSec?: number;
+};
+
+export type DeviceConnectionStatus = 'online' | 'offline';
+
+export type DeviceStatusHistoryEntry = {
+  deviceId: string;
+  status: DeviceConnectionStatus;
+  socketId?: string;
+  startedAt: string;
+  endedAt?: string;
+  lastHeartbeatAt?: string;
+  reason?: string;
 };
 
 export type DeviceAxisLabels = Partial<Record<'ax' | 'ay' | 'az', string>>;

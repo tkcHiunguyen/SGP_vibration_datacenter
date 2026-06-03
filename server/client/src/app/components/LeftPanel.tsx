@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
   CloudUpload,
   Gauge,
   MapPinned,
@@ -7,6 +9,8 @@ import {
   PinOff,
   RadioTower,
   SlidersHorizontal,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 
@@ -16,6 +20,10 @@ interface LeftPanelProps {
   navItems: string[];
   pinnedNavItems: string[];
   onTogglePin: (label: string) => void;
+  totalSensors?: number;
+  onlineSensors?: number;
+  offlineSensors?: number;
+  alertCount?: number;
 }
 
 function navIcon(label: string): React.ReactNode {
@@ -41,6 +49,10 @@ export function LeftPanel({
   navItems,
   pinnedNavItems,
   onTogglePin,
+  totalSensors = 0,
+  onlineSensors = 0,
+  offlineSensors = 0,
+  alertCount = 0,
 }: LeftPanelProps) {
   const { C } = useTheme();
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
@@ -76,6 +88,23 @@ export function LeftPanel({
         `}
       </style>
 
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+        {[
+          { label: "Tổng", value: totalSensors, color: C.primary, icon: <Activity size={12} strokeWidth={2.2} /> },
+          { label: "Online", value: onlineSensors, color: C.success, icon: <Wifi size={12} strokeWidth={2.2} /> },
+          { label: "Offline", value: offlineSensors, color: C.textMuted, icon: <WifiOff size={12} strokeWidth={2.2} /> },
+          { label: "Cảnh báo", value: alertCount, color: C.danger, icon: <AlertTriangle size={12} strokeWidth={2.2} /> },
+        ].map((stat) => (
+          <div key={stat.label} style={{ border: `1px solid ${C.cardBorder}`, background: C.card, borderRadius: 10, padding: "7px 8px", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, color: stat.color, fontSize: "0.62rem", fontWeight: 760, textTransform: "uppercase" }}>
+              {stat.icon}<span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stat.label}</span>
+            </div>
+            <div style={{ marginTop: 4, color: C.textBright, fontSize: "1.05rem", fontWeight: 820, lineHeight: 1 }}>{stat.value}</div>
+          </div>
+        ))}
+      </div>
+
       <nav style={{ display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 }}>
         {navItems.map((label, index) => {
           const isActive = activeNav === label;
@@ -85,6 +114,8 @@ export function LeftPanel({
             <div
               key={label}
               role="button"
+              aria-current={isActive ? "page" : undefined}
+              aria-label={`Mở ${label}`}
               tabIndex={0}
               onClick={() => onNavChange(label)}
               onKeyDown={(event) => {
@@ -97,7 +128,7 @@ export function LeftPanel({
               onMouseLeave={() => setHoveredItem((current) => (current === label ? null : current))}
               style={{
                 width: "100%",
-                minHeight: 40,
+                minHeight: 44,
                 borderRadius: 12,
                 border: `1px solid ${isActive ? C.primary + "66" : isHovered ? C.primary + "33" : C.cardBorder}`,
                 background: isActive
@@ -107,7 +138,7 @@ export function LeftPanel({
                     : C.card,
                 color: isActive ? C.primary : isHovered ? C.textBright : C.textBase,
                 display: "grid",
-                gridTemplateColumns: "28px minmax(0, 1fr) 24px",
+                gridTemplateColumns: "28px minmax(0, 1fr) 32px",
                 alignItems: "center",
                 gap: 8,
                 padding: "5px 7px 5px 8px",
@@ -151,14 +182,15 @@ export function LeftPanel({
               <button
                 type="button"
                 title={isPinned ? "Bỏ ghim" : "Ghim mục này"}
+                aria-label={`${isPinned ? "Bỏ ghim" : "Ghim"} ${label}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   onTogglePin(label);
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 style={{
-                  width: 24,
-                  height: 24,
+                  width: 32,
+                  height: 32,
                   borderRadius: 8,
                   border: `1px solid ${isPinned ? C.warning + "66" : isHovered ? C.primary + "40" : C.cardBorder}`,
                   background: isPinned ? C.warningBg : isHovered ? C.primary + "14" : "transparent",

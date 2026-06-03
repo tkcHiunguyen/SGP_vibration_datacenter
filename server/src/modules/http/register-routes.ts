@@ -1,11 +1,14 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
+import { promisify } from 'node:util';
+import { gunzip, gzip } from 'node:zlib';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { env } from '../../shared/config.js';
-import type { CommandType } from '../../shared/types.js';
+import type { CommandType, DeviceAxisLabels } from '../../shared/types.js';
 import { AlertService } from '../alert/alert.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AuthService } from '../auth/index.js';
@@ -13,8 +16,9 @@ import { CommandService } from '../command/command.service.js';
 import { DeviceService } from '../device/device.service.js';
 import type { MySqlPersistenceStatus } from '../persistence/mysql-access.js';
 import type { RealtimeGateway } from '../realtime/realtime.gateway.js';
-import { SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
+import { SpectrumStorageService, type SpectrumArchiveFrame } from '../spectrum/spectrum-storage.service.js';
 import { TelemetryService } from '../telemetry/telemetry.service.js';
+import type { TelemetryImportPoint } from '../telemetry/telemetry.repository.js';
 import { ZoneService } from '../zone/zone.service.js';
 import { registerCoreRoutes } from './core.routes.js';
 
@@ -75,6 +79,79 @@ export function registerRoutes({
   });
 
   const placementConfigSchema = z.object({}).passthrough();
+  const gzipAsync = promisify(gzip);
+  const gunzipAsync = promisify(gunzip);
+  const sgpDataExportQuerySchema = z.object({
+    date_from: z.string().min(1),
+    date_to: z.string().min(1),
+    deviceId: z.string().min(1).optional(),
+  });
+  const sgpDataImportQuerySchema = z.object({
+    mode: z.enum(['merge', 'idempotent']).optional().default('merge'),
+  });
+  const sgpDataDeviceSchema = z
+    .object({
+      deviceId: z.string().min(1),
+      uuid: z.string().optional(),
+      name: z.string().optional(),
+      site: z.string().optional(),
+      zone: z.string().optional(),
+      firmwareVersion: z.string().optional(),
+      axisLabels: deviceAxisLabelsSchema,
+      notes: z.string().optional(),
+      createdAt: z.string().optional(),
+      updatedAt: z.string().optional(),
+    })
+    .passthrough();
+  const sgpDataTelemetryPointSchema = z
+    .object({
+      deviceId: z.string().min(1),
+      receivedAt: z.string().min(1),
+      payload: z.record(z.string(), z.unknown()).default({}),
+      telemetryUuid: z.string().optional(),
+      sampleCount: z.number().optional(),
+    })
+    .passthrough();
+  const sgpDataSpectrumFrameSchema = z
+    .object({
+      deviceId: z.string().min(1),
+      capturedAt: z.string().min(1),
+      telemetryUuid: z.string().optional(),
+      storagePath: z.string().min(1),
+      fileSizeBytes: z.number().optional(),
+      checksumSha256: z.string().optional(),
+      contentBase64: z.string().min(1),
+    })
+    .passthrough();
+  const sgpDataDateRangeSchema = z.object({
+    from: z.string().min(1),
+    to: z.string().min(1),
+  });
+  const sgpDataManifestSchema = z
+    .object({
+      format: z.literal('sgpdata'),
+      version: z.literal(1),
+      exportedAt: z.string().optional(),
+      dateRange: sgpDataDateRangeSchema.optional(),
+      deviceCount: z.number().optional(),
+      measurementCount: z.number().optional(),
+      spectrumFrameCount: z.number().optional(),
+      placementConfigCount: z.number().optional(),
+      checksumSha256: z.string().optional(),
+    })
+    .passthrough();
+  const sgpDataArchiveSchema = z
+    .object({
+      manifest: sgpDataManifestSchema,
+      devices: z.array(sgpDataDeviceSchema).default([]),
+      measurements: z.array(sgpDataTelemetryPointSchema).default([]),
+      spectrumFrames: z.array(sgpDataSpectrumFrameSchema).default([]),
+      placementConfigs: z.record(z.string(), z.object({}).passthrough()).optional(),
+    })
+    .passthrough();
+  type SgpDataArchive = z.infer<typeof sgpDataArchiveSchema>;
+  type SgpDataDevice = z.infer<typeof sgpDataDeviceSchema>;
+  type SgpDataTelemetryPoint = z.infer<typeof sgpDataTelemetryPointSchema>;
 
   function isAllowedDeviceProxyIp(ip: string): boolean {
     const normalized = ip.replace(/^::ffff:/, '').trim();
@@ -135,6 +212,12 @@ export function registerRoutes({
     to: z.string().optional(),
     limit: z.coerce.number().int().positive().max(12_000).optional(),
     bucketMs: z.coerce.number().int().positive().max(86_400_000).optional(),
+  });
+
+  const deviceStatusHistoryQuerySchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    limit: z.coerce.number().int().positive().max(5_000).optional(),
   });
 
   const telemetryAvailabilityQuerySchema = z.object({
@@ -321,6 +404,202 @@ export function registerRoutes({
     } catch {
       return String(value);
     }
+  }
+
+  function parseSgpDataDateRange(from: string, to: string): { from: string; to: string } | null {
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs) || fromMs > toMs) {
+      return null;
+    }
+    return {
+      from: new Date(fromMs).toISOString(),
+      to: new Date(toMs).toISOString(),
+    };
+  }
+
+  function optionalText(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  function normalizeArchiveTelemetryUuid(deviceId: string, receivedAt: string, point: SgpDataTelemetryPoint): string {
+    const fromPoint = optionalText(point.telemetryUuid);
+    if (fromPoint) {
+      return fromPoint.slice(0, 255);
+    }
+    const fromPayload = optionalText(point.payload.telemetry_uuid) ?? optionalText(point.payload.telemetryUuid);
+    if (fromPayload) {
+      return fromPayload.slice(0, 255);
+    }
+    return `sgp-time:${deviceId}:${receivedAt}`.slice(0, 255);
+  }
+
+  function normalizeArchiveTelemetryPoint(point: SgpDataTelemetryPoint): TelemetryImportPoint | null {
+    const deviceId = point.deviceId.trim();
+    const receivedAtMs = Date.parse(point.receivedAt);
+    if (!deviceId || Number.isNaN(receivedAtMs)) {
+      return null;
+    }
+    const receivedAt = new Date(receivedAtMs).toISOString();
+    const telemetryUuid = normalizeArchiveTelemetryUuid(deviceId, receivedAt, point);
+    return {
+      deviceId,
+      receivedAt,
+      payload: {
+        ...point.payload,
+        telemetry_uuid: telemetryUuid,
+        telemetryUuid,
+      },
+      telemetryUuid,
+      sampleCount: typeof point.sampleCount === 'number' && Number.isFinite(point.sampleCount)
+        ? Math.max(0, Math.floor(point.sampleCount))
+        : undefined,
+    };
+  }
+
+  function normalizeArchiveSpectrumFrame(frame: SpectrumArchiveFrame): SpectrumArchiveFrame | null {
+    const deviceId = frame.deviceId.trim();
+    const capturedAtMs = Date.parse(frame.capturedAt);
+    if (!deviceId || Number.isNaN(capturedAtMs) || !frame.storagePath.trim() || !frame.contentBase64.trim()) {
+      return null;
+    }
+    const capturedAt = new Date(capturedAtMs).toISOString();
+    const telemetryUuid = optionalText(frame.telemetryUuid) ?? `sgp-frame:${deviceId}:${capturedAt}`;
+    return {
+      ...frame,
+      deviceId,
+      capturedAt,
+      telemetryUuid: telemetryUuid.slice(0, 255),
+    };
+  }
+
+  function sgpDataChecksumPayload(archive: Pick<SgpDataArchive, 'devices' | 'measurements' | 'spectrumFrames' | 'placementConfigs'>): string {
+    return JSON.stringify({
+      devices: archive.devices,
+      measurements: archive.measurements,
+      spectrumFrames: archive.spectrumFrames,
+      placementConfigs: archive.placementConfigs ?? {},
+    });
+  }
+
+  function createSgpDataChecksum(archive: Pick<SgpDataArchive, 'devices' | 'measurements' | 'spectrumFrames' | 'placementConfigs'>): string {
+    return createHash('sha256').update(sgpDataChecksumPayload(archive)).digest('hex');
+  }
+
+  async function parseSgpDataArchiveBuffer(buffer: Buffer): Promise<SgpDataArchive> {
+    let raw: Buffer;
+    try {
+      raw = await gunzipAsync(buffer);
+    } catch {
+      raw = buffer;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString('utf8'));
+    } catch {
+      throw new Error('sgpdata_json_invalid');
+    }
+    const archive = sgpDataArchiveSchema.parse(parsed);
+    if (archive.manifest.checksumSha256) {
+      const checksum = createSgpDataChecksum(archive);
+      if (checksum !== archive.manifest.checksumSha256) {
+        throw new Error('sgpdata_checksum_mismatch');
+      }
+    }
+    return archive;
+  }
+
+  async function readSgpDataArchiveUpload(request: FastifyRequest): Promise<{ archive: SgpDataArchive; filename: string; sizeBytes: number }> {
+    const multipartRequest = request as FastifyRequest & {
+      file: () => Promise<
+        | {
+            filename: string;
+            mimetype: string;
+            toBuffer: () => Promise<Buffer>;
+          }
+        | undefined
+      >;
+    };
+    const filePart = await multipartRequest.file();
+    if (!filePart) {
+      throw new Error('sgpdata_file_required');
+    }
+    const filename = filePart.filename || 'import.sgpdata';
+    if (!filename.toLowerCase().endsWith('.sgpdata')) {
+      throw new Error('sgpdata_file_extension_invalid');
+    }
+    const buffer = await filePart.toBuffer();
+    if (buffer.length === 0) {
+      throw new Error('sgpdata_file_empty');
+    }
+    return {
+      archive: await parseSgpDataArchiveBuffer(buffer),
+      filename,
+      sizeBytes: buffer.length,
+    };
+  }
+
+  function sgpDataImportError(error: unknown): string {
+    if (error instanceof z.ZodError) {
+      return 'sgpdata_schema_invalid';
+    }
+    return error instanceof Error ? error.message : 'sgpdata_invalid';
+  }
+
+  function createSgpDataPreview(archive: SgpDataArchive) {
+    const dateRange = archive.manifest.dateRange;
+    return {
+      manifest: archive.manifest,
+      metadata: {
+        deviceCount: archive.devices.length,
+        measurementCount: archive.measurements.length,
+        spectrumCount: archive.spectrumFrames.length,
+        placementConfigCount: Object.keys(archive.placementConfigs ?? {}).length,
+        dateFrom: dateRange?.from,
+        dateTo: dateRange?.to,
+        checksumSha256: archive.manifest.checksumSha256,
+      },
+      dateRange,
+      devices: archive.devices.map((device) => ({
+        deviceId: device.deviceId,
+        name: device.name,
+        site: device.site,
+        zone: device.zone,
+        firmwareVersion: device.firmwareVersion,
+      })),
+      measurements: archive.measurements.length,
+      spectra: archive.spectrumFrames.length,
+    };
+  }
+
+  function normalizeDeviceAxisLabels(labels: unknown): DeviceAxisLabels | undefined {
+    if (!labels || typeof labels !== 'object' || Array.isArray(labels)) {
+      return undefined;
+    }
+    const raw = labels as Record<string, unknown>;
+    const normalized: DeviceAxisLabels = {};
+    for (const axis of ['ax', 'ay', 'az'] as const) {
+      const label = optionalText(raw[axis]);
+      if (label) {
+        normalized[axis] = label;
+      }
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  function normalizeSgpDataDevice(deviceId: string, device?: SgpDataDevice) {
+    return {
+      deviceId,
+      uuid: optionalText(device?.uuid),
+      name: optionalText(device?.name) ?? deviceId,
+      site: optionalText(device?.site),
+      zone: optionalText(device?.zone),
+      firmwareVersion: optionalText(device?.firmwareVersion),
+      axisLabels: normalizeDeviceAxisLabels(device?.axisLabels),
+      notes: optionalText(device?.notes),
+      createdAt: optionalText(device?.createdAt),
+      updatedAt: optionalText(device?.updatedAt),
+    };
   }
 
   function isOtaCommandType(type: CommandType): type is 'ota' | 'ota_from_url' {
@@ -584,6 +863,237 @@ export function registerRoutes({
     alertService,
     realtimeGateway,
     persistenceStatus,
+  });
+
+  app.get('/api/sgpdata/export', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const queryResult = sgpDataExportQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_required' });
+    }
+    const query = queryResult.data;
+    const range = parseSgpDataDateRange(query.date_from, query.date_to);
+    if (!range) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_invalid' });
+    }
+
+    const deviceMetadata = query.deviceId
+      ? [deviceService.getMetadata(query.deviceId)].filter((device): device is NonNullable<typeof device> => Boolean(device))
+      : deviceService.list().map((device) => device.metadata).filter((device): device is NonNullable<typeof device> => Boolean(device));
+    if (query.deviceId && deviceMetadata.length === 0) {
+      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    }
+
+    const measurements = await telemetryService.exportHistory({
+      from: range.from,
+      to: range.to,
+      deviceId: query.deviceId,
+    });
+    const spectrumFrames = (
+      await Promise.all(deviceMetadata.map((device) => spectrumStorageService.exportFrames(device.deviceId, range.from, range.to)))
+    ).flat();
+    const selectedDeviceIds = new Set<string>([
+      ...measurements.map((point) => point.deviceId),
+      ...spectrumFrames.map((frame) => frame.deviceId),
+    ]);
+    if (query.deviceId) {
+      selectedDeviceIds.add(query.deviceId);
+    }
+    const devices = deviceMetadata.filter((device) => selectedDeviceIds.has(device.deviceId));
+    const placementConfigs: Record<string, Record<string, unknown>> = {};
+    for (const device of devices) {
+      const config = await spectrumStorageService.readPlacementConfig(device.deviceId);
+      if (config) {
+        placementConfigs[device.deviceId] = config;
+      }
+    }
+
+    const archive: SgpDataArchive = {
+      manifest: {
+        format: 'sgpdata',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        dateRange: range,
+        deviceCount: devices.length,
+        measurementCount: measurements.length,
+        spectrumFrameCount: spectrumFrames.length,
+        placementConfigCount: Object.keys(placementConfigs).length,
+      },
+      devices,
+      measurements,
+      spectrumFrames,
+      placementConfigs,
+    };
+    archive.manifest.checksumSha256 = createSgpDataChecksum(archive);
+    const body = Buffer.from(JSON.stringify(archive));
+    const compressed = await gzipAsync(body);
+    const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
+    const deviceSuffix = query.deviceId ? `_${query.deviceId.replace(/[^a-zA-Z0-9_.-]+/g, '-')}` : '';
+    const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
+    auditService.record({
+      action: 'sgpdata_export',
+      deviceId: query.deviceId ?? 'n/a',
+      commandId: 'n/a',
+      actor: principalActor(principal),
+      result: 'exported',
+      metadata: {
+        dateRange: range,
+        deviceCount: devices.length,
+        measurementCount: measurements.length,
+        spectrumFrameCount: spectrumFrames.length,
+        sizeBytes: compressed.byteLength,
+      },
+    });
+    reply.header('content-type', 'application/vnd.sgpdata');
+    reply.header('content-disposition', `attachment; filename="${fileName}"`);
+    reply.header('cache-control', 'no-store');
+    return reply.send(compressed);
+  });
+
+  app.post('/api/sgpdata/import/preview', async (request, reply) => {
+    if (!requireRole(request, reply, 'admin')) {
+      return;
+    }
+    try {
+      const { archive, filename, sizeBytes } = await readSgpDataArchiveUpload(request);
+      return {
+        ok: true,
+        data: {
+          ...createSgpDataPreview(archive),
+          file: {
+            name: filename,
+            sizeBytes,
+          },
+        },
+      };
+    } catch (error) {
+      return reply.code(422).send({ ok: false, error: sgpDataImportError(error) });
+    }
+  });
+
+  app.post('/api/sgpdata/import', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const queryResult = sgpDataImportQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_import_mode_invalid' });
+    }
+    const query = queryResult.data;
+    let archive: SgpDataArchive;
+    let filename = 'import.sgpdata';
+    let sizeBytes = 0;
+    try {
+      const upload = await readSgpDataArchiveUpload(request);
+      archive = upload.archive;
+      filename = upload.filename;
+      sizeBytes = upload.sizeBytes;
+    } catch (error) {
+      return reply.code(422).send({ ok: false, error: sgpDataImportError(error) });
+    }
+
+    const archiveDeviceById = new Map(archive.devices.map((device) => [device.deviceId.trim(), device]));
+    const referencedDeviceIds = new Set<string>();
+    for (const device of archive.devices) {
+      if (device.deviceId.trim()) {
+        referencedDeviceIds.add(device.deviceId.trim());
+      }
+    }
+    for (const point of archive.measurements) {
+      if (point.deviceId.trim()) {
+        referencedDeviceIds.add(point.deviceId.trim());
+      }
+    }
+    for (const frame of archive.spectrumFrames) {
+      if (frame.deviceId.trim()) {
+        referencedDeviceIds.add(frame.deviceId.trim());
+      }
+    }
+
+    const deviceImport = { inserted: 0, updated: 0, skipped: 0 };
+    const importableDeviceIds = new Set<string>();
+    for (const deviceId of referencedDeviceIds) {
+      const before = deviceService.getMetadata(deviceId);
+      const imported = archiveDeviceById.get(deviceId);
+      try {
+        await deviceService.importMetadataStrict(normalizeSgpDataDevice(deviceId, imported));
+        before ? (deviceImport.updated += 1) : (deviceImport.inserted += 1);
+        importableDeviceIds.add(deviceId);
+      } catch {
+        try {
+          await deviceService.importMetadataStrict({
+            ...normalizeSgpDataDevice(deviceId, imported),
+            uuid: '',
+            zone: '',
+          });
+          before ? (deviceImport.updated += 1) : (deviceImport.inserted += 1);
+          importableDeviceIds.add(deviceId);
+        } catch {
+          deviceImport.skipped += 1;
+        }
+      }
+    }
+
+    const measurements = archive.measurements
+      .map((point) => normalizeArchiveTelemetryPoint(point))
+      .filter((point): point is TelemetryImportPoint => point !== null)
+      .filter((point) => importableDeviceIds.has(point.deviceId));
+    const telemetryImport = await telemetryService.importHistory(measurements);
+
+    const placementImport = { written: 0, skipped: 0 };
+    for (const [deviceId, config] of Object.entries(archive.placementConfigs ?? {})) {
+      if (!importableDeviceIds.has(deviceId)) {
+        placementImport.skipped += 1;
+        continue;
+      }
+      try {
+        await spectrumStorageService.writePlacementConfig(deviceId, config);
+        placementImport.written += 1;
+      } catch {
+        placementImport.skipped += 1;
+      }
+    }
+
+    const spectrumFrames = archive.spectrumFrames
+      .map((frame) => normalizeArchiveSpectrumFrame(frame))
+      .filter((frame): frame is SpectrumArchiveFrame => frame !== null)
+      .filter((frame) => importableDeviceIds.has(frame.deviceId));
+    const spectrumImport = await spectrumStorageService.importFrames(spectrumFrames);
+
+    auditService.record({
+      action: 'sgpdata_import',
+      deviceId: 'n/a',
+      commandId: 'n/a',
+      actor: principalActor(principal),
+      result: 'imported',
+      metadata: {
+        fileName: filename,
+        sizeBytes,
+        mode: query.mode,
+        deviceImport,
+        telemetryImport,
+        spectrumImport,
+        placementImport,
+      },
+    });
+    return {
+      ok: true,
+      data: {
+        imported: true,
+        fileName: filename,
+        sizeBytes,
+        mode: query.mode,
+        devices: deviceImport,
+        measurements: telemetryImport,
+        spectrum: spectrumImport,
+        placementConfigs: placementImport,
+        preview: createSgpDataPreview(archive),
+      },
+    };
   });
 
   app.get('/api/devices/last-telemetry', async (request, reply) => {
@@ -965,6 +1475,38 @@ export function registerRoutes({
         limit: query.limit,
         bucketMs: query.bucketMs,
       }),
+    };
+  });
+
+  app.get('/api/devices/:deviceId/status-history', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+
+    const paramsSchema = z.object({ deviceId: z.string().min(1) });
+    const { deviceId } = paramsSchema.parse(request.params);
+    const query = deviceStatusHistoryQuerySchema.parse(request.query);
+
+    const metadata = deviceService.getMetadata(deviceId);
+    const session = deviceService.get(deviceId);
+    if (!metadata && !session) {
+      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    }
+
+    const items = await deviceService.listStatusHistory({
+      deviceId,
+      from: query.from,
+      to: query.to,
+      limit: query.limit,
+    });
+
+    return {
+      ok: true,
+      data: {
+        deviceId,
+        items,
+        returnedItems: items.length,
+      },
     };
   });
 

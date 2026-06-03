@@ -2,6 +2,8 @@ import type { SpectrumAxis, TelemetrySpectrumMessage } from '../../shared/types.
 
 const DEFAULT_SPECTRUM_VALUE_SCALE = 256;
 const DEFAULT_SPECTRUM_MAGNITUDE_UNIT = 'm/s2';
+const DEFAULT_SPECTRUM_BIN_COUNT = 512;
+const DEFAULT_SPECTRUM_SOURCE_SAMPLE_COUNT = 1024;
 
 type ResolvedSpectrumValues = {
   values: number[];
@@ -9,7 +11,7 @@ type ResolvedSpectrumValues = {
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Buffer.isBuffer(value) || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     return null;
   }
   return value as Record<string, unknown>;
@@ -59,6 +61,41 @@ function toUint8Array(value: unknown): Uint8Array | null {
   }
 
   return null;
+}
+
+export function decodeSpectrumBuffer(
+  buffer: unknown,
+  meta: { binCount?: number; valueScale?: number } = {},
+): { amplitudes: number[]; peakBinIndex: number; peakAmplitude: number } {
+  const bytes = toUint8Array(buffer);
+  if (!bytes || bytes.byteLength < 2) {
+    return { amplitudes: [], peakBinIndex: 0, peakAmplitude: 0 };
+  }
+
+  const viewBuffer = Buffer.isBuffer(buffer)
+    ? buffer
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const binCount = Math.max(1, Math.floor(meta.binCount ?? DEFAULT_SPECTRUM_BIN_COUNT));
+  const valueScale = meta.valueScale && meta.valueScale > 0 ? meta.valueScale : DEFAULT_SPECTRUM_VALUE_SCALE;
+  const availableBins = Math.floor(viewBuffer.byteLength / 2);
+  const count = Math.min(binCount, availableBins);
+
+  const amplitudes = new Array<number>(count);
+  let peakBinIndex = 0;
+  let peakAmplitude = -Infinity;
+
+  for (let i = 0; i < count; i += 1) {
+    const raw = viewBuffer.readUInt16LE(i * 2);
+    const amp = raw / valueScale;
+    amplitudes[i] = amp;
+
+    if (amp > peakAmplitude) {
+      peakAmplitude = amp;
+      peakBinIndex = i;
+    }
+  }
+
+  return { amplitudes, peakBinIndex, peakAmplitude: Number.isFinite(peakAmplitude) ? peakAmplitude : 0 };
 }
 
 function decodeU16LeValues(value: unknown): number[] {
@@ -141,8 +178,11 @@ export function normalizeSpectrumMessage(
   rawPayload: unknown,
   rawBinary?: unknown,
 ): TelemetrySpectrumMessage | null {
-  const record = asRecord(rawPayload);
-  if (!record) {
+  const payloadRecord = asRecord(rawPayload);
+  const rawPayloadBytes = toUint8Array(rawPayload);
+  const record = payloadRecord ?? {};
+  const binaryAttachment = rawBinary ?? (payloadRecord ? undefined : rawPayloadBytes ?? undefined);
+  if (!payloadRecord && !binaryAttachment) {
     return null;
   }
 
@@ -152,22 +192,33 @@ export function normalizeSpectrumMessage(
       ? payloadEnvelopeRecord
       : record;
 
-  const resolvedValues = resolveSpectrumValues(axis, spectrumRecord, rawBinary);
+  const declaredBinCount = asFiniteNumber(spectrumRecord.bin_count ?? spectrumRecord.binCount);
+  const valueScaleCandidate = asFiniteNumber(spectrumRecord.value_scale ?? spectrumRecord.valueScale);
+  const binaryMeta = {
+    binCount: declaredBinCount !== undefined ? Math.floor(declaredBinCount) : DEFAULT_SPECTRUM_BIN_COUNT,
+    valueScale:
+      valueScaleCandidate !== undefined && valueScaleCandidate > 0
+        ? valueScaleCandidate
+        : DEFAULT_SPECTRUM_VALUE_SCALE,
+  };
+  const binaryBytes = toUint8Array(binaryAttachment);
+  const decodedBinary = binaryBytes ? decodeSpectrumBuffer(binaryAttachment, binaryMeta) : null;
+  const resolvedValues = decodedBinary
+    ? { values: decodedBinary.amplitudes, source: 'binary_attachment' as const }
+    : resolveSpectrumValues(axis, spectrumRecord, binaryAttachment);
   if (!resolvedValues || resolvedValues.values.length === 0) {
     return null;
   }
   const values = resolvedValues.values;
 
-  const declaredBinCount = asFiniteNumber(spectrumRecord.bin_count ?? spectrumRecord.binCount);
   const normalizedBinCount = declaredBinCount
     ? Math.max(1, Math.min(values.length, Math.floor(declaredBinCount)))
-    : values.length;
+    : Math.max(1, Math.min(values.length, DEFAULT_SPECTRUM_BIN_COUNT));
   const normalizedValues = values.slice(0, normalizedBinCount);
   if (normalizedValues.length === 0) {
     return null;
   }
 
-  const valueScaleCandidate = asFiniteNumber(spectrumRecord.value_scale ?? spectrumRecord.valueScale);
   const defaultValueScale =
     resolvedValues.source === 'payload_numeric' ? undefined : DEFAULT_SPECTRUM_VALUE_SCALE;
   const valueScale =
@@ -180,7 +231,7 @@ export function normalizeSpectrumMessage(
   const sourceSampleCount =
     sourceSampleCountFromPayload !== undefined && sourceSampleCountFromPayload > 0
       ? Math.floor(sourceSampleCountFromPayload)
-      : normalizedValues.length * 2;
+      : DEFAULT_SPECTRUM_SOURCE_SAMPLE_COUNT;
   const binHzFromPayload = asFiniteNumber(spectrumRecord.bin_hz ?? spectrumRecord.binHz);
   const binHz =
     binHzFromPayload ??
@@ -188,9 +239,12 @@ export function normalizeSpectrumMessage(
       ? sampleRateHz / sourceSampleCount
       : undefined);
 
-  const amplitudes = normalizedValues.map((value) =>
-    valueScale !== undefined ? Number((value / valueScale).toFixed(6)) : Number(value.toFixed(6)),
-  );
+  const amplitudes =
+    resolvedValues.source === 'binary_attachment'
+      ? normalizedValues.map((value) => Number(value.toFixed(6)))
+      : normalizedValues.map((value) =>
+          valueScale !== undefined ? Number((value / valueScale).toFixed(6)) : Number(value.toFixed(6)),
+        );
 
   let peakBinIndex = 0;
   let peakAmplitude = amplitudes[0] ?? 0;

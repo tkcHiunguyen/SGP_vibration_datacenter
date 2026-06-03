@@ -6,7 +6,6 @@ import {
   type RegisterSocketHandlersDeps,
   type SocketConnectionContext,
 } from './socket-handler.types.js';
-import { logPayload } from './socket-payload.utils.js';
 
 const deviceHeartbeatSchema = z.object({
   socketConnected: z.boolean().optional(),
@@ -39,8 +38,6 @@ export function registerDeviceStateHandlers(
   const { deviceId } = context;
 
   socket.on('device:heartbeat', (rawPayload: unknown) => {
-    console.log(rawPayload ?? {});
-
     const parsed = deviceHeartbeatSchema.safeParse(rawPayload ?? {});
     if (!parsed.success) {
       app.log.warn(
@@ -61,8 +58,6 @@ export function registerDeviceStateHandlers(
   });
 
   socket.on('device:metadata', async (rawPayload: unknown) => {
-    logPayload('[device:metadata]', rawPayload);
-
     let candidate = rawPayload;
     if (rawPayload && typeof rawPayload === 'object' && 'metadata' in rawPayload) {
       const envelope = rawPayload as { metadata?: unknown };

@@ -55,10 +55,12 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
       <div style={{ padding: "0 20px", height: 54, display: "flex", alignItems: "center", gap: 0 }}>
 
         <button
+          type="button"
           onClick={onToggleSidebar}
           title={sidebarOpen ? "Ẩn menu" : "Hiện menu"}
+          aria-label={sidebarOpen ? "Ẩn menu điều hướng" : "Hiện menu điều hướng"}
           style={{
-            width: 30, height: 30, borderRadius: 8,
+            width: 34, height: 34, borderRadius: 8,
             background: "transparent",
             border: `1px solid ${C.border}`,
             cursor: "pointer", flexShrink: 0,
@@ -123,8 +125,10 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
             const isActive = activeNav === label;
             return (
               <button key={label} onClick={() => onNavChange(label)}
+                type="button"
+                aria-current={isActive ? "page" : undefined}
                 style={{
-                  height: 30, padding: "0 12px", borderRadius: 8,
+                  height: 34, padding: "0 12px", borderRadius: 8,
                   background: isActive ? C.navActive : "transparent",
                   border: `1px solid ${isActive ? C.cardBorder : "transparent"}`,
                   color: isActive ? C.textBright : C.textMuted,
@@ -157,8 +161,8 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           </div>
 
           {/* Bell */}
-          <button style={{
-            width: 30, height: 30, borderRadius: 8,
+          <button type="button" aria-label={`Thông báo: ${derivedAlertCount} cảnh báo`} style={{
+            width: 34, height: 34, borderRadius: 8,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             cursor: "pointer", position: "relative",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -186,9 +190,9 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           <div style={{ width: 1, height: 18, background: C.border }} />
 
           {/* Theme toggle */}
-          <button onClick={toggleTheme} title={isDark ? "Chế độ sáng" : "Chế độ tối"}
+          <button type="button" onClick={toggleTheme} title={isDark ? "Chế độ sáng" : "Chế độ tối"} aria-label={isDark ? "Chuyển sang chế độ sáng" : "Chuyển sang chế độ tối"}
             style={{
-              width: 30, height: 30, borderRadius: 8,
+              width: 34, height: 34, borderRadius: 8,
               background: C.card, border: `1px solid ${C.cardBorder}`,
               cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
               transition: "background 0.15s",
@@ -199,9 +203,9 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           </button>
 
           {/* User */}
-          <button style={{
+          <button type="button" aria-label="Mở menu tài khoản quản trị" style={{
             display: "flex", alignItems: "center", gap: 6,
-            height: 30, padding: "0 8px", borderRadius: 8,
+            height: 34, padding: "0 8px", borderRadius: 8,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             cursor: "pointer",
           }}>

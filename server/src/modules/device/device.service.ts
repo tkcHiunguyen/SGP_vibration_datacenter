@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
-import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository, DeviceStatusHistoryQuery } from './device.repository.js';
+import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
 
 const AXIS_LABEL_KEYS = ['ax', 'ay', 'az'] as const;
 
@@ -13,6 +13,11 @@ type RegisterDeviceInput = {
   firmwareVersion?: string;
   axisLabels?: DeviceAxisLabels;
   notes?: string;
+};
+
+type ImportDeviceMetadataInput = RegisterDeviceInput & {
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type UpdateDeviceInput = Omit<RegisterDeviceInput, 'deviceId'>;
@@ -98,6 +103,29 @@ export class DeviceService {
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+    };
+    await this.repository.upsertMetadata(metadata);
+    return metadata;
+  }
+
+  async importMetadataStrict(input: ImportDeviceMetadataInput): Promise<DeviceMetadata> {
+    const now = new Date().toISOString();
+    const existing = this.repository.getMetadata(input.deviceId);
+    const hasUuid = Object.prototype.hasOwnProperty.call(input, 'uuid');
+    const hasZone = Object.prototype.hasOwnProperty.call(input, 'zone');
+    const normalizedUuid = hasUuid ? this.normalizeOptionalText(input.uuid) : existing?.uuid;
+    const metadata: DeviceMetadata = {
+      deviceId: input.deviceId,
+      uuid: normalizedUuid ?? randomUUID(),
+      name: this.normalizeOptionalText(input.name) ?? existing?.name ?? input.deviceId,
+      site: this.normalizeOptionalText(input.site) ?? existing?.site,
+      zone: hasZone ? this.normalizeOptionalText(input.zone) : existing?.zone,
+      firmwareVersion: this.normalizeOptionalText(input.firmwareVersion) ?? existing?.firmwareVersion,
+      axisLabels:
+        input.axisLabels === undefined ? existing?.axisLabels : this.normalizeAxisLabels(input.axisLabels),
+      notes: this.normalizeOptionalText(input.notes) ?? existing?.notes,
+      createdAt: this.normalizeOptionalIso(input.createdAt) ?? existing?.createdAt ?? now,
+      updatedAt: this.normalizeOptionalIso(input.updatedAt) ?? now,
     };
     await this.repository.upsertMetadata(metadata);
     return metadata;
@@ -252,8 +280,8 @@ export class DeviceService {
     return this.repository.touch(deviceId, new Date().toISOString(), this.normalizeHeartbeat(heartbeat));
   }
 
-  disconnect(deviceId: string, socketId: string): boolean {
-    return this.repository.removeIfSocketMatches(deviceId, socketId);
+  disconnect(deviceId: string, socketId: string, reason?: string): boolean {
+    return this.repository.removeIfSocketMatches(deviceId, socketId, new Date().toISOString(), reason);
   }
 
   get(deviceId: string): DeviceSession | null {
@@ -286,6 +314,10 @@ export class DeviceService {
 
   countConnected(): number {
     return this.repository.countConnected();
+  }
+
+  async listStatusHistory(query: DeviceStatusHistoryQuery): Promise<DeviceStatusHistoryEntry[]> {
+    return await this.repository.listStatusHistory(query);
   }
 
   listDeviceIdsByZone(zoneCode: string): string[] {
@@ -474,6 +506,15 @@ export class DeviceService {
     }
     const normalized = value.trim();
     return normalized ? normalized : undefined;
+  }
+
+  private normalizeOptionalIso(value?: string): string | undefined {
+    const normalized = this.normalizeOptionalText(value);
+    if (!normalized) {
+      return undefined;
+    }
+    const timestamp = Date.parse(normalized);
+    return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
   }
 
   private resolveAxisLabels(

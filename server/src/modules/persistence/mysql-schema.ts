@@ -39,6 +39,26 @@ PREPARE rename_socket_datas_stmt FROM @rename_socket_datas_sql;
 EXECUTE rename_socket_datas_stmt;
 DEALLOCATE PREPARE rename_socket_datas_stmt;
 
+-- Legacy rename: socket_disconnect_events -> device_history_connection
+SET @has_socket_disconnect_events := (
+  SELECT COUNT(*)
+  FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'socket_disconnect_events'
+);
+SET @has_device_history_connection := (
+  SELECT COUNT(*)
+  FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'device_history_connection'
+);
+SET @rename_device_history_connection_sql := IF(
+  @has_socket_disconnect_events = 1 AND @has_device_history_connection = 0,
+  'RENAME TABLE socket_disconnect_events TO device_history_connection',
+  'SELECT 1'
+);
+PREPARE rename_device_history_connection_stmt FROM @rename_device_history_connection_sql;
+EXECUTE rename_device_history_connection_stmt;
+DEALLOCATE PREPARE rename_device_history_connection_stmt;
+
 CREATE TABLE IF NOT EXISTS devices (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   device_id VARCHAR(191) NOT NULL,
@@ -86,6 +106,104 @@ CREATE TABLE IF NOT EXISTS socket_datas (
     ON UPDATE CASCADE
     ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS server_runtime_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  run_id VARCHAR(191) NOT NULL,
+  service_name VARCHAR(191) NOT NULL,
+  started_at DATETIME(3) NOT NULL,
+  last_heartbeat_at DATETIME(3) NOT NULL,
+  stopped_at DATETIME(3) NULL,
+  stop_reason VARCHAR(191) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_server_runtime_history_run_id (run_id),
+  KEY idx_server_runtime_history_service_started (service_name, started_at),
+  KEY idx_server_runtime_history_service_stopped (service_name, stopped_at)
+);
+
+CREATE TABLE IF NOT EXISTS device_status_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  device_id VARCHAR(191) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  socket_id VARCHAR(191) NULL,
+  started_at DATETIME(3) NOT NULL,
+  ended_at DATETIME(3) NULL,
+  last_heartbeat_at DATETIME(3) NULL,
+  reason VARCHAR(191) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_device_status_history_interval (device_id, status, socket_id, started_at),
+  KEY idx_device_status_history_device_started (device_id, started_at),
+  KEY idx_device_status_history_device_open (device_id, ended_at),
+  KEY idx_device_status_history_status_started (status, started_at),
+  CONSTRAINT fk_device_status_history_device
+    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
+);
+
+SET @has_device_history_connection_for_migration := (
+  SELECT COUNT(*)
+  FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'device_history_connection'
+);
+SET @migrate_device_history_connection_online_sql := IF(
+  @has_device_history_connection_for_migration = 1,
+  'INSERT IGNORE INTO device_status_history (device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at) SELECT device_id, ''online'', socket_id, connected_at, disconnected_at, last_heartbeat_at, NULL, connected_at, disconnected_at FROM device_history_connection',
+  'SELECT 1'
+);
+PREPARE migrate_device_history_connection_online_stmt FROM @migrate_device_history_connection_online_sql;
+EXECUTE migrate_device_history_connection_online_stmt;
+DEALLOCATE PREPARE migrate_device_history_connection_online_stmt;
+SET @migrate_device_history_connection_offline_sql := IF(
+  @has_device_history_connection_for_migration = 1,
+  'INSERT IGNORE INTO device_status_history (device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at) SELECT event.device_id, ''offline'', event.socket_id, event.disconnected_at, (SELECT MIN(next_event.connected_at) FROM device_history_connection next_event WHERE next_event.device_id = event.device_id AND next_event.connected_at > event.disconnected_at), event.last_heartbeat_at, event.disconnect_reason, event.disconnected_at, COALESCE((SELECT MIN(next_event.connected_at) FROM device_history_connection next_event WHERE next_event.device_id = event.device_id AND next_event.connected_at > event.disconnected_at), event.disconnected_at) FROM device_history_connection event',
+  'SELECT 1'
+);
+PREPARE migrate_device_history_connection_offline_stmt FROM @migrate_device_history_connection_offline_sql;
+EXECUTE migrate_device_history_connection_offline_stmt;
+DEALLOCATE PREPARE migrate_device_history_connection_offline_stmt;
+DROP TABLE IF EXISTS device_history_connection;
+
+SET @has_socket_disconnect_events_for_migration := (
+  SELECT COUNT(*)
+  FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'socket_disconnect_events'
+);
+SET @migrate_socket_disconnect_events_online_sql := IF(
+  @has_socket_disconnect_events_for_migration = 1,
+  'INSERT IGNORE INTO device_status_history (device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at) SELECT device_id, ''online'', socket_id, connected_at, disconnected_at, last_heartbeat_at, NULL, connected_at, disconnected_at FROM socket_disconnect_events',
+  'SELECT 1'
+);
+PREPARE migrate_socket_disconnect_events_online_stmt FROM @migrate_socket_disconnect_events_online_sql;
+EXECUTE migrate_socket_disconnect_events_online_stmt;
+DEALLOCATE PREPARE migrate_socket_disconnect_events_online_stmt;
+SET @migrate_socket_disconnect_events_offline_sql := IF(
+  @has_socket_disconnect_events_for_migration = 1,
+  'INSERT IGNORE INTO device_status_history (device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at) SELECT event.device_id, ''offline'', event.socket_id, event.disconnected_at, (SELECT MIN(next_event.connected_at) FROM socket_disconnect_events next_event WHERE next_event.device_id = event.device_id AND next_event.connected_at > event.disconnected_at), event.last_heartbeat_at, event.disconnect_reason, event.disconnected_at, COALESCE((SELECT MIN(next_event.connected_at) FROM socket_disconnect_events next_event WHERE next_event.device_id = event.device_id AND next_event.connected_at > event.disconnected_at), event.disconnected_at) FROM socket_disconnect_events event',
+  'SELECT 1'
+);
+PREPARE migrate_socket_disconnect_events_offline_stmt FROM @migrate_socket_disconnect_events_offline_sql;
+EXECUTE migrate_socket_disconnect_events_offline_stmt;
+DEALLOCATE PREPARE migrate_socket_disconnect_events_offline_stmt;
+DROP TABLE IF EXISTS socket_disconnect_events;
+
+UPDATE device_status_history h
+JOIN socket_datas sd ON sd.device_id = h.device_id
+SET
+  h.ended_at = sd.connected_at,
+  h.updated_at = sd.connected_at
+WHERE h.ended_at IS NULL AND h.started_at < sd.connected_at;
+
+INSERT IGNORE INTO device_status_history (
+  device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at
+)
+SELECT
+  device_id, 'online', socket_id, connected_at, NULL, last_heartbeat_at, NULL, connected_at, connected_at
+FROM socket_datas;
 
 -- Enforce numeric surrogate key on devices while keeping business key device_id.
 SET @has_devices_id := (
