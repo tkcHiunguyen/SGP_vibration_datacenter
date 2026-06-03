@@ -14,7 +14,7 @@
     "typecheck": "pnpm -C server/client typecheck && pnpm -C server typecheck",
     "test": "pnpm -C server test",
     "release:check": "pnpm db:schema:export && pnpm typecheck && pnpm test && pnpm build",
-    "prod:deploy": "pnpm install --frozen-lockfile --ignore-scripts && pnpm build && DB_AUTO_INIT=true DB_FALLBACK_ON_UNAVAILABLE=false pnpm db:init && DB_AUTO_INIT=false DB_FALLBACK_ON_UNAVAILABLE=false pnpm start",
+    "prod:deploy": "node scripts/prod-deploy.mjs",
     "perf:build": "pnpm -C server/client build && pnpm -C server build",
     "perf:lighthouse:clean": "rm -rf output/perf/lighthouse",
     "perf:lighthouse:mobile": "pnpm perf:build && lhci autorun --config=./server/client/lighthouserc.mobile.json",

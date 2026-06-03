@@ -1,18 +1,21 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { getSharedMySqlAccess, isMySqlUnavailableError } from '../modules/persistence/mysql-access.js';
+import { MySqlAccess, isMySqlUnavailableError } from '../modules/persistence/mysql-access.js';
+import { resolveMySqlConnectionSettings } from '../modules/persistence/mysql-env.js';
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 dotenv.config({ path: resolve(serverRoot, '.env') });
 
 async function main(): Promise<void> {
-  const mysqlAccess = getSharedMySqlAccess();
+  const mysqlConfig = resolveMySqlConnectionSettings();
 
-  if (!mysqlAccess) {
+  if (!mysqlConfig) {
     console.log('[db:init] skipped: MySQL is not configured (set MYSQL_URL or MYSQL_HOST/PORT/USER/PASSWORD/DATABASE).');
     return;
   }
+
+  const mysqlAccess = new MySqlAccess(mysqlConfig, true);
 
   try {
     await mysqlAccess.ensureReady();
