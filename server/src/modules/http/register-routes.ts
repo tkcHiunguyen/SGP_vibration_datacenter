@@ -1,11 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { promisify } from 'node:util';
-import { gunzip, gzip } from 'node:zlib';
+import { createGzip, gunzip, gzip } from 'node:zlib';
 import { networkInterfaces } from 'node:os';
+import { once } from 'node:events';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { env } from '../../shared/config.js';
@@ -147,7 +148,7 @@ export function registerRoutes({
   const sgpDataManifestSchema = z
     .object({
       format: z.literal('sgpdata'),
-      version: z.literal(1),
+      version: z.union([z.literal(1), z.literal(2)]),
       exportedAt: z.string().optional(),
       dateRange: sgpDataDateRangeSchema.optional(),
       deviceCount: z.number().optional(),
@@ -170,8 +171,9 @@ export function registerRoutes({
   type SgpDataDevice = z.infer<typeof sgpDataDeviceSchema>;
   type SgpDataTelemetryPoint = z.infer<typeof sgpDataTelemetryPointSchema>;
   type SgpDataExportResult = {
-    compressed: Buffer;
     fileName: string;
+    filePath: string;
+    sizeBytes: number;
     manifest: SgpDataArchive['manifest'];
   };
 
@@ -515,6 +517,16 @@ export function registerRoutes({
     return createHash('sha256').update(sgpDataChecksumPayload(archive)).digest('hex');
   }
 
+  async function writeLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
+    if (!stream.write(`${line}\n`)) {
+      await once(stream, 'drain');
+    }
+  }
+
+  function createNdjsonLine(type: string, data: unknown): string {
+    return JSON.stringify({ type, data });
+  }
+
   function clampExportProgress(progress: number): number {
     if (!Number.isFinite(progress)) {
       return 0;
@@ -565,11 +577,13 @@ export function registerRoutes({
     range,
     deviceId,
     actor,
+    filePath,
     onProgress,
   }: {
     range: DataExportJob['range'];
     deviceId?: string;
     actor: string;
+    filePath: string;
     onProgress?: (progress: number, stage: string) => void | Promise<void>;
   }): Promise<SgpDataExportResult> {
     await onProgress?.(8, 'Đang tải danh sách thiết bị');
@@ -580,76 +594,94 @@ export function registerRoutes({
       throw new Error('device_not_found');
     }
 
-    await onProgress?.(22, 'Đang xuất telemetry');
-    const measurements = await telemetryService.exportHistory({
-      from: range.from,
-      to: range.to,
-      deviceId,
-    });
-
-    await onProgress?.(48, 'Đang xuất phổ FFT');
-    const spectrumFrames = (
-      await Promise.all(deviceMetadata.map((device) => spectrumStorageService.exportFrames(device.deviceId, range.from, range.to)))
-    ).flat();
-
-    await onProgress?.(66, 'Đang gom cấu hình thiết bị');
-    const selectedDeviceIds = new Set<string>([
-      ...measurements.map((point) => point.deviceId),
-      ...spectrumFrames.map((frame) => frame.deviceId),
-    ]);
-    if (deviceId) {
-      selectedDeviceIds.add(deviceId);
-    }
-    const devices = deviceMetadata.filter((device) => selectedDeviceIds.has(device.deviceId));
-    const placementConfigs: Record<string, Record<string, unknown>> = {};
-    for (const device of devices) {
-      const config = await spectrumStorageService.readPlacementConfig(device.deviceId);
-      if (config) {
-        placementConfigs[device.deviceId] = config;
-      }
-    }
-
-    const archive: SgpDataArchive = {
-      manifest: {
-        format: 'sgpdata',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        dateRange: range,
-        deviceCount: devices.length,
-        measurementCount: measurements.length,
-        spectrumFrameCount: spectrumFrames.length,
-        placementConfigCount: Object.keys(placementConfigs).length,
-      },
-      devices,
-      measurements,
-      spectrumFrames,
-      placementConfigs,
-    };
-    archive.manifest.checksumSha256 = createSgpDataChecksum(archive);
-
-    await onProgress?.(82, 'Đang nén gói dữ liệu');
-    const body = Buffer.from(JSON.stringify(archive));
-    const compressed = await gzipAsync(body);
     const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
     const deviceSuffix = deviceId ? `_${sanitizeExportFilePart(deviceId)}` : '';
     const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
+    const manifest: SgpDataArchive['manifest'] = {
+      format: 'sgpdata',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      dateRange: range,
+      deviceCount: 0,
+      measurementCount: 0,
+      spectrumFrameCount: 0,
+      placementConfigCount: 0,
+    };
+    const checksum = createHash('sha256');
+    const output = createWriteStream(filePath);
+    const gzipStream = createGzip();
+    gzipStream.pipe(output);
 
-    auditService.record({
-      action: 'sgpdata_export',
-      deviceId: deviceId ?? 'n/a',
-      commandId: 'n/a',
-      actor,
-      result: 'exported',
-      metadata: {
-        dateRange: range,
-        deviceCount: devices.length,
-        measurementCount: measurements.length,
-        spectrumFrameCount: spectrumFrames.length,
-        sizeBytes: compressed.byteLength,
-      },
-    });
+    async function writeEntry(type: string, data: unknown): Promise<void> {
+      const line = createNdjsonLine(type, data);
+      checksum.update(line).update('\n');
+      await writeLine(gzipStream, line);
+    }
 
-    return { compressed, fileName, manifest: archive.manifest };
+    try {
+      await writeEntry('manifest', { ...manifest, version: 2, encoding: 'gzip-ndjson' });
+
+      await onProgress?.(22, 'Đang xuất telemetry');
+      const measurements = await telemetryService.exportHistory({ from: range.from, to: range.to, deviceId });
+      const selectedDeviceIds = new Set<string>();
+      for (const point of measurements) {
+        selectedDeviceIds.add(point.deviceId);
+        await writeEntry('measurement', point);
+        manifest.measurementCount = (manifest.measurementCount ?? 0) + 1;
+      }
+
+      await onProgress?.(48, 'Đang xuất phổ FFT');
+      for (const device of deviceMetadata) {
+        const frames = await spectrumStorageService.exportFrames(device.deviceId, range.from, range.to);
+        for (const frame of frames) {
+          selectedDeviceIds.add(frame.deviceId);
+          await writeEntry('spectrumFrame', frame);
+          manifest.spectrumFrameCount = (manifest.spectrumFrameCount ?? 0) + 1;
+        }
+      }
+      if (deviceId) selectedDeviceIds.add(deviceId);
+
+      await onProgress?.(66, 'Đang gom cấu hình thiết bị');
+      const devices = deviceMetadata.filter((device) => selectedDeviceIds.has(device.deviceId));
+      for (const device of devices) {
+        await writeEntry('device', device);
+        manifest.deviceCount = (manifest.deviceCount ?? 0) + 1;
+        const config = await spectrumStorageService.readPlacementConfig(device.deviceId);
+        if (config) {
+          await writeEntry('placementConfig', { deviceId: device.deviceId, config });
+          manifest.placementConfigCount = (manifest.placementConfigCount ?? 0) + 1;
+        }
+      }
+
+      manifest.checksumSha256 = checksum.digest('hex');
+      await onProgress?.(82, 'Đang nén gói dữ liệu');
+      await writeLine(gzipStream, createNdjsonLine('end', { checksumSha256: manifest.checksumSha256 }));
+      gzipStream.end();
+      await once(output, 'finish');
+      const fileStat = await stat(filePath);
+
+      auditService.record({
+        action: 'sgpdata_export',
+        deviceId: deviceId ?? 'n/a',
+        commandId: 'n/a',
+        actor,
+        result: 'exported',
+        metadata: {
+          dateRange: range,
+          deviceCount: manifest.deviceCount,
+          measurementCount: manifest.measurementCount,
+          spectrumFrameCount: manifest.spectrumFrameCount,
+          sizeBytes: fileStat.size,
+        },
+      });
+
+      return { fileName, filePath, sizeBytes: fileStat.size, manifest };
+    } catch (error) {
+      gzipStream.destroy();
+      output.destroy();
+      await unlink(filePath).catch(() => undefined);
+      throw error;
+    }
   }
 
   async function runSgpDataExportJob(job: DataExportJob, actor: string): Promise<void> {
@@ -662,16 +694,19 @@ export function registerRoutes({
         startedAt,
         workerRunId: dataExportJobWorkerRunId,
       });
+      await mkdir(sgpDataExportDir, { recursive: true });
+      const suffix = `${job.range.from.slice(0, 10)}_${job.range.to.slice(0, 10)}`;
+      const deviceSuffix = job.deviceId ? `_${sanitizeExportFilePart(job.deviceId)}` : '';
+      const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
+      const filePath = join(sgpDataExportDir, `${job.jobId}-${fileName}`);
       const result = await buildSgpDataExportArchive({
         range: job.range,
         deviceId: job.deviceId,
         actor,
+        filePath,
         onProgress: (progress, stage) => updateSgpDataExportJob(job, { progress, stage }),
       });
       await updateSgpDataExportJob(job, { progress: 92, stage: 'Đang ghi file export' });
-      await mkdir(sgpDataExportDir, { recursive: true });
-      const filePath = join(sgpDataExportDir, `${job.jobId}-${result.fileName}`);
-      await writeFile(filePath, result.compressed);
       const completedAt = new Date().toISOString();
       await updateSgpDataExportJob(job, {
         status: 'completed',
@@ -679,16 +714,20 @@ export function registerRoutes({
         stage: 'Hoàn tất',
         fileName: result.fileName,
         filePath,
-        sizeBytes: result.compressed.byteLength,
+        sizeBytes: result.sizeBytes,
         manifest: { ...result.manifest },
         completedAt,
       });
     } catch (error) {
+      const rawError = error instanceof Error ? error.message : 'sgpdata_export_failed';
+      const normalizedError = rawError.includes('Invalid string length')
+        ? 'Gói export quá lớn để đóng thành JSON trong RAM. Hãy chọn khoảng thời gian ngắn hơn hoặc export theo từng thiết bị.'
+        : rawError;
       await updateSgpDataExportJob(job, {
         status: 'failed',
         progress: 100,
         stage: 'Export thất bại',
-        error: error instanceof Error ? error.message : 'sgpdata_export_failed',
+        error: normalizedError,
         completedAt: new Date().toISOString(),
       });
     }
@@ -739,19 +778,70 @@ export function registerRoutes({
     } catch {
       raw = buffer;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString('utf8'));
-    } catch {
-      throw new Error('sgpdata_json_invalid');
+    const text = raw.toString('utf8').trim();
+    const firstNonWs = text[0];
+    if (firstNonWs === '{' && !text.startsWith('{"type"')) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error('sgpdata_json_invalid');
+      }
+      const archive = sgpDataArchiveSchema.parse(parsed);
+      if (archive.manifest.checksumSha256) {
+        const checksum = createSgpDataChecksum(archive);
+        if (checksum !== archive.manifest.checksumSha256) {
+          throw new Error('sgpdata_checksum_mismatch');
+        }
+      }
+      return archive;
     }
-    const archive = sgpDataArchiveSchema.parse(parsed);
-    if (archive.manifest.checksumSha256) {
-      const checksum = createSgpDataChecksum(archive);
-      if (checksum !== archive.manifest.checksumSha256) {
-        throw new Error('sgpdata_checksum_mismatch');
+
+    const archive: SgpDataArchive = {
+      manifest: { format: 'sgpdata', version: 2 },
+      devices: [],
+      measurements: [],
+      spectrumFrames: [],
+      placementConfigs: {},
+    };
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry: { type?: string; data?: unknown };
+      try {
+        entry = JSON.parse(trimmed) as { type?: string; data?: unknown };
+      } catch {
+        throw new Error('sgpdata_json_invalid');
+      }
+      switch (entry.type) {
+        case 'manifest':
+          archive.manifest = sgpDataManifestSchema.parse(entry.data);
+          break;
+        case 'device':
+          archive.devices.push(sgpDataDeviceSchema.parse(entry.data));
+          break;
+        case 'measurement':
+          archive.measurements.push(sgpDataTelemetryPointSchema.parse(entry.data));
+          break;
+        case 'spectrumFrame':
+          archive.spectrumFrames.push(sgpDataSpectrumFrameSchema.parse(entry.data));
+          break;
+        case 'placementConfig': {
+          const payload = z.object({ deviceId: z.string().min(1), config: z.object({}).passthrough() }).parse(entry.data);
+          archive.placementConfigs = archive.placementConfigs ?? {};
+          archive.placementConfigs[payload.deviceId] = payload.config;
+          break;
+        }
+        case 'end':
+          break;
+        default:
+          throw new Error('sgpdata_entry_type_invalid');
       }
     }
+    archive.manifest.deviceCount = archive.devices.length;
+    archive.manifest.measurementCount = archive.measurements.length;
+    archive.manifest.spectrumFrameCount = archive.spectrumFrames.length;
+    archive.manifest.placementConfigCount = Object.keys(archive.placementConfigs ?? {}).length;
     return archive;
   }
 
@@ -1226,15 +1316,22 @@ export function registerRoutes({
       return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_invalid' });
     }
 
+    await mkdir(sgpDataExportDir, { recursive: true });
+    const tempJobId = randomUUID();
+    const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
+    const deviceSuffix = query.deviceId ? `_${sanitizeExportFilePart(query.deviceId)}` : '';
+    const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
+    const filePath = join(sgpDataExportDir, `${tempJobId}-${fileName}`);
     const result = await buildSgpDataExportArchive({
       range,
       deviceId: query.deviceId,
       actor: principalActor(principal),
+      filePath,
     });
     reply.header('content-type', 'application/vnd.sgpdata');
     reply.header('content-disposition', `attachment; filename="${result.fileName}"`);
     reply.header('cache-control', 'no-store');
-    return reply.send(result.compressed);
+    return reply.send(createReadStream(result.filePath));
   });
 
   app.post('/api/sgpdata/import/preview', async (request, reply) => {
