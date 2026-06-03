@@ -3,8 +3,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
+import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
-import { createGzip, gunzip, gzip } from 'node:zlib';
+import { createGunzip, createGzip, gunzip, gzip } from 'node:zlib';
 import { networkInterfaces } from 'node:os';
 import { once } from 'node:events';
 import { join } from 'node:path';
@@ -845,12 +847,71 @@ export function registerRoutes({
     return archive;
   }
 
+  async function parseSgpDataArchiveNdjsonStream(stream: Readable): Promise<SgpDataArchive> {
+    const archive: SgpDataArchive = {
+      manifest: { format: 'sgpdata', version: 2 },
+      devices: [],
+      measurements: [],
+      spectrumFrames: [],
+      placementConfigs: {},
+    };
+    const input = stream.pipe(createGunzip());
+    const rl = createInterface({ input, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let entry: { type?: string; data?: unknown };
+        try {
+          entry = JSON.parse(trimmed) as { type?: string; data?: unknown };
+        } catch {
+          throw new Error('sgpdata_json_invalid');
+        }
+        switch (entry.type) {
+          case 'manifest':
+            archive.manifest = sgpDataManifestSchema.parse(entry.data);
+            break;
+          case 'device':
+            archive.devices.push(sgpDataDeviceSchema.parse(entry.data));
+            break;
+          case 'measurement':
+            archive.measurements.push(sgpDataTelemetryPointSchema.parse(entry.data));
+            break;
+          case 'spectrumFrame':
+            archive.spectrumFrames.push(sgpDataSpectrumFrameSchema.parse(entry.data));
+            break;
+          case 'placementConfig': {
+            const payload = z.object({ deviceId: z.string().min(1), config: z.object({}).passthrough() }).parse(entry.data);
+            archive.placementConfigs = archive.placementConfigs ?? {};
+            archive.placementConfigs[payload.deviceId] = payload.config;
+            break;
+          }
+          case 'end':
+            break;
+          default:
+            throw new Error('sgpdata_entry_type_invalid');
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'incorrect header check') {
+        throw new Error('sgpdata_legacy_too_large_use_v2_export');
+      }
+      throw error;
+    }
+    archive.manifest.deviceCount = archive.devices.length;
+    archive.manifest.measurementCount = archive.measurements.length;
+    archive.manifest.spectrumFrameCount = archive.spectrumFrames.length;
+    archive.manifest.placementConfigCount = Object.keys(archive.placementConfigs ?? {}).length;
+    return archive;
+  }
+
   async function readSgpDataArchiveUpload(request: FastifyRequest): Promise<{ archive: SgpDataArchive; filename: string; sizeBytes: number }> {
     const multipartRequest = request as FastifyRequest & {
       file: () => Promise<
         | {
             filename: string;
             mimetype: string;
+            file?: Readable;
             toBuffer: () => Promise<Buffer>;
           }
         | undefined
@@ -863,6 +924,17 @@ export function registerRoutes({
     const filename = filePart.filename || 'import.sgpdata';
     if (!filename.toLowerCase().endsWith('.sgpdata')) {
       throw new Error('sgpdata_file_extension_invalid');
+    }
+    if (filePart.file) {
+      let sizeBytes = 0;
+      filePart.file.on('data', (chunk: Buffer) => {
+        sizeBytes += chunk.length;
+      });
+      const archive = await parseSgpDataArchiveNdjsonStream(filePart.file);
+      if (sizeBytes === 0) {
+        throw new Error('sgpdata_file_empty');
+      }
+      return { archive, filename, sizeBytes };
     }
     const buffer = await filePart.toBuffer();
     if (buffer.length === 0) {

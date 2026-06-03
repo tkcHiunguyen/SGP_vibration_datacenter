@@ -62,7 +62,8 @@ async function registerAppPlugins(app: FastifyInstance, otaUploadRoot: string): 
   });
   await app.register(multipart, {
     limits: {
-      fileSize: 64 * 1024 * 1024,
+      // .sgpdata maintenance imports can be much larger than normal uploads.
+      fileSize: 2 * 1024 * 1024 * 1024,
       files: 1,
     },
   });
