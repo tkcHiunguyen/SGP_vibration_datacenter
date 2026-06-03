@@ -42,6 +42,23 @@ export type DeviceTelemetrySummary = {
   estimatedBytes: number;
 };
 
+export type TelemetryImportPoint = TelemetryMessage & {
+  telemetryUuid?: string;
+  sampleCount?: number;
+};
+
+export type TelemetryArchiveQuery = {
+  from: string;
+  to: string;
+  deviceId?: string;
+};
+
+export type TelemetryImportResult = {
+  inserted: number;
+  updated: number;
+  skipped: number;
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 export interface TelemetryRepository {
@@ -50,5 +67,7 @@ export interface TelemetryRepository {
   listHistory(query: TelemetryHistoryQuery): MaybePromise<TelemetryHistoryResult>;
   listAvailableDays(query: TelemetryAvailabilityQuery): MaybePromise<DeviceTelemetryAvailabilityDay[]>;
   summarizeDevice(deviceId: string): MaybePromise<DeviceTelemetrySummary>;
+  exportHistory(query: TelemetryArchiveQuery): MaybePromise<TelemetryImportPoint[]>;
+  importHistory(points: TelemetryImportPoint[]): MaybePromise<TelemetryImportResult>;
   applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

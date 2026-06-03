@@ -17,6 +17,12 @@ const OtaManagement = lazy(() =>
   })),
 );
 
+const SettingsPage = lazy(() =>
+  import("./SettingsPage").then((module) => ({
+    default: module.SettingsPage,
+  })),
+);
+
 type TelemetryHistoryRequestOptions = {
   limit?: number;
   from?: string;
@@ -101,6 +107,10 @@ export function MainPanel({
       ) : activeNav === "Update Center" ? (
         <Suspense fallback={panelFallback}>
           <OtaManagement />
+        </Suspense>
+      ) : activeNav === "Cài đặt" ? (
+        <Suspense fallback={panelFallback}>
+          <SettingsPage />
         </Suspense>
       ) : (
         <UnderDevelopment page={activeNav} />

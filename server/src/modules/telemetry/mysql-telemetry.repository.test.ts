@@ -128,3 +128,36 @@ test('raw history keeps the default latest-point limit', async () => {
   assert.match(rawCall.sql, /LIMIT \?/);
   assert.equal(rawCall.params.at(-1), 200);
 });
+
+test('archive export returns raw range without history limit and fills stable telemetry uuid', async () => {
+  const mysql = new FakeMySqlAccess({
+    raw: [
+      {
+        id: 1,
+        device_id: 'ESP-1',
+        received_at: '2026-04-29 17:00:05.000',
+        temperature: 22.5,
+        vibration: null,
+        ax: 0.1,
+        ay: 0.2,
+        az: 0.3,
+        sample_count: 1,
+        telemetry_uuid: null,
+      },
+    ],
+  });
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+
+  const result = await repository.exportHistory({
+    from: '2026-04-29T17:00:00.000Z',
+    to: '2026-04-30T16:59:59.999Z',
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.telemetryUuid, 'sgp-time:ESP-1:2026-04-29T17:00:05.000Z');
+  assert.equal(result[0]?.payload.telemetry_uuid, result[0]?.telemetryUuid);
+  const exportCall = mysql.calls.find((call) => call.sql.includes('ORDER BY device_id ASC, received_at ASC, id ASC'));
+  assert.ok(exportCall);
+  assert.doesNotMatch(exportCall.sql, /LIMIT \?/);
+  assert.deepEqual(exportCall.params, ['2026-04-29T17:00:00.000Z', '2026-04-30T16:59:59.999Z']);
+});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
 import { DeviceService } from './device.service.js';
@@ -11,6 +11,12 @@ class FakeDeviceRepository implements DeviceRepository {
   readonly sessions = new Map<string, DeviceSession>();
   failNextMetadataUpsert = false;
   impactOverrides = new Map<string, Partial<DeviceDeletionImpact>>();
+  lastDisconnect?: {
+    deviceId: string;
+    socketId: string;
+    disconnectedAt: string;
+    disconnectReason?: string;
+  };
 
   async upsertMetadata(metadata: DeviceMetadata): Promise<void> {
     if (this.failNextMetadataUpsert) {
@@ -66,11 +72,17 @@ class FakeDeviceRepository implements DeviceRepository {
     return [...this.sessions.values()];
   }
 
-  removeIfSocketMatches(deviceId: string, socketId: string): boolean {
+  removeIfSocketMatches(
+    deviceId: string,
+    socketId: string,
+    disconnectedAt: string,
+    disconnectReason?: string,
+  ): boolean {
     const current = this.sessions.get(deviceId);
     if (!current || current.socketId !== socketId) {
       return false;
     }
+    this.lastDisconnect = { deviceId, socketId, disconnectedAt, disconnectReason };
     this.sessions.delete(deviceId);
     return true;
   }
@@ -95,6 +107,10 @@ class FakeDeviceRepository implements DeviceRepository {
 
   countConnected(): number {
     return this.sessions.size;
+  }
+
+  async listStatusHistory(): Promise<DeviceStatusHistoryEntry[]> {
+    return [];
   }
 
   private createDefaultImpact(deviceId: string, metadata: DeviceMetadata): DeviceDeletionImpact {
@@ -142,6 +158,30 @@ test('registerStrict persists metadata and returns saved device', async () => {
   assert.equal(created.name, 'Pump 01');
   assert.equal(created.zone, 'ROLL_OUT');
   assert.equal(repository.getMetadata('ESP-001')?.firmwareVersion, '1.0.6');
+});
+
+test('disconnect records reason and detected timestamp before removing session', () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository);
+
+  service.connect('ESP-DISCONNECT', 'socket-1');
+  const removed = service.disconnect('ESP-DISCONNECT', 'socket-1', 'ping timeout');
+
+  assert.equal(removed, true);
+  assert.equal(repository.getSession('ESP-DISCONNECT'), null);
+  assert.deepEqual(
+    {
+      deviceId: repository.lastDisconnect?.deviceId,
+      socketId: repository.lastDisconnect?.socketId,
+      disconnectReason: repository.lastDisconnect?.disconnectReason,
+    },
+    {
+      deviceId: 'ESP-DISCONNECT',
+      socketId: 'socket-1',
+      disconnectReason: 'ping timeout',
+    },
+  );
+  assert.match(repository.lastDisconnect?.disconnectedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('updateStrict persists per-device axis labels and trims empty labels', async () => {
@@ -338,6 +378,69 @@ test('repository loads device rows without legacy archive or sensor version colu
 
   assert.deepEqual(service.list().map((device) => device.deviceId), ['ESP-ACTIVE', 'ESP-LEGACY']);
   assert.equal(await service.inspectDeletionImpact('ESP-LEGACY') !== null, true);
+});
+
+test('repository returns device status history timestamps as UTC ISO', async () => {
+  const mysql = {
+    async query<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
+      if (sql.includes('FROM devices')) {
+        return [
+          {
+            device_id: 'ESP-TIME',
+            uuid: 'time-uuid',
+            name: 'Time device',
+            site: null,
+            zone: null,
+            firmware_version: null,
+            axis_label_ax: null,
+            axis_label_ay: null,
+            axis_label_az: null,
+            notes: null,
+            created_at: '2026-06-01 01:00:00.000',
+            updated_at: '2026-06-01 01:30:00.000',
+          },
+        ] as unknown as T[];
+      }
+      if (sql.includes('FROM socket_datas')) {
+        return [];
+      }
+      if (sql.includes("WHERE status = 'online' AND ended_at IS NULL")) {
+        return [];
+      }
+      if (sql.includes('FROM device_status_history')) {
+        return [
+          {
+            device_id: 'ESP-TIME',
+            status: 'offline',
+            socket_id: 'socket-time',
+            started_at: '2026-06-01 02:50:48.947',
+            ended_at: '2026-06-01 03:05:12.123',
+            last_heartbeat_at: '2026-06-01 02:50:47.001',
+            reason: 'ping timeout',
+          },
+        ] as unknown as T[];
+      }
+      return [];
+    },
+    async execute(): Promise<number> {
+      return 0;
+    },
+  } as unknown as MySqlAccess;
+
+  const repository = await InMemoryDeviceRepository.create(mysql);
+  const history = await repository.listStatusHistory({ deviceId: 'ESP-TIME', limit: 10 });
+
+  assert.deepEqual(history, [
+    {
+      deviceId: 'ESP-TIME',
+      status: 'offline',
+      socketId: 'socket-time',
+      startedAt: '2026-06-01T02:50:48.947Z',
+      endedAt: '2026-06-01T03:05:12.123Z',
+      lastHeartbeatAt: '2026-06-01T02:50:47.001Z',
+      reason: 'ping timeout',
+    },
+  ]);
 });
 
 test('inspectDeletionImpact reports related rows before hard delete', async () => {

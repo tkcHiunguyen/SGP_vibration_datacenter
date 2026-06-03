@@ -193,6 +193,11 @@
   pointer-events: none;
 }
 
+.sgp-chart-modal-open .dc-toast-stack {
+  right: auto;
+  left: 16px;
+}
+
 .dc-toast {
   pointer-events: auto;
   position: relative;
@@ -257,8 +262,8 @@
 }
 
 .dc-toast__close {
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   border: 1px solid #e5e7eb;
   border-radius: 999px;
   background: #f8fafc;

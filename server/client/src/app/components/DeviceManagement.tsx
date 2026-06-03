@@ -95,6 +95,7 @@ function DeviceCard({
   onPrepareInfo,
   onPrepareChart,
   telemetryPoint,
+  telemetryLoading,
   showAxisReadout,
   exiting,
 }: {
@@ -107,6 +108,7 @@ function DeviceCard({
   onPrepareInfo?: () => void;
   onPrepareChart?: () => void;
   telemetryPoint?: DeviceTelemetryPoint | null;
+  telemetryLoading?: boolean;
   showAxisReadout: boolean;
   exiting?: boolean;
 }) {
@@ -119,6 +121,9 @@ function DeviceCard({
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
   const telemetryReadout = buildDeviceTelemetryCardReadout(telemetryPoint, sensor.axisLabels);
+  const telemetryTimestamp = telemetryPoint?.receivedAt ? Date.parse(telemetryPoint.receivedAt) : NaN;
+  const hasTelemetry = Boolean(telemetryPoint && Number.isFinite(telemetryTimestamp));
+  const showTelemetryShimmer = telemetryLoading && !hasTelemetry;
   const cardAnimation = exiting
     ? "cardOut 260ms cubic-bezier(0.22, 0.78, 0.3, 1) both"
     : "cardIn 0.3s ease both";
@@ -191,11 +196,13 @@ function DeviceCard({
           >
             {sensor.name}
           </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
             <div style={{ position: "relative" }}>
             <button
+              type="button"
               onClick={(e) => { e.stopPropagation(); onInfo(sensor); }}
               title="Thuộc tính thiết bị"
+              aria-label={`Mở thuộc tính thiết bị ${sensor.name}`}
               onMouseEnter={() => {
                 setInfoHovered(true);
                 onPrepareInfo?.();
@@ -247,6 +254,7 @@ function DeviceCard({
             </div>
             <div style={{ position: "relative" }}>
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (hasWebTarget) {
@@ -254,6 +262,7 @@ function DeviceCard({
                   }
                 }}
                 title={hasWebTarget ? "Truy cập thiết bị" : "Thiết bị chưa có IP"}
+                aria-label={hasWebTarget ? `Truy cập giao diện thiết bị ${sensor.name}` : `Thiết bị ${sensor.name} chưa có IP`}
                 onMouseEnter={() => setWebHovered(true)}
                 onMouseLeave={() => setWebHovered(false)}
                 disabled={!hasWebTarget}
@@ -309,6 +318,12 @@ function DeviceCard({
             minWidth: 0,
           }}
         >
+          {showTelemetryShimmer ? (
+            <div style={{ display: "grid", gridTemplateColumns: showAxisReadout ? "minmax(38px, 0.44fr) minmax(78px, 1fr)" : "minmax(0, 1fr)", gap: 5, minWidth: 0, alignItems: "center" }}>
+              <div className="device-card-shimmer" style={{ height: 24, borderRadius: 6 }} />
+              {showAxisReadout ? <div className="device-card-shimmer" style={{ height: 36, borderRadius: 6 }} /> : null}
+            </div>
+          ) : (
           <div
             style={{
               display: "grid",
@@ -392,6 +407,7 @@ function DeviceCard({
               </div>
             ) : null}
           </div>
+          )}
         </div>
       </div>
 
@@ -416,9 +432,13 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
   return (
     <div style={{ position: "relative" }}>
       <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Sắp xếp theo ${current.label}`}
         onClick={() => setOpen(v => !v)}
         style={{
-          height: 30, padding: "0 10px", borderRadius: 8,
+          height: 34, padding: "0 10px", borderRadius: 8,
           background: "transparent", border: "none",
           color: C.textBase, fontSize: "0.78rem", fontWeight: 600,
           cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
@@ -446,6 +466,9 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
           }}>
             {SORT_OPTIONS.map(opt => (
               <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={value === opt.key}
                 key={opt.key}
                 onClick={() => { onChange(opt.key); setOpen(false); }}
                 style={{
@@ -564,6 +587,7 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
   return (
     <>
       <div
+        aria-hidden="true"
         onClick={onClose}
         style={{
           position: "fixed",
@@ -573,6 +597,9 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
         }}
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Giao diện thiết bị ${sensor.name}`}
         style={{
           position: "fixed",
           top: "50%",
@@ -631,10 +658,12 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
               </a>
             )}
             <button
+              type="button"
+              aria-label="Đóng giao diện thiết bị"
               onClick={onClose}
               style={{
-                width: 28,
-                height: 28,
+                width: 34,
+                height: 34,
                 borderRadius: 8,
                 border: `1px solid ${C.cardBorder}`,
                 background: C.card,
@@ -747,9 +776,12 @@ const STORAGE_CHART_SIDEBAR_WIDTH_KEY = "sgp_ui_chart_sidebar_width";
 const DEVICE_CARD_EXIT_MS = 260;
 const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
 const CHART_SIDEBAR_MIN_WIDTH_PX = 460;
-const CHART_SIDEBAR_DEFAULT_WIDTH_PX = 860;
+const CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO = 0.75;
 const CHART_SIDEBAR_MAX_WIDTH_PX = 1600;
 const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.8;
+function getChartSidebarDefaultWidth(viewportWidth: number): number {
+  return Math.round(Math.max(CHART_SIDEBAR_MIN_WIDTH_PX, viewportWidth * CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO));
+}
 const CHART_SIDEBAR_MEDIUM_VIEWPORT_RATIO = 0.72;
 const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 260;
 const CHART_SIDEBAR_MEDIUM_MIN_MAIN_AREA_PX = 300;
@@ -776,7 +808,7 @@ function getChartSidebarMaxWidth(viewportWidth: number): number {
 function clampChartSidebarWidth(width: number, viewportWidth: number): number {
   const minWidth = getChartSidebarMinWidth(viewportWidth);
   const maxWidth = getChartSidebarMaxWidth(viewportWidth);
-  const normalized = Number.isFinite(width) ? Math.round(width) : CHART_SIDEBAR_DEFAULT_WIDTH_PX;
+  const normalized = Number.isFinite(width) ? Math.round(width) : getChartSidebarDefaultWidth(viewportWidth);
   return Math.max(minWidth, Math.min(maxWidth, normalized));
 }
 
@@ -808,13 +840,14 @@ export function DeviceManagement({
   const layoutHostRef = useRef<HTMLDivElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [layoutHostWidth, setLayoutHostWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [layoutHostTopPx, setLayoutHostTopPx] = useState(0);
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
   const [selectedSensorMode, setSelectedSensorMode] = useState<DeviceInfoMode>("view");
   const [chartSensor, setChartSensor] = useState<Sensor | null>(null);
   const [chartSidebarDismissed, setChartSidebarDismissed] = useState(false);
   const [chartSidebarWidthPx, setChartSidebarWidthPx] = useState(() => {
     const initialViewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-    const storedWidth = readStoredNumber(STORAGE_CHART_SIDEBAR_WIDTH_KEY, CHART_SIDEBAR_DEFAULT_WIDTH_PX);
+    const storedWidth = readStoredNumber(STORAGE_CHART_SIDEBAR_WIDTH_KEY, getChartSidebarDefaultWidth(initialViewportWidth));
     return clampChartSidebarWidth(storedWidth, initialViewportWidth);
   });
   const [chartSidebarResizing, setChartSidebarResizing] = useState(false);
@@ -845,7 +878,7 @@ export function DeviceManagement({
   const chartSidebarResizeRef = useRef({
     active: false,
     startX: 0,
-    startWidth: CHART_SIDEBAR_DEFAULT_WIDTH_PX,
+    startWidth: getChartSidebarDefaultWidth(typeof window === "undefined" ? 1440 : window.innerWidth),
   });
 
   useEffect(() => {
@@ -882,6 +915,7 @@ export function DeviceManagement({
     const handleResize = (): void => {
       const nextViewportWidth = window.innerWidth;
       setViewportWidth(nextViewportWidth);
+      setLayoutHostTopPx(Math.round(layoutHostRef.current?.getBoundingClientRect().top ?? 0));
       setChartSidebarWidthPx((prev) => clampChartSidebarWidth(prev, nextViewportWidth));
     };
 
@@ -900,7 +934,9 @@ export function DeviceManagement({
     }
 
     const updateWidth = () => {
-      setLayoutHostWidth(Math.max(0, Math.round(node.getBoundingClientRect().width)));
+      const rect = node.getBoundingClientRect();
+      setLayoutHostWidth(Math.max(0, Math.round(rect.width)));
+      setLayoutHostTopPx(Math.max(0, Math.round(rect.top)));
     };
 
     updateWidth();
@@ -1276,10 +1312,10 @@ export function DeviceManagement({
     ? chartSidebarWidthPxSafe + CHART_SIDEBAR_CONTENT_GAP_PX
     : 0;
   const dashboardContentWidth = Math.max(320, layoutHostWidth - chartSidebarReservedWidthPx);
-  const dashboardHeaderStacked = dashboardContentWidth < 1240;
   const dashboardHeaderControlsSingleColumn = dashboardContentWidth < 840;
-  const deviceGridMinCardWidth = dashboardContentWidth < 760 ? 136 : dashboardContentWidth < 980 ? 148 : 158;
-  const deviceGridTemplateColumns = `repeat(auto-fill, minmax(min(${deviceGridMinCardWidth}px, 100%), 1fr))`;
+  const deviceGridMinCardWidth = dashboardContentWidth < 760 ? 106 : dashboardContentWidth < 980 ? 118 : 128;
+  const deviceGridMaxCardWidth = dashboardContentWidth < 760 ? 146 : dashboardContentWidth < 980 ? 158 : 168;
+  const deviceGridTemplateColumns = `repeat(auto-fill, minmax(min(${deviceGridMinCardWidth}px, 100%), ${deviceGridMaxCardWidth}px))`;
   const chartSidebarReservedWidth = chartSidebarReservedWidthPx > 0
     ? `${chartSidebarReservedWidthPx}px`
     : "0px";
@@ -1315,6 +1351,8 @@ export function DeviceManagement({
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
+        @keyframes deviceCardShimmer { 0% { background-position: 180% 0; } 100% { background-position: -180% 0; } }
+        .device-card-shimmer { background: linear-gradient(90deg, ${C.surface} 0%, ${C.border} 45%, ${C.surface} 90%); background-size: 220% 100%; animation: deviceCardShimmer 1.1s ease-in-out infinite; opacity: 0.55; }
         .page-input::-webkit-outer-spin-button,
         .page-input::-webkit-inner-spin-button {
           -webkit-appearance: none;
@@ -1350,250 +1388,121 @@ export function DeviceManagement({
             transition: "padding-right 220ms ease",
           }}
         >
-      {/* ── Stat summary row ── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
-          gap: 8,
-          marginBottom: chartSidebarStacked ? 14 : 20,
-          minWidth: 0,
-        }}
-      >
-        <ConsoleStatCard
-          label="Tổng thiết bị"
-          value={total}
-          color={C.primary}
-          bg={C.primaryBg}
-          border={C.primary + "22"}
-          icon={<Activity size={13} strokeWidth={2.2} />}
-          className="flex-1 min-w-0"
-        />
-        <ConsoleStatCard
-          label="Trực tuyến"
-          value={online}
-          color={C.success}
-          bg={C.primaryBg}
-          border={C.success + "22"}
-          icon={<Wifi size={13} strokeWidth={2.2} />}
-          className="flex-1 min-w-0"
-        />
-        <ConsoleStatCard
-          label="Ngoại tuyến"
-          value={offline}
-          color="#6b7280"
-          bg={C.card}
-          border={C.cardBorder}
-          icon={<WifiOff size={13} strokeWidth={2.2} />}
-          className="flex-1 min-w-0"
-        />
-        <ConsoleStatCard
-          label="Cảnh báo"
-          value={abnormal}
-          color={C.danger}
-          bg={C.dangerBg}
-          border={C.danger + "22"}
-          icon={<AlertTriangle size={13} strokeWidth={2.2} />}
-          className="flex-1 min-w-0"
-        />
-      </div>
+      {/* Stat summary moved to sidebar */}
 
-      {/* ── Header row ── */}
+      {/* ── Controls row ── */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: dashboardHeaderStacked ? "1fr" : "minmax(0, 1fr) auto",
+          display: "flex",
           alignItems: "center",
-          gap: 10,
-          marginBottom: 14,
+          gap: 8,
+          flexWrap: "nowrap",
+          marginBottom: 12,
           minWidth: 0,
         }}
       >
-        <div style={{ minWidth: 0 }}>
-          <h2 style={{ color: C.textBright, fontSize: "1rem", fontWeight: 700, marginBottom: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            Quản lý thiết bị
-          </h2>
+        {/* Search */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            height: 32,
+            padding: "0 10px",
+            borderRadius: 8,
+            background: C.card,
+            border: `1px solid ${C.cardBorder}`,
+            minWidth: 0,
+            width: "auto",
+            flex: "1 1 300px",
+          }}
+        >
+          <Search size={12} color={C.textMuted} strokeWidth={2} />
+          <input
+            data-ux="device-search"
+            type="text"
+            placeholder="Tìm theo tên, ID, khu vực…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.72rem", flex: 1, minWidth: 0 }}
+          />
         </div>
 
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-            minWidth: 0,
-            width: dashboardHeaderStacked ? "100%" : "auto",
-            justifySelf: dashboardHeaderStacked ? "stretch" : "end",
+            gap: 6,
+            height: 32,
+            padding: "0 8px",
+            borderRadius: 12,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+            width: "auto",
             justifyContent: "flex-start",
+            minWidth: 0,
+            flexShrink: 0,
           }}
         >
-          {/* Search */}
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              height: 32,
-              padding: "0 10px",
-              borderRadius: 8,
-              background: C.card,
-              border: `1px solid ${C.cardBorder}`,
-              minWidth: dashboardHeaderControlsSingleColumn ? 180 : 220,
-              width: dashboardHeaderControlsSingleColumn ? "min(220px, 100%)" : "min(300px, 38vw)",
-              flex: "0 1 auto",
-            }}
+            style={{ position: "relative", display: "inline-flex", alignItems: "center", flexShrink: 0 }}
+            onMouseEnter={() => setSortIconHovered(true)}
+            onMouseLeave={() => setSortIconHovered(false)}
           >
-            <Search size={12} color={C.textMuted} strokeWidth={2} />
-            <input
-              data-ux="device-search"
-              type="text"
-              placeholder="Tìm theo tên, ID, khu vực…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.72rem", flex: 1, minWidth: 0 }}
-            />
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              height: 32,
-              padding: "0 8px",
-              borderRadius: 12,
-              background: C.surface,
-              border: `1px solid ${C.border}`,
-              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
-              width: "auto",
-              justifyContent: "flex-start",
-              minWidth: 0,
-              flexShrink: 0,
-            }}
-          >
-            <div
-              style={{ position: "relative", display: "inline-flex", alignItems: "center", flexShrink: 0 }}
-              onMouseEnter={() => setSortIconHovered(true)}
-              onMouseLeave={() => setSortIconHovered(false)}
+            <span
+              style={{
+                color: C.textMuted,
+                fontSize: "0.66rem",
+                fontWeight: 600,
+                display: "inline-flex",
+                alignItems: "center",
+                width: 30,
+                height: 26,
+                justifyContent: "center",
+                borderRadius: 8,
+                border: `1px solid ${C.cardBorder}`,
+                background: C.card,
+              }}
+              aria-label="Bộ lọc sắp xếp"
             >
-              <span
-                style={{
-                  color: C.textMuted,
-                  fontSize: "0.66rem",
-                  fontWeight: 600,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  width: 30,
-                  height: 26,
-                  justifyContent: "center",
-                  borderRadius: 8,
-                  border: `1px solid ${C.cardBorder}`,
-                  background: C.card,
-                }}
-                aria-label="Bộ lọc sắp xếp"
-              >
-                <Filter size={12} strokeWidth={2} />
-              </span>
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "calc(100% + 6px)",
-                  left: "50%",
-                  transform: sortIconHovered
-                    ? "translateX(-50%) translateY(0)"
-                    : "translateX(-50%) translateY(2px)",
-                  opacity: sortIconHovered ? 1 : 0,
-                  pointerEvents: "none",
-                  transition: "opacity 0.14s ease, transform 0.14s ease",
-                  background: C.surface,
-                  border: `1px solid ${C.border}`,
-                  color: C.textBase,
-                  fontSize: "0.62rem",
-                  fontWeight: 600,
-                  padding: "2px 7px",
-                  borderRadius: 6,
-                  whiteSpace: "nowrap",
-                  zIndex: 5,
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-                }}
-              >
-                Sắp xếp
-              </div>
-            </div>
-            <div style={{ width: 1, height: 16, background: C.border, flexShrink: 0 }} />
-            <div style={{ minWidth: 0, flex: dashboardHeaderControlsSingleColumn ? "1 1 auto" : "0 0 auto", display: "flex", justifyContent: dashboardHeaderControlsSingleColumn ? "flex-end" : "flex-start" }}>
-              <SortDropdown value={sort} onChange={setSort} />
+              <Filter size={12} strokeWidth={2} />
+            </span>
+            <div
+              style={{
+                position: "absolute",
+                bottom: "calc(100% + 6px)",
+                left: "50%",
+                transform: sortIconHovered
+                  ? "translateX(-50%) translateY(0)"
+                  : "translateX(-50%) translateY(2px)",
+                opacity: sortIconHovered ? 1 : 0,
+                pointerEvents: "none",
+                transition: "opacity 0.14s ease, transform 0.14s ease",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                color: C.textBase,
+                fontSize: "0.62rem",
+                fontWeight: 600,
+                padding: "2px 7px",
+                borderRadius: 6,
+                whiteSpace: "nowrap",
+                zIndex: 5,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+              }}
+            >
+              Sắp xếp
             </div>
           </div>
+          <div style={{ width: 1, height: 16, background: C.border, flexShrink: 0 }} />
+          <div style={{ minWidth: 0, flex: "0 0 auto", display: "flex", justifyContent: "flex-start" }}>
+            <SortDropdown value={sort} onChange={setSort} />
+          </div>
         </div>
-      </div>
 
-      {/* ── Filter tabs ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          flexWrap: "wrap",
-          marginBottom: 6,
-        }}
-      >
-        <div style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", whiteSpace: "nowrap" }}>
-          Trạng thái vận hành
-        </div>
-        <div style={{ color: C.textMuted, fontSize: "0.72rem", fontWeight: 600, textAlign: "right", marginLeft: "auto", whiteSpace: "nowrap" }}>
+        <div style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
           Hiển thị {pagedDevices.length} / {displayed.length} thiết bị
         </div>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "flex-start",
-          gap: 4,
-          marginBottom: 16,
-          minWidth: 0,
-        }}
-      >
-        {FILTERS.map(f => {
-          const isActive = filter === f.key;
-          const dotColor = f.key === "online" ? C.success : f.key === "offline" ? "#6b7280" : f.key === "abnormal" ? C.danger : C.primary;
-          return (
-            <button key={f.key} data-ux={`filter-${f.key}`} onClick={() => setFilter(f.key)}
-              style={{
-                display: "flex", alignItems: "center", gap: 6,
-                justifyContent: "flex-start",
-                width: "auto",
-                minWidth: 0,
-                flexShrink: 0,
-                height: 32, padding: "0 12px", borderRadius: 8,
-                background: isActive ? C.card : "transparent",
-                border: `1px solid ${isActive ? C.cardBorder : "transparent"}`,
-                color: isActive ? C.textBright : C.textMuted,
-                fontSize: "0.73rem", fontWeight: isActive ? 600 : 400,
-                cursor: "pointer", transition: "all 0.15s",
-              }}
-              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.color = C.textBase; }}
-              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.color = C.textMuted; }}
-            >
-              {f.key !== "all" && (
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, boxShadow: `0 0 4px ${dotColor}77` }} />
-              )}
-              {f.label}
-              <span style={{
-                fontSize: "0.62rem", fontWeight: 700,
-                padding: "1px 5px", borderRadius: 20,
-                background: isActive ? C.primaryBg : C.surface,
-                color: isActive ? C.primary : C.textMuted,
-                border: `1px solid ${isActive ? C.primary + "30" : C.border}`,
-              }}>
-                {f.count}
-              </span>
-            </button>
-          );
-        })}
       </div>
 
       {/* ── Card Grid + Right Sidebar ── */}
@@ -1677,6 +1586,7 @@ export function DeviceManagement({
                             sensor={sensor}
                             idx={idx}
                             telemetryPoint={latestTelemetryByDevice[sensor.id]}
+                            telemetryLoading={Boolean(telemetryLoadingByDevice[sensor.id])}
                             showAxisReadout
                             exiting={exitingDeviceIds.has(sensor.id)}
                             onInfo={(target) => openDeviceInfo(target, "view")}
@@ -1713,6 +1623,7 @@ export function DeviceManagement({
                       sensor={sensor}
                       idx={idx}
                       telemetryPoint={latestTelemetryByDevice[sensor.id]}
+                      telemetryLoading={Boolean(telemetryLoadingByDevice[sensor.id])}
                       showAxisReadout
                       exiting={exitingDeviceIds.has(sensor.id)}
                       onInfo={(target) => openDeviceInfo(target, "view")}
@@ -1751,9 +1662,10 @@ export function DeviceManagement({
                     <select
                       data-ux="page-size-select"
                       value={pageSize}
+                      aria-label="Số thiết bị mỗi trang"
                       onChange={(e) => setPageSize(Number(e.target.value))}
                       style={{
-                        height: 30,
+                        height: 34,
                         borderRadius: 8,
                         background: C.card,
                         border: `1px solid ${C.cardBorder}`,
@@ -1781,11 +1693,13 @@ export function DeviceManagement({
 
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button
+                    type="button"
+                    aria-label="Trang trước"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={currentPage === 1}
                     style={{
-                      height: 30,
-                      minWidth: 30,
+                      height: 34,
+                      minWidth: 34,
                       borderRadius: 8,
                       border: `1px solid ${C.cardBorder}`,
                       background: C.card,
@@ -1805,6 +1719,7 @@ export function DeviceManagement({
                       data-ux="page-input"
                       className="page-input"
                       type="number"
+                      aria-label="Số trang hiện tại"
                       min={1}
                       max={totalPages}
                       value={pageInput}
@@ -1817,7 +1732,7 @@ export function DeviceManagement({
                       }}
                       style={{
                         width: 52,
-                        height: 30,
+                        height: 34,
                         borderRadius: 8,
                         border: `1px solid ${C.cardBorder}`,
                         background: C.card,
@@ -1831,11 +1746,13 @@ export function DeviceManagement({
                   </div>
 
                   <button
+                    type="button"
+                    aria-label="Trang sau"
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={currentPage >= totalPages}
                     style={{
-                      height: 30,
-                      minWidth: 30,
+                      height: 34,
+                      minWidth: 34,
                       borderRadius: 8,
                       border: `1px solid ${C.cardBorder}`,
                       background: C.card,
@@ -1856,9 +1773,9 @@ export function DeviceManagement({
         <div
           data-ux="device-chart-sidebar"
           style={{
-            position: chartSidebarStacked ? "relative" : "absolute",
+            position: chartSidebarStacked ? "relative" : "fixed",
             order: chartSidebarStacked ? 1 : 2,
-            top: chartSidebarStacked ? "auto" : 0,
+            top: chartSidebarStacked ? "auto" : layoutHostTopPx,
             right: chartSidebarStacked ? "auto" : 0,
             bottom: chartSidebarStacked ? "auto" : 0,
             width: chartSidebarOpen ? (chartSidebarStacked ? "100%" : chartSidebarWidth) : 0,
@@ -1928,7 +1845,7 @@ export function DeviceManagement({
                 </div>
               ) : null}
 
-              <Suspense fallback={null}>
+              <Suspense fallback={<div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.76rem" }}><span style={{ width: 18, height: 18, marginRight: 8, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "webSpin 0.8s linear infinite" }} />Đang mở biểu đồ...</div>}>
                 <SensorChartModal
                   sensor={activeChartSensor}
                   telemetryPoints={telemetryByDevice[activeChartSensor.id] || []}
@@ -2026,7 +1943,7 @@ export function DeviceManagement({
       ) : null}
 
       {selectedSensor ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, background: "rgba(2,6,23,0.24)" }}>Đang tải...</div>}>
           <DeviceInfoModal
             sensor={selectedSensor}
             initialMode={selectedSensorMode}

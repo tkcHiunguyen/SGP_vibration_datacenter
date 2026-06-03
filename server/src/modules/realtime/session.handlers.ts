@@ -60,14 +60,14 @@ export function registerSessionLifecycleHandler(
   context: SocketConnectionContext,
   { app, deviceService }: RegisterSocketHandlersDeps,
 ): void {
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
     if (context.clientType === 'device' && context.deviceId) {
-      const removed = deviceService.disconnect(context.deviceId, socket.id);
+      const removed = deviceService.disconnect(context.deviceId, socket.id, reason);
       if (removed) {
-        app.log.info({ socketId: socket.id, deviceId: context.deviceId }, 'Device disconnected');
+        app.log.info({ socketId: socket.id, deviceId: context.deviceId, reason }, 'Device disconnected');
         return;
       }
     }
-    app.log.info({ socketId: socket.id }, 'Dashboard client disconnected');
+    app.log.info({ socketId: socket.id, reason }, 'Dashboard client disconnected');
   });
 }

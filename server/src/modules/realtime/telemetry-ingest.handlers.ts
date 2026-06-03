@@ -5,7 +5,6 @@ import {
   type RegisterSocketHandlersDeps,
   type SocketConnectionContext,
 } from './socket-handler.types.js';
-import { logPayload } from './socket-payload.utils.js';
 
 export function registerTelemetryIngestHandlers(
   socket: Socket,
@@ -25,7 +24,6 @@ export function registerTelemetryIngestHandlers(
   const { deviceId } = context;
 
   socket.on('device:telemetry', (rawPayload: unknown) => {
-    logPayload('[device:telemetry]', rawPayload);
     const decision = telemetryIngressGuard.evaluate(deviceId, rawPayload);
     if (!decision.accepted) {
       app.log.warn(

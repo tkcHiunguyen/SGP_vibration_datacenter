@@ -2,10 +2,13 @@ import type { TelemetryMessage, TelemetryPayload } from '../../shared/types.js';
 import type {
   DeviceTelemetryAvailabilityDay,
   DeviceTelemetrySummary,
+  TelemetryArchiveQuery,
   TelemetryAvailabilityQuery,
   TelemetryHistoryPoint,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
+  TelemetryImportPoint,
+  TelemetryImportResult,
   TelemetryRepository,
 } from './telemetry.repository.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
@@ -20,6 +23,16 @@ type TelemetryRow = {
   ax: number | string | null;
   ay: number | string | null;
   az: number | string | null;
+  vrms_x_mms: number | string | null;
+  vrms_y_mms: number | string | null;
+  vrms_z_mms: number | string | null;
+  vrms_unit: string | null;
+  drms_x_um: number | string | null;
+  drms_y_um: number | string | null;
+  drms_z_um: number | string | null;
+  drms_band_min_hz: number | string | null;
+  drms_band_max_hz: number | string | null;
+  drms_unit: string | null;
   sample_count: number | string | bigint | null;
   telemetry_uuid: string | null;
 };
@@ -96,6 +109,14 @@ function toPayload(row: TelemetryRow): TelemetryPayload {
   const ax = toFiniteNumber(row.ax);
   const ay = toFiniteNumber(row.ay);
   const az = toFiniteNumber(row.az);
+  const vrmsX = toFiniteNumber(row.vrms_x_mms);
+  const vrmsY = toFiniteNumber(row.vrms_y_mms);
+  const vrmsZ = toFiniteNumber(row.vrms_z_mms);
+  const drmsX = toFiniteNumber(row.drms_x_um);
+  const drmsY = toFiniteNumber(row.drms_y_um);
+  const drmsZ = toFiniteNumber(row.drms_z_um);
+  const drmsBandMin = toFiniteNumber(row.drms_band_min_hz);
+  const drmsBandMax = toFiniteNumber(row.drms_band_max_hz);
   const sampleCount = toFiniteNumber(row.sample_count);
 
   if (temperature !== undefined) payload.temperature = temperature;
@@ -103,6 +124,16 @@ function toPayload(row: TelemetryRow): TelemetryPayload {
   if (ax !== undefined) payload.ax = ax;
   if (ay !== undefined) payload.ay = ay;
   if (az !== undefined) payload.az = az;
+  if (vrmsX !== undefined) { payload.vrms_x_mms = vrmsX; payload.vx_rms_mms = vrmsX; }
+  if (vrmsY !== undefined) { payload.vrms_y_mms = vrmsY; payload.vy_rms_mms = vrmsY; }
+  if (vrmsZ !== undefined) { payload.vrms_z_mms = vrmsZ; payload.vz_rms_mms = vrmsZ; }
+  if (typeof row.vrms_unit === 'string' && row.vrms_unit.trim()) payload.vrms_unit = row.vrms_unit;
+  if (drmsX !== undefined) payload.drms_x_um = drmsX;
+  if (drmsY !== undefined) payload.drms_y_um = drmsY;
+  if (drmsZ !== undefined) payload.drms_z_um = drmsZ;
+  if (drmsBandMin !== undefined) payload.drms_band_min_hz = drmsBandMin;
+  if (drmsBandMax !== undefined) payload.drms_band_max_hz = drmsBandMax;
+  if (typeof row.drms_unit === 'string' && row.drms_unit.trim()) payload.drms_unit = row.drms_unit;
   if (sampleCount !== undefined) payload.sample_count = sampleCount;
   if (typeof row.telemetry_uuid === 'string' && row.telemetry_uuid.trim()) {
     payload.telemetry_uuid = row.telemetry_uuid;
@@ -122,6 +153,14 @@ function normalizeTelemetryUuid(payload: TelemetryPayload): string | null {
     return null;
   }
   return normalized.slice(0, 255);
+}
+
+function createArchiveTelemetryUuid(row: TelemetryRow): string {
+  if (row.telemetry_uuid && row.telemetry_uuid.trim()) {
+    return row.telemetry_uuid.trim().slice(0, 255);
+  }
+
+  return `sgp-time:${row.device_id}:${toIsoTimestamp(row.received_at)}`.slice(0, 255);
 }
 
 function parseIsoTimestamp(value?: string): number | null {
@@ -151,6 +190,14 @@ function toHistoryPoint(row: TelemetryRow): TelemetryHistoryPoint {
 
 function toBucketHistoryPoint(row: TelemetryBucketRow): TelemetryHistoryPoint {
   const point = toHistoryPoint(row);
+  const vrmsX = toFiniteNumber(row.vrms_x_mms);
+  const vrmsY = toFiniteNumber(row.vrms_y_mms);
+  const vrmsZ = toFiniteNumber(row.vrms_z_mms);
+  const drmsX = toFiniteNumber(row.drms_x_um);
+  const drmsY = toFiniteNumber(row.drms_y_um);
+  const drmsZ = toFiniteNumber(row.drms_z_um);
+  const drmsBandMin = toFiniteNumber(row.drms_band_min_hz);
+  const drmsBandMax = toFiniteNumber(row.drms_band_max_hz);
   const sampleCount = toFiniteNumber(row.sample_count);
   const bucketStartedAt = toBucketBoundaryIso(row.bucket_started_ms);
   const bucketEndedAt = toBucketBoundaryIso(row.bucket_ended_ms);
@@ -230,6 +277,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
            AVG(ax) AS ax,
            AVG(ay) AS ay,
            AVG(az) AS az,
+           AVG(vrms_x_mms) AS vrms_x_mms,
+           AVG(vrms_y_mms) AS vrms_y_mms,
+           AVG(vrms_z_mms) AS vrms_z_mms,
+           MAX(vrms_unit) AS vrms_unit,
+           AVG(drms_x_um) AS drms_x_um,
+           AVG(drms_y_um) AS drms_y_um,
+           AVG(drms_z_um) AS drms_z_um,
+           AVG(drms_band_min_hz) AS drms_band_min_hz,
+           AVG(drms_band_max_hz) AS drms_band_max_hz,
+           MAX(drms_unit) AS drms_unit,
            COUNT(*) AS sample_count,
            NULL AS telemetry_uuid,
            bucket_index * ? AS bucket_started_ms,
@@ -244,6 +301,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
              ax,
              ay,
              az,
+             vrms_x_mms,
+             vrms_y_mms,
+             vrms_z_mms,
+             vrms_unit,
+             drms_x_um,
+             drms_y_um,
+             drms_z_um,
+             drms_band_min_hz,
+             drms_band_max_hz,
+             drms_unit,
              FLOOR(TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', received_at) / ?) AS bucket_index
            FROM device_datas
            WHERE ${whereSql}
@@ -271,6 +338,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     const rows = await this.mysql.query<TelemetryRow>(
       `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+              vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+              drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
               sample_count, telemetry_uuid
          FROM device_datas
          WHERE ${whereSql}
@@ -381,6 +450,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
              IFNULL(OCTET_LENGTH(CAST(ax AS CHAR)), 0) +
              IFNULL(OCTET_LENGTH(CAST(ay AS CHAR)), 0) +
              IFNULL(OCTET_LENGTH(CAST(az AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(vrms_x_mms AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(vrms_y_mms AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(vrms_z_mms AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(vrms_unit), 0) +
+             IFNULL(OCTET_LENGTH(CAST(drms_x_um AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(drms_y_um AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(drms_z_um AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(drms_band_min_hz AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(CAST(drms_band_max_hz AS CHAR)), 0) +
+             IFNULL(OCTET_LENGTH(drms_unit), 0) +
              IFNULL(OCTET_LENGTH(CAST(sample_count AS CHAR)), 0)
            ),
            0
@@ -400,6 +479,144 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
           : undefined,
       estimatedBytes: Math.max(0, Math.floor(Number(row?.estimated_bytes ?? 0))),
     };
+  }
+
+  async exportHistory(query: TelemetryArchiveQuery): Promise<TelemetryImportPoint[]> {
+    if (!this.mysql) {
+      return [];
+    }
+
+    const fromTimestamp = parseIsoTimestamp(query.from);
+    const toTimestamp = parseIsoTimestamp(query.to);
+    if (fromTimestamp === null || toTimestamp === null) {
+      return [];
+    }
+
+    const where: string[] = ['received_at >= ?', 'received_at <= ?'];
+    const params: Array<string | number | boolean | null | Date | Buffer> = [
+      new Date(fromTimestamp).toISOString(),
+      new Date(toTimestamp).toISOString(),
+    ];
+
+    const targetDeviceId = query.deviceId?.trim();
+    if (targetDeviceId) {
+      where.push('device_id = ?');
+      params.push(targetDeviceId);
+    }
+
+    const rows = await this.mysql.query<TelemetryRow>(
+      `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+              vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+              drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
+              sample_count, telemetry_uuid
+         FROM device_datas
+        WHERE ${where.join(' AND ')}
+        ORDER BY device_id ASC, received_at ASC, id ASC`,
+      params,
+    );
+
+    return rows.map((row) => {
+      const telemetryUuid = createArchiveTelemetryUuid(row);
+      const payload = {
+        ...toPayload(row),
+        telemetry_uuid: telemetryUuid,
+        telemetryUuid,
+      };
+      return {
+        deviceId: row.device_id,
+        receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
+        payload,
+        telemetryUuid,
+        sampleCount: toFiniteNumber(row.sample_count),
+      };
+    });
+  }
+
+  async importHistory(points: TelemetryImportPoint[]): Promise<TelemetryImportResult> {
+    const result: TelemetryImportResult = { inserted: 0, updated: 0, skipped: 0 };
+    if (!this.mysql) {
+      result.skipped = points.length;
+      return result;
+    }
+
+    for (const point of points) {
+      const payload = point.payload ?? {};
+      const telemetryUuid = point.telemetryUuid ?? normalizeTelemetryUuid(payload);
+      const affectedRows = await this.mysql.execute(
+        `INSERT INTO device_datas (
+           device_id,
+           received_at,
+           temperature,
+           vibration,
+           ax,
+           ay,
+           az,
+           vrms_x_mms,
+           vrms_y_mms,
+           vrms_z_mms,
+           vrms_unit,
+           drms_x_um,
+           drms_y_um,
+           drms_z_um,
+           drms_band_min_hz,
+           drms_band_max_hz,
+           drms_unit,
+           sample_count,
+           telemetry_uuid
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           temperature = VALUES(temperature),
+           vibration = VALUES(vibration),
+           ax = VALUES(ax),
+           ay = VALUES(ay),
+           az = VALUES(az),
+           vrms_x_mms = VALUES(vrms_x_mms),
+           vrms_y_mms = VALUES(vrms_y_mms),
+           vrms_z_mms = VALUES(vrms_z_mms),
+           vrms_unit = VALUES(vrms_unit),
+           drms_x_um = VALUES(drms_x_um),
+           drms_y_um = VALUES(drms_y_um),
+           drms_z_um = VALUES(drms_z_um),
+           drms_band_min_hz = VALUES(drms_band_min_hz),
+           drms_band_max_hz = VALUES(drms_band_max_hz),
+           drms_unit = VALUES(drms_unit),
+           sample_count = VALUES(sample_count)`,
+        [
+          point.deviceId,
+          point.receivedAt,
+          typeof payload.temperature === 'number' ? payload.temperature : null,
+          typeof payload.vibration === 'number' ? payload.vibration : null,
+          typeof payload.ax === 'number' ? payload.ax : null,
+          typeof payload.ay === 'number' ? payload.ay : null,
+          typeof payload.az === 'number' ? payload.az : null,
+          typeof payload.vrms_x_mms === 'number' ? payload.vrms_x_mms : (typeof payload.vx_rms_mms === 'number' ? payload.vx_rms_mms : null),
+          typeof payload.vrms_y_mms === 'number' ? payload.vrms_y_mms : (typeof payload.vy_rms_mms === 'number' ? payload.vy_rms_mms : null),
+          typeof payload.vrms_z_mms === 'number' ? payload.vrms_z_mms : (typeof payload.vz_rms_mms === 'number' ? payload.vz_rms_mms : null),
+          typeof payload.vrms_unit === 'string' ? payload.vrms_unit : null,
+          typeof payload.drms_x_um === 'number' ? payload.drms_x_um : null,
+          typeof payload.drms_y_um === 'number' ? payload.drms_y_um : null,
+          typeof payload.drms_z_um === 'number' ? payload.drms_z_um : null,
+          typeof payload.drms_band_min_hz === 'number' ? payload.drms_band_min_hz : null,
+          typeof payload.drms_band_max_hz === 'number' ? payload.drms_band_max_hz : null,
+          typeof payload.drms_unit === 'string' ? payload.drms_unit : null,
+          typeof point.sampleCount === 'number'
+            ? point.sampleCount
+            : typeof payload.sample_count === 'number'
+              ? payload.sample_count
+              : null,
+          telemetryUuid,
+        ],
+      );
+      if (affectedRows === 1) {
+        result.inserted += 1;
+      } else if (affectedRows > 1) {
+        result.updated += 1;
+      } else {
+        result.skipped += 1;
+      }
+    }
+
+    return result;
   }
 
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {
@@ -432,6 +649,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     const rows = await this.mysql.query<TelemetryRow>(
       `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+              vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+              drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
               sample_count, telemetry_uuid
          FROM device_datas
          ORDER BY received_at DESC
@@ -468,9 +687,19 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          ax,
          ay,
          az,
+         vrms_x_mms,
+         vrms_y_mms,
+         vrms_z_mms,
+         vrms_unit,
+         drms_x_um,
+         drms_y_um,
+         drms_z_um,
+         drms_band_min_hz,
+         drms_band_max_hz,
+         drms_unit,
          sample_count,
          telemetry_uuid
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          received_at = VALUES(received_at),
          temperature = VALUES(temperature),
@@ -478,6 +707,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          ax = VALUES(ax),
          ay = VALUES(ay),
          az = VALUES(az),
+         vrms_x_mms = VALUES(vrms_x_mms),
+         vrms_y_mms = VALUES(vrms_y_mms),
+         vrms_z_mms = VALUES(vrms_z_mms),
+         vrms_unit = VALUES(vrms_unit),
+         drms_x_um = VALUES(drms_x_um),
+         drms_y_um = VALUES(drms_y_um),
+         drms_z_um = VALUES(drms_z_um),
+         drms_band_min_hz = VALUES(drms_band_min_hz),
+         drms_band_max_hz = VALUES(drms_band_max_hz),
+         drms_unit = VALUES(drms_unit),
          sample_count = VALUES(sample_count)`,
       [
         message.deviceId,
@@ -487,6 +726,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
         typeof payload.ax === 'number' ? payload.ax : null,
         typeof payload.ay === 'number' ? payload.ay : null,
         typeof payload.az === 'number' ? payload.az : null,
+        typeof payload.vrms_x_mms === 'number' ? payload.vrms_x_mms : (typeof payload.vx_rms_mms === 'number' ? payload.vx_rms_mms : null),
+        typeof payload.vrms_y_mms === 'number' ? payload.vrms_y_mms : (typeof payload.vy_rms_mms === 'number' ? payload.vy_rms_mms : null),
+        typeof payload.vrms_z_mms === 'number' ? payload.vrms_z_mms : (typeof payload.vz_rms_mms === 'number' ? payload.vz_rms_mms : null),
+        typeof payload.vrms_unit === 'string' ? payload.vrms_unit : null,
+        typeof payload.drms_x_um === 'number' ? payload.drms_x_um : null,
+        typeof payload.drms_y_um === 'number' ? payload.drms_y_um : null,
+        typeof payload.drms_z_um === 'number' ? payload.drms_z_um : null,
+        typeof payload.drms_band_min_hz === 'number' ? payload.drms_band_min_hz : null,
+        typeof payload.drms_band_max_hz === 'number' ? payload.drms_band_max_hz : null,
+        typeof payload.drms_unit === 'string' ? payload.drms_unit : null,
         typeof payload.sample_count === 'number' ? payload.sample_count : null,
         telemetryUuid,
       ],

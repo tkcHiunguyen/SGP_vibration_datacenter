@@ -48,8 +48,8 @@ function getColors(theme: Theme): Colors {
       primaryBg:   "#60a5fa0e", // subtle tint
       textBright:  "#eef4ff",   // ① ice white — tiêu đề, tên thiết bị
       textBase:    "#94b8e8",   // ② xanh-xám sáng — nhãn, giá trị đọc được
-      textMuted:   "#5578a8",   // ③ xanh mờ vừa — ID, zone, phụ chú
-      textDim:     "#283c5a",   // ④ rất mờ — divider label, watermark
+      textMuted:   "#84a9d8",   // ③ xanh mờ vừa — ID, zone, phụ chú
+      textDim:     "#6688b6",   // ④ phụ chú đọc được trên nền tối
       danger:      "#f87171",   // rose-400
       dangerBg:    "#f8717114",
       success:     "#34d399",   // emerald-400
@@ -80,7 +80,7 @@ function getColors(theme: Theme): Colors {
     textBright:  "#060c20",   // ① đen midnight — tiêu đề
     textBase:    "#1a3565",   // ② navy đậm — nội dung chính
     textMuted:   "#3d5e99",   // ③ xanh trung — nhãn phụ
-    textDim:     "#7a9ccb",   // ④ xanh nhạt — chú thích
+    textDim:     "#5272a5",   // ④ chú thích đủ tương phản
     danger:      "#dc2626",
     dangerBg:    "#dc262610",
     success:     "#059669",

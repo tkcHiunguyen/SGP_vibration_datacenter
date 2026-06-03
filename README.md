@@ -106,7 +106,11 @@ Chạy từ root repository:
 pnpm install
 ```
 
-Sau khi cài, root `postinstall` sẽ chạy `pnpm db:init`. Nếu MySQL đã được cấu hình và sẵn sàng, schema sẽ được tạo hoặc cập nhật. Nếu chưa cấu hình MySQL, hoặc MySQL chưa sẵn sàng trong chế độ fallback mặc định, script sẽ in thông báo skip.
+`pnpm install` chỉ cài dependencies, không tự chạm DB. Nếu cần chuẩn bị schema cho môi trường dev, chạy:
+
+```bash
+pnpm dev:setup
+```
 
 ## Chạy môi trường dev
 
@@ -336,10 +340,10 @@ pnpm build
 pnpm typecheck
 ```
 
-Mỗi lần chạy `pnpm build`, schema MySQL bootstrap hiện tại cũng được xuất ra:
+Khi đổi schema, xuất file schema trước khi commit:
 
-```text
-docs/database/mysql-schema.sql
+```bash
+pnpm db:schema:export
 ```
 
 Chạy test server:
@@ -350,7 +354,15 @@ pnpm -C server test
 
 ## Build production
 
-Build web và server:
+Deploy production tối giản bằng một lệnh:
+
+```bash
+pnpm prod:deploy
+```
+
+Lệnh này cài dependencies với `--ignore-scripts`, build client/server, apply schema MySQL có chủ đích, rồi chạy server đã compile. Production nên cấu hình `DB_AUTO_INIT=false` và `DB_FALLBACK_ON_UNAVAILABLE=false` trong `.env` để tránh migrate/fallback ngầm khi server start.
+
+Nếu chỉ muốn build web và server:
 
 ```bash
 pnpm build
@@ -411,11 +423,14 @@ Với môi trường gần production, nên cấu hình tối thiểu:
 
 | Lệnh | Ý nghĩa |
 | --- | --- |
-| `pnpm install` | Cài dependencies và chạy DB init. |
+| `pnpm install` | Cài dependencies, không tự chạy DB init. |
+| `pnpm dev:setup` | Khởi tạo/cập nhật schema MySQL cho môi trường dev. |
 | `pnpm dev` | Chạy server và web dev cùng lúc. |
 | `pnpm -C server dev` | Chỉ chạy Fastify server. |
 | `pnpm -C server/client dev` | Chỉ chạy Vite build watch cho dashboard. |
-| `pnpm build` | Build web, build server và xuất schema SQL ra `docs/database/mysql-schema.sql`. |
+| `pnpm build` | Build web và build server. |
+| `pnpm release:check` | Xuất schema, typecheck, test và build trước khi release/commit. |
+| `pnpm prod:deploy` | Cài deps, build, apply schema MySQL và chạy server production. |
 | `pnpm typecheck` | Kiểm tra TypeScript phía dashboard và server. |
 | `pnpm -C server test` | Chạy test phía server. |
 | `pnpm -C server db:init` | Khởi tạo schema MySQL khi đã cấu hình MySQL. |

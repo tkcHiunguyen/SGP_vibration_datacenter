@@ -1,5 +1,5 @@
-import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository } from './device.repository.js';
-import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession } from '../../shared/types.js';
+import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository, DeviceStatusHistoryQuery } from './device.repository.js';
+import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 import { randomUUID } from 'node:crypto';
@@ -19,8 +19,76 @@ type DeviceMetadataRow = {
   updated_at: string | Date;
 };
 
+type DeviceSessionRow = {
+  device_id: string;
+  socket_id: string;
+  connected_at: string | Date;
+  last_heartbeat_at: string | Date;
+};
+
+type OpenDeviceStatusRow = {
+  device_id: string;
+  socket_id: string | null;
+  started_at: string | Date;
+  last_heartbeat_at: string | Date | null;
+};
+
+type DeviceStatusHistoryRow = {
+  device_id: string;
+  status: DeviceStatusHistoryStatus;
+  socket_id: string | null;
+  started_at: string | Date;
+  ended_at: string | Date | null;
+  last_heartbeat_at: string | Date | null;
+  reason: string | null;
+};
+
+type DeviceStatusHistoryStatus = 'online' | 'offline';
+
+type InMemoryDeviceRepositoryOptions = {
+  staleSessionClosedAt?: string;
+};
+
 function toIsoTimestamp(value: string | Date): string {
-  return value instanceof Date ? value.toISOString() : value;
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  // MySQL DATETIME is stored as UTC but returned as `YYYY-MM-DD HH:mm:ss.SSS`.
+  // Parse it as UTC, not as the server's local timezone.
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const withTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(normalized) ? normalized : `${normalized}Z`;
+  const parsed = Date.parse(withTimezone);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : value;
+}
+
+function toOptionalIsoTimestamp(value: string | Date | null | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return toIsoTimestamp(value);
+}
+
+function parseOptionalTimestamp(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function latestIsoTimestamp(...values: Array<string | Date | null | undefined>): string {
+  let latest = 0;
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const parsed = Date.parse(toIsoTimestamp(value));
+    if (Number.isFinite(parsed)) {
+      latest = Math.max(latest, parsed);
+    }
+  }
+  return new Date(latest || Date.now()).toISOString();
 }
 
 type MySqlErrorLike = {
@@ -84,12 +152,18 @@ export class InMemoryDeviceRepository implements DeviceRepository {
   private readonly sessions = new Map<string, DeviceSession>();
   private readonly mysql: MySqlAccess | null;
 
-  private constructor(mysql: MySqlAccess | null = getSharedMySqlAccess()) {
+  private constructor(
+    mysql: MySqlAccess | null = getSharedMySqlAccess(),
+    private readonly options: InMemoryDeviceRepositoryOptions = {},
+  ) {
     this.mysql = mysql;
   }
 
-  static async create(mysql: MySqlAccess | null = getSharedMySqlAccess()): Promise<InMemoryDeviceRepository> {
-    const repository = new InMemoryDeviceRepository(mysql);
+  static async create(
+    mysql: MySqlAccess | null = getSharedMySqlAccess(),
+    options: InMemoryDeviceRepositoryOptions = {},
+  ): Promise<InMemoryDeviceRepository> {
+    const repository = new InMemoryDeviceRepository(mysql, options);
     await repository.loadFromPersistence();
     return repository;
   }
@@ -202,8 +276,9 @@ export class InMemoryDeviceRepository implements DeviceRepository {
   }
 
   upsertSession(session: DeviceSession): void {
+    const previous = this.sessions.get(session.deviceId);
     this.sessions.set(session.deviceId, session);
-    this.runPersistence(this.persistSession(session), `persistSession(${session.deviceId})`);
+    this.runPersistence(this.persistConnectedSession(session, previous), `persistSession(${session.deviceId})`);
   }
 
   getSession(deviceId: string): DeviceSession | null {
@@ -214,13 +289,21 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     return [...this.sessions.values()];
   }
 
-  removeIfSocketMatches(deviceId: string, socketId: string): boolean {
+  removeIfSocketMatches(
+    deviceId: string,
+    socketId: string,
+    disconnectedAt: string,
+    disconnectReason?: string,
+  ): boolean {
     const found = this.sessions.get(deviceId);
     if (!found || found.socketId !== socketId) {
       return false;
     }
     this.sessions.delete(deviceId);
-    this.runPersistence(this.deleteSession(deviceId, socketId), `deleteSession(${deviceId})`);
+    this.runPersistence(
+      this.closeSession(found, disconnectedAt, disconnectReason),
+      `closeSession(${deviceId})`,
+    );
     return true;
   }
 
@@ -246,6 +329,72 @@ export class InMemoryDeviceRepository implements DeviceRepository {
 
   countConnected(): number {
     return this.sessions.size;
+  }
+
+  async listStatusHistory(query: DeviceStatusHistoryQuery): Promise<DeviceStatusHistoryEntry[]> {
+    const deviceId = query.deviceId.trim();
+    if (!deviceId) {
+      return [];
+    }
+
+    if (!this.mysql) {
+      const session = this.sessions.get(deviceId);
+      if (!session) {
+        return [];
+      }
+      return [{
+        deviceId,
+        status: 'online',
+        socketId: session.socketId,
+        startedAt: session.connectedAt,
+        lastHeartbeatAt: session.lastHeartbeatAt,
+      }];
+    }
+
+    const fromTimestamp = parseOptionalTimestamp(query.from);
+    const toTimestamp = parseOptionalTimestamp(query.to);
+    const where: string[] = ['device_id = ?'];
+    const params: Array<string | number | boolean | null | Date | Buffer> = [deviceId];
+
+    if (fromTimestamp !== null) {
+      where.push('COALESCE(ended_at, NOW(3)) >= ?');
+      params.push(new Date(fromTimestamp).toISOString());
+    }
+    if (toTimestamp !== null) {
+      where.push('started_at <= ?');
+      params.push(new Date(toTimestamp).toISOString());
+    }
+
+    const limit = Math.max(1, Math.min(Math.floor(query.limit ?? 2000), 5000));
+    const rows = await this.mysql.query<DeviceStatusHistoryRow>(
+      `
+        SELECT device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason
+        FROM device_status_history
+        WHERE ${where.join(' AND ')}
+        ORDER BY started_at ASC, id ASC
+        LIMIT ?
+      `,
+      [...params, limit],
+    );
+
+    return rows
+      .map((row): DeviceStatusHistoryEntry | null => {
+        const startedAt = toIsoTimestamp(row.started_at);
+        const endedAt = toOptionalIsoTimestamp(row.ended_at);
+        if (endedAt && Date.parse(endedAt) <= Date.parse(startedAt)) {
+          return null;
+        }
+        return {
+          deviceId: row.device_id,
+          status: row.status === 'online' ? 'online' : 'offline',
+          socketId: row.socket_id ?? undefined,
+          startedAt,
+          endedAt,
+          lastHeartbeatAt: toOptionalIsoTimestamp(row.last_heartbeat_at),
+          reason: row.reason ?? undefined,
+        };
+      })
+      .filter((item): item is DeviceStatusHistoryEntry => Boolean(item));
   }
 
   private createInMemoryImpact(deviceId: string, metadata: DeviceMetadata): DeviceDeletionImpact {
@@ -389,6 +538,14 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     }
   }
 
+  private async persistConnectedSession(
+    session: DeviceSession,
+    previous?: DeviceSession,
+  ): Promise<void> {
+    await this.persistSession(session);
+    await this.recordOnlineStatus(session, previous?.lastHeartbeatAt);
+  }
+
   private async deleteSession(deviceId: string, socketId: string): Promise<void> {
     if (!this.mysql) {
       return;
@@ -398,6 +555,120 @@ export class InMemoryDeviceRepository implements DeviceRepository {
       deviceId,
       socketId,
     ]);
+  }
+
+  private async closeSession(
+    session: DeviceSession,
+    disconnectedAt: string,
+    disconnectReason?: string,
+  ): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+
+    try {
+      await this.recordOfflineStatus(session, disconnectedAt, disconnectReason);
+    } finally {
+      await this.deleteSession(session.deviceId, session.socketId);
+    }
+  }
+
+  private async recordOnlineStatus(session: DeviceSession, previousLastHeartbeatAt?: string): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+
+    await this.closeOpenStatus(session.deviceId, session.connectedAt, previousLastHeartbeatAt);
+    await this.insertStatusInterval(session.deviceId, 'online', {
+      socketId: session.socketId,
+      startedAt: session.connectedAt,
+      lastHeartbeatAt: session.lastHeartbeatAt,
+    });
+  }
+
+  private async recordOfflineStatus(
+    session: DeviceSession,
+    disconnectedAt: string,
+    reason?: string,
+  ): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+
+    const safeDisconnectedAt = latestIsoTimestamp(disconnectedAt, session.connectedAt, session.lastHeartbeatAt);
+    const closed = await this.closeOpenStatus(session.deviceId, safeDisconnectedAt, session.lastHeartbeatAt);
+    if (closed === 0) {
+      await this.insertStatusInterval(session.deviceId, 'online', {
+        socketId: session.socketId,
+        startedAt: session.connectedAt,
+        endedAt: safeDisconnectedAt,
+        lastHeartbeatAt: session.lastHeartbeatAt,
+      });
+    }
+    await this.insertStatusInterval(session.deviceId, 'offline', {
+      socketId: session.socketId,
+      startedAt: safeDisconnectedAt,
+      lastHeartbeatAt: session.lastHeartbeatAt,
+      reason,
+    });
+  }
+
+  private async closeOpenStatus(
+    deviceId: string,
+    endedAt: string,
+    lastHeartbeatAt?: string,
+  ): Promise<number> {
+    if (!this.mysql) {
+      return 0;
+    }
+
+    return await this.mysql.execute(
+      `
+        UPDATE device_status_history
+        SET
+          ended_at = ?,
+          last_heartbeat_at = COALESCE(?, last_heartbeat_at),
+          updated_at = ?
+        WHERE device_id = ? AND ended_at IS NULL
+      `,
+      [endedAt, lastHeartbeatAt ?? null, endedAt, deviceId],
+    );
+  }
+
+  private async insertStatusInterval(
+    deviceId: string,
+    status: DeviceStatusHistoryStatus,
+    input: {
+      socketId?: string | null;
+      startedAt: string;
+      endedAt?: string | null;
+      lastHeartbeatAt?: string | null;
+      reason?: string;
+    },
+  ): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+
+    await this.mysql.execute(
+      `
+        INSERT IGNORE INTO device_status_history (
+          device_id, status, socket_id, started_at, ended_at, last_heartbeat_at, reason, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        deviceId,
+        status,
+        input.socketId ?? null,
+        input.startedAt,
+        input.endedAt ?? null,
+        input.lastHeartbeatAt ?? null,
+        input.reason ?? null,
+        input.startedAt,
+        input.endedAt ?? input.startedAt,
+      ],
+    );
   }
 
   private async loadFromPersistence(): Promise<void> {
@@ -427,6 +698,48 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         notes: row.notes ?? undefined,
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
+      });
+    }
+
+    const bootTime = new Date().toISOString();
+    const staleSessionClosedAt = this.options.staleSessionClosedAt ?? bootTime;
+    const sessionRows = await this.mysql.query<DeviceSessionRow>(
+      `
+        SELECT device_id, socket_id, connected_at, last_heartbeat_at
+        FROM socket_datas
+      `,
+    );
+    for (const row of sessionRows) {
+      await this.recordOfflineStatus(
+        {
+          deviceId: row.device_id,
+          socketId: row.socket_id,
+          connectedAt: toIsoTimestamp(row.connected_at),
+          lastHeartbeatAt: toIsoTimestamp(row.last_heartbeat_at),
+        },
+        staleSessionClosedAt,
+        'server_offline',
+      );
+    }
+
+    const openOnlineRows = await this.mysql.query<OpenDeviceStatusRow>(
+      `
+        SELECT device_id, socket_id, started_at, last_heartbeat_at
+        FROM device_status_history
+        WHERE status = 'online' AND ended_at IS NULL
+      `,
+    );
+    for (const row of openOnlineRows) {
+      await this.closeOpenStatus(
+        row.device_id,
+        staleSessionClosedAt,
+        row.last_heartbeat_at ? toIsoTimestamp(row.last_heartbeat_at) : undefined,
+      );
+      await this.insertStatusInterval(row.device_id, 'offline', {
+        socketId: row.socket_id,
+        startedAt: staleSessionClosedAt,
+        lastHeartbeatAt: row.last_heartbeat_at ? toIsoTimestamp(row.last_heartbeat_at) : null,
+        reason: 'server_offline',
       });
     }
 

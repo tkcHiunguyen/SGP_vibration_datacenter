@@ -70,6 +70,16 @@ export interface DeviceTelemetryPoint {
   ax?: number;
   ay?: number;
   az?: number;
+  vrmsXMms?: number;
+  vrmsYMms?: number;
+  vrmsZMms?: number;
+  vrmsUnit?: string;
+  drmsXUm?: number;
+  drmsYUm?: number;
+  drmsZUm?: number;
+  drmsBandMinHz?: number;
+  drmsBandMaxHz?: number;
+  drmsUnit?: string;
   uuid?: string;
   telemetryUuid?: string;
 }

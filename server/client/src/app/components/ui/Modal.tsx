@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
 import { ConsoleButton } from "./Button";
@@ -31,22 +31,70 @@ export function Modal({
   cardClassName?: string;
 }) {
   const { C } = useTheme();
+  const titleId = useId();
+  const descriptionId = useId();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    const onEsc = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || disableClose) {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+
+    const getFocusable = () =>
+      Array.from(cardRef.current?.querySelectorAll<HTMLElement>(focusableSelector) || [])
+        .filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      const focusable = getFocusable();
+      (focusable[0] || cardRef.current)?.focus({ preventScroll: true });
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (!disableClose) {
+          onClose();
+        }
         return;
       }
-      onClose();
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        cardRef.current?.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
     };
 
-    window.addEventListener("keydown", onEsc);
+    window.addEventListener("keydown", onKeyDown);
     return () => {
-      window.removeEventListener("keydown", onEsc);
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", onKeyDown);
+      previousFocusRef.current?.focus?.({ preventScroll: true });
     };
   }, [disableClose, onClose, open]);
 
@@ -58,6 +106,7 @@ export function Modal({
     <>
       <div
         className={backdropClassName ? `zone-modal-backdrop ${backdropClassName}` : "zone-modal-backdrop"}
+        aria-hidden="true"
         onClick={() => {
           if (!disableClose) {
             onClose();
@@ -72,6 +121,12 @@ export function Modal({
         }}
       />
       <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
         className={cardClassName ? `zone-modal-card ${cardClassName}` : "zone-modal-card"}
         style={{
           position: "fixed",
@@ -80,10 +135,13 @@ export function Modal({
           transform: "translate(-50%, -50%)",
           zIndex: zIndex + 1,
           width: `min(${width}px, calc(100vw - 30px))`,
+          maxHeight: "calc(100dvh - 28px)",
           background: C.card,
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 14,
           overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
           boxShadow: "0 24px 60px rgba(0,0,0,0.4)",
         }}
       >
@@ -95,12 +153,13 @@ export function Modal({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexShrink: 0,
           }}
         >
           <div>
-            <div style={{ color: C.textBright, fontSize: "0.88rem", fontWeight: 800 }}>{title}</div>
+            <div id={titleId} style={{ color: C.textBright, fontSize: "0.88rem", fontWeight: 800 }}>{title}</div>
             {description ? (
-              <div style={{ color: C.textMuted, fontSize: "0.7rem", marginTop: 3 }}>{description}</div>
+              <div id={descriptionId} style={{ color: C.textMuted, fontSize: "0.7rem", marginTop: 3 }}>{description}</div>
             ) : null}
           </div>
           <button
@@ -155,7 +214,7 @@ export function Modal({
           </button>
         </div>
 
-        <div style={{ padding: "14px" }}>{children}</div>
+        <div style={{ padding: "14px", overflowY: "auto", minHeight: 0 }}>{children}</div>
 
         {footer ? (
           <div
@@ -166,6 +225,7 @@ export function Modal({
               display: "flex",
               justifyContent: "flex-end",
               gap: 8,
+              flexShrink: 0,
             }}
           >
             {footer}

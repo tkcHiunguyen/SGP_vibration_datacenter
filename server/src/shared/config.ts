@@ -50,6 +50,7 @@ const envSchema = z.object({
   GOVERNANCE_APPROVAL_TTL_MINUTES: z.coerce.number().int().positive().default(60),
   COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   COMMAND_TIMEOUT_SWEEP_MS: z.coerce.number().int().positive().default(1000),
+  SERVER_HEARTBEAT_MS: z.coerce.number().int().positive().default(10000),
   TELEMETRY_DEDUPE_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   TELEMETRY_MAX_PER_DEVICE_PER_MINUTE: z.coerce.number().int().positive().default(600),
   TELEMETRY_MAX_GLOBAL_PER_MINUTE: z.coerce.number().int().positive().default(50000),
