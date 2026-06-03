@@ -1,15 +1,31 @@
 import { spawn } from 'node:child_process';
 
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const pnpm = 'pnpm';
+const useShell = process.platform === 'win32';
+
+function buildEnv(extraEnv) {
+  const mergedEnv = {
+    ...process.env,
+    ...extraEnv,
+  };
+  const cleanEnv = {};
+
+  for (const [key, value] of Object.entries(mergedEnv)) {
+    if (!key || key.includes('=') || value === undefined || value === null) {
+      continue;
+    }
+    cleanEnv[key] = String(value);
+  }
+
+  return cleanEnv;
+}
 
 function run(args, env = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(pnpm, args, {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        ...env,
-      },
+      shell: useShell,
+      env: buildEnv(env),
     });
 
     child.on('error', reject);
