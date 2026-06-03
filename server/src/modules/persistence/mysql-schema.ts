@@ -610,6 +610,16 @@ CREATE TABLE IF NOT EXISTS device_datas (
   ax DOUBLE NULL,
   ay DOUBLE NULL,
   az DOUBLE NULL,
+  vrms_x_mms DOUBLE NULL,
+  vrms_y_mms DOUBLE NULL,
+  vrms_z_mms DOUBLE NULL,
+  vrms_unit VARCHAR(32) NULL,
+  drms_x_um DOUBLE NULL,
+  drms_y_um DOUBLE NULL,
+  drms_z_um DOUBLE NULL,
+  drms_band_min_hz DOUBLE NULL,
+  drms_band_max_hz DOUBLE NULL,
+  drms_unit VARCHAR(32) NULL,
   sample_count INT NULL,
   telemetry_uuid VARCHAR(255) NULL,
   KEY idx_device_datas_device_time (device_id, received_at),
@@ -795,6 +805,146 @@ SET @add_device_datas_telemetry_uuid_sql := IF(
 PREPARE add_device_datas_telemetry_uuid_stmt FROM @add_device_datas_telemetry_uuid_sql;
 EXECUTE add_device_datas_telemetry_uuid_stmt;
 DEALLOCATE PREPARE add_device_datas_telemetry_uuid_stmt;
+
+SET @has_device_datas_vrms_x_mms := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'vrms_x_mms'
+);
+SET @add_device_datas_vrms_x_mms_sql := IF(
+  @has_device_datas_vrms_x_mms = 0,
+  'ALTER TABLE device_datas ADD COLUMN vrms_x_mms DOUBLE NULL AFTER az',
+  'SELECT 1'
+);
+PREPARE add_device_datas_vrms_x_mms_stmt FROM @add_device_datas_vrms_x_mms_sql;
+EXECUTE add_device_datas_vrms_x_mms_stmt;
+DEALLOCATE PREPARE add_device_datas_vrms_x_mms_stmt;
+
+SET @has_device_datas_vrms_y_mms := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'vrms_y_mms'
+);
+SET @add_device_datas_vrms_y_mms_sql := IF(
+  @has_device_datas_vrms_y_mms = 0,
+  'ALTER TABLE device_datas ADD COLUMN vrms_y_mms DOUBLE NULL AFTER vrms_x_mms',
+  'SELECT 1'
+);
+PREPARE add_device_datas_vrms_y_mms_stmt FROM @add_device_datas_vrms_y_mms_sql;
+EXECUTE add_device_datas_vrms_y_mms_stmt;
+DEALLOCATE PREPARE add_device_datas_vrms_y_mms_stmt;
+
+SET @has_device_datas_vrms_z_mms := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'vrms_z_mms'
+);
+SET @add_device_datas_vrms_z_mms_sql := IF(
+  @has_device_datas_vrms_z_mms = 0,
+  'ALTER TABLE device_datas ADD COLUMN vrms_z_mms DOUBLE NULL AFTER vrms_y_mms',
+  'SELECT 1'
+);
+PREPARE add_device_datas_vrms_z_mms_stmt FROM @add_device_datas_vrms_z_mms_sql;
+EXECUTE add_device_datas_vrms_z_mms_stmt;
+DEALLOCATE PREPARE add_device_datas_vrms_z_mms_stmt;
+
+SET @has_device_datas_vrms_unit := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'vrms_unit'
+);
+SET @add_device_datas_vrms_unit_sql := IF(
+  @has_device_datas_vrms_unit = 0,
+  'ALTER TABLE device_datas ADD COLUMN vrms_unit VARCHAR(32) NULL AFTER vrms_z_mms',
+  'SELECT 1'
+);
+PREPARE add_device_datas_vrms_unit_stmt FROM @add_device_datas_vrms_unit_sql;
+EXECUTE add_device_datas_vrms_unit_stmt;
+DEALLOCATE PREPARE add_device_datas_vrms_unit_stmt;
+
+SET @has_device_datas_drms_x_um := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_x_um'
+);
+SET @add_device_datas_drms_x_um_sql := IF(
+  @has_device_datas_drms_x_um = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_x_um DOUBLE NULL AFTER vrms_unit',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_x_um_stmt FROM @add_device_datas_drms_x_um_sql;
+EXECUTE add_device_datas_drms_x_um_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_x_um_stmt;
+
+SET @has_device_datas_drms_y_um := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_y_um'
+);
+SET @add_device_datas_drms_y_um_sql := IF(
+  @has_device_datas_drms_y_um = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_y_um DOUBLE NULL AFTER drms_x_um',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_y_um_stmt FROM @add_device_datas_drms_y_um_sql;
+EXECUTE add_device_datas_drms_y_um_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_y_um_stmt;
+
+SET @has_device_datas_drms_z_um := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_z_um'
+);
+SET @add_device_datas_drms_z_um_sql := IF(
+  @has_device_datas_drms_z_um = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_z_um DOUBLE NULL AFTER drms_y_um',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_z_um_stmt FROM @add_device_datas_drms_z_um_sql;
+EXECUTE add_device_datas_drms_z_um_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_z_um_stmt;
+
+SET @has_device_datas_drms_band_min_hz := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_band_min_hz'
+);
+SET @add_device_datas_drms_band_min_hz_sql := IF(
+  @has_device_datas_drms_band_min_hz = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_band_min_hz DOUBLE NULL AFTER drms_z_um',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_band_min_hz_stmt FROM @add_device_datas_drms_band_min_hz_sql;
+EXECUTE add_device_datas_drms_band_min_hz_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_band_min_hz_stmt;
+
+SET @has_device_datas_drms_band_max_hz := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_band_max_hz'
+);
+SET @add_device_datas_drms_band_max_hz_sql := IF(
+  @has_device_datas_drms_band_max_hz = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_band_max_hz DOUBLE NULL AFTER drms_band_min_hz',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_band_max_hz_stmt FROM @add_device_datas_drms_band_max_hz_sql;
+EXECUTE add_device_datas_drms_band_max_hz_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_band_max_hz_stmt;
+
+SET @has_device_datas_drms_unit := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'device_datas' AND column_name = 'drms_unit'
+);
+SET @add_device_datas_drms_unit_sql := IF(
+  @has_device_datas_drms_unit = 0,
+  'ALTER TABLE device_datas ADD COLUMN drms_unit VARCHAR(32) NULL AFTER drms_band_max_hz',
+  'SELECT 1'
+);
+PREPARE add_device_datas_drms_unit_stmt FROM @add_device_datas_drms_unit_sql;
+EXECUTE add_device_datas_drms_unit_stmt;
+DEALLOCATE PREPARE add_device_datas_drms_unit_stmt;
 
 -- Normalize and dedupe telemetry_uuid before adding uniqueness.
 UPDATE device_datas
