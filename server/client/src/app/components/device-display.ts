@@ -171,8 +171,7 @@ export function buildDeviceTelemetryCardReadout(
     return winner;
   }, []);
 
-  void strongestAxis;
-  return { temperature, axes };
+  return { temperature, axes: strongestAxis };
 }
 
 export function buildDeviceAxisLabelUpdate(
