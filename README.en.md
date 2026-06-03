@@ -106,7 +106,11 @@ Run from the repository root:
 pnpm install
 ```
 
-After installation, the root `postinstall` script runs `pnpm db:init`. If MySQL is configured and available, the schema is created or updated. If MySQL is not configured, or MySQL is unavailable with the default fallback mode, the script prints a skip message.
+`pnpm install` only installs dependencies and does not touch the DB. To prepare the dev schema, run:
+
+```bash
+pnpm dev:setup
+```
 
 ## Run in Development
 
@@ -316,10 +320,10 @@ pnpm build
 pnpm typecheck
 ```
 
-Each `pnpm build` also exports the current MySQL bootstrap schema to:
+When changing schema, export the schema file before committing:
 
-```text
-docs/database/mysql-schema.sql
+```bash
+pnpm db:schema:export
 ```
 
 Run server tests:
@@ -330,7 +334,15 @@ pnpm -C server test
 
 ## Production Build
 
-Build web and server:
+Deploy production with one command:
+
+```bash
+pnpm prod:deploy
+```
+
+This installs dependencies with `--ignore-scripts`, builds client/server, intentionally applies the MySQL schema, then runs the compiled server. Production should set `DB_AUTO_INIT=false` and `DB_FALLBACK_ON_UNAVAILABLE=false` in `.env` to avoid implicit migration/fallback on server start.
+
+To only build web and server:
 
 ```bash
 pnpm build
@@ -391,11 +403,14 @@ For production-like environments, configure at least:
 
 | Command | Meaning |
 | --- | --- |
-| `pnpm install` | Install dependencies and run DB init. |
+| `pnpm install` | Install dependencies without DB init. |
+| `pnpm dev:setup` | Initialize/update the MySQL schema for development. |
 | `pnpm dev` | Run server and web dev servers together. |
 | `pnpm -C server dev` | Run only the Fastify server. |
 | `pnpm -C server/client dev` | Run only the Vite build watch for the dashboard. |
-| `pnpm build` | Build web, build server, and export SQL schema to `docs/database/mysql-schema.sql`. |
+| `pnpm build` | Build web and server. |
+| `pnpm release:check` | Export schema, typecheck, test, and build before release/commit. |
+| `pnpm prod:deploy` | Install deps, build, apply MySQL schema, and run production server. |
 | `pnpm typecheck` | Type-check the dashboard and server. |
 | `pnpm -C server test` | Run server tests. |
 | `pnpm -C server db:init` | Initialize MySQL schema when MySQL is configured. |

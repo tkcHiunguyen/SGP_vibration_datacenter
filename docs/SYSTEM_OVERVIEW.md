@@ -30,10 +30,12 @@ Browser http://localhost:8080
 | Command | Purpose |
 | --- | --- |
 | `pnpm dev` | Run Fastify on port `8080` and Vite build watch for `server/client` in parallel. |
-| `pnpm build` | Build frontend into `server/public/app`, compile backend to `server/dist`, then export `docs/database/mysql-schema.sql`. |
+| `pnpm build` | Build frontend into `server/public/app` and compile backend to `server/dist`. |
 | `pnpm start` | Run compiled backend from `server/dist`. Run `pnpm build` first. |
 | `pnpm typecheck` | Typecheck backend and frontend. |
 | `pnpm test` | Run backend tests. |
+| `pnpm release:check` | Export DB schema, typecheck, test, and build before release. |
+| `pnpm prod:deploy` | Install deps, build, apply DB schema, and run production server. |
 | `pnpm db:init` | Initialize DB schema if DB env is configured. |
 | `pnpm db:schema:export` | Export the MySQL bootstrap schema from source to `docs/database/mysql-schema.sql`. |
 | `pnpm arch:generate` | Refresh architecture JSON and Mermaid artifacts under `docs/architecture`. |
