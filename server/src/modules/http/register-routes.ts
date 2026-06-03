@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
@@ -86,6 +87,14 @@ export function registerRoutes({
     date_to: z.string().min(1),
     deviceId: z.string().min(1).optional(),
   });
+  const sgpDataExportJobRequestSchema = z.object({
+    date_from: z.string().min(1),
+    date_to: z.string().min(1),
+    deviceId: z.string().min(1).optional(),
+  });
+  const sgpDataExportJobParamsSchema = z.object({
+    jobId: z.string().min(1),
+  });
   const sgpDataImportQuerySchema = z.object({
     mode: z.enum(['merge', 'idempotent']).optional().default('merge'),
   });
@@ -152,6 +161,32 @@ export function registerRoutes({
   type SgpDataArchive = z.infer<typeof sgpDataArchiveSchema>;
   type SgpDataDevice = z.infer<typeof sgpDataDeviceSchema>;
   type SgpDataTelemetryPoint = z.infer<typeof sgpDataTelemetryPointSchema>;
+  type SgpDataExportRange = { from: string; to: string };
+  type SgpDataExportJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+  type SgpDataExportJob = {
+    jobId: string;
+    status: SgpDataExportJobStatus;
+    progress: number;
+    stage: string;
+    createdAt: string;
+    updatedAt: string;
+    range: SgpDataExportRange;
+    deviceId?: string;
+    fileName?: string;
+    filePath?: string;
+    sizeBytes?: number;
+    error?: string;
+    manifest?: SgpDataArchive['manifest'];
+  };
+  type SgpDataExportResult = {
+    compressed: Buffer;
+    fileName: string;
+    manifest: SgpDataArchive['manifest'];
+  };
+
+  const sgpDataExportJobs = new Map<string, SgpDataExportJob>();
+  const sgpDataExportDir = join(process.cwd(), 'storage', 'exports');
+  const sgpDataExportJobTtlMs = 24 * 60 * 60 * 1000;
 
   function isAllowedDeviceProxyIp(ip: string): boolean {
     const normalized = ip.replace(/^::ffff:/, '').trim();
@@ -484,6 +519,178 @@ export function registerRoutes({
 
   function createSgpDataChecksum(archive: Pick<SgpDataArchive, 'devices' | 'measurements' | 'spectrumFrames' | 'placementConfigs'>): string {
     return createHash('sha256').update(sgpDataChecksumPayload(archive)).digest('hex');
+  }
+
+  function clampExportProgress(progress: number): number {
+    if (!Number.isFinite(progress)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(100, Math.round(progress)));
+  }
+
+  function sanitizeExportFilePart(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 80);
+  }
+
+  function toSgpDataExportJobResponse(job: SgpDataExportJob) {
+    return {
+      jobId: job.jobId,
+      status: job.status,
+      progress: job.progress,
+      stage: job.stage,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      range: job.range,
+      deviceId: job.deviceId,
+      fileName: job.fileName,
+      sizeBytes: job.sizeBytes,
+      error: job.error,
+      manifest: job.manifest,
+    };
+  }
+
+  function updateSgpDataExportJob(job: SgpDataExportJob, patch: Partial<SgpDataExportJob>): void {
+    Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+    job.progress = clampExportProgress(job.progress);
+  }
+
+  async function cleanupSgpDataExportJobs(): Promise<void> {
+    const cutoffMs = Date.now() - sgpDataExportJobTtlMs;
+    const deleteJobs: SgpDataExportJob[] = [];
+    for (const job of sgpDataExportJobs.values()) {
+      if (Date.parse(job.createdAt) < cutoffMs) {
+        deleteJobs.push(job);
+      }
+    }
+    for (const job of deleteJobs) {
+      sgpDataExportJobs.delete(job.jobId);
+      if (job.filePath) {
+        await unlink(job.filePath).catch(() => undefined);
+      }
+    }
+  }
+
+  async function buildSgpDataExportArchive({
+    range,
+    deviceId,
+    actor,
+    onProgress,
+  }: {
+    range: SgpDataExportRange;
+    deviceId?: string;
+    actor: string;
+    onProgress?: (progress: number, stage: string) => void;
+  }): Promise<SgpDataExportResult> {
+    onProgress?.(8, 'Đang tải danh sách thiết bị');
+    const deviceMetadata = deviceId
+      ? [deviceService.getMetadata(deviceId)].filter((device): device is NonNullable<typeof device> => Boolean(device))
+      : deviceService.list().map((device) => device.metadata).filter((device): device is NonNullable<typeof device> => Boolean(device));
+    if (deviceId && deviceMetadata.length === 0) {
+      throw new Error('device_not_found');
+    }
+
+    onProgress?.(22, 'Đang xuất telemetry');
+    const measurements = await telemetryService.exportHistory({
+      from: range.from,
+      to: range.to,
+      deviceId,
+    });
+
+    onProgress?.(48, 'Đang xuất phổ FFT');
+    const spectrumFrames = (
+      await Promise.all(deviceMetadata.map((device) => spectrumStorageService.exportFrames(device.deviceId, range.from, range.to)))
+    ).flat();
+
+    onProgress?.(66, 'Đang gom cấu hình thiết bị');
+    const selectedDeviceIds = new Set<string>([
+      ...measurements.map((point) => point.deviceId),
+      ...spectrumFrames.map((frame) => frame.deviceId),
+    ]);
+    if (deviceId) {
+      selectedDeviceIds.add(deviceId);
+    }
+    const devices = deviceMetadata.filter((device) => selectedDeviceIds.has(device.deviceId));
+    const placementConfigs: Record<string, Record<string, unknown>> = {};
+    for (const device of devices) {
+      const config = await spectrumStorageService.readPlacementConfig(device.deviceId);
+      if (config) {
+        placementConfigs[device.deviceId] = config;
+      }
+    }
+
+    const archive: SgpDataArchive = {
+      manifest: {
+        format: 'sgpdata',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        dateRange: range,
+        deviceCount: devices.length,
+        measurementCount: measurements.length,
+        spectrumFrameCount: spectrumFrames.length,
+        placementConfigCount: Object.keys(placementConfigs).length,
+      },
+      devices,
+      measurements,
+      spectrumFrames,
+      placementConfigs,
+    };
+    archive.manifest.checksumSha256 = createSgpDataChecksum(archive);
+
+    onProgress?.(82, 'Đang nén gói dữ liệu');
+    const body = Buffer.from(JSON.stringify(archive));
+    const compressed = await gzipAsync(body);
+    const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
+    const deviceSuffix = deviceId ? `_${sanitizeExportFilePart(deviceId)}` : '';
+    const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
+
+    auditService.record({
+      action: 'sgpdata_export',
+      deviceId: deviceId ?? 'n/a',
+      commandId: 'n/a',
+      actor,
+      result: 'exported',
+      metadata: {
+        dateRange: range,
+        deviceCount: devices.length,
+        measurementCount: measurements.length,
+        spectrumFrameCount: spectrumFrames.length,
+        sizeBytes: compressed.byteLength,
+      },
+    });
+
+    return { compressed, fileName, manifest: archive.manifest };
+  }
+
+  async function runSgpDataExportJob(job: SgpDataExportJob, actor: string): Promise<void> {
+    try {
+      updateSgpDataExportJob(job, { status: 'running', progress: 3, stage: 'Đang khởi tạo export' });
+      const result = await buildSgpDataExportArchive({
+        range: job.range,
+        deviceId: job.deviceId,
+        actor,
+        onProgress: (progress, stage) => updateSgpDataExportJob(job, { progress, stage }),
+      });
+      updateSgpDataExportJob(job, { progress: 92, stage: 'Đang ghi file export' });
+      await mkdir(sgpDataExportDir, { recursive: true });
+      const filePath = join(sgpDataExportDir, `${job.jobId}-${result.fileName}`);
+      await writeFile(filePath, result.compressed);
+      updateSgpDataExportJob(job, {
+        status: 'completed',
+        progress: 100,
+        stage: 'Hoàn tất',
+        fileName: result.fileName,
+        filePath,
+        sizeBytes: result.compressed.byteLength,
+        manifest: result.manifest,
+      });
+    } catch (error) {
+      updateSgpDataExportJob(job, {
+        status: 'failed',
+        progress: 100,
+        stage: 'Export thất bại',
+        error: error instanceof Error ? error.message : 'sgpdata_export_failed',
+      });
+    }
   }
 
   async function parseSgpDataArchiveBuffer(buffer: Buffer): Promise<SgpDataArchive> {
@@ -865,6 +1072,85 @@ export function registerRoutes({
     persistenceStatus,
   });
 
+  app.post('/api/sgpdata/export/jobs', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const queryResult = sgpDataExportJobRequestSchema.safeParse(request.body ?? {});
+    if (!queryResult.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_required' });
+    }
+    const query = queryResult.data;
+    const range = parseSgpDataDateRange(query.date_from, query.date_to);
+    if (!range) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_invalid' });
+    }
+
+    if (query.deviceId && !deviceService.getMetadata(query.deviceId)) {
+      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    }
+
+    await cleanupSgpDataExportJobs();
+    const now = new Date().toISOString();
+    const job: SgpDataExportJob = {
+      jobId: randomUUID(),
+      status: 'queued',
+      progress: 0,
+      stage: 'Đang chờ export',
+      createdAt: now,
+      updatedAt: now,
+      range,
+      deviceId: query.deviceId,
+    };
+    sgpDataExportJobs.set(job.jobId, job);
+    void runSgpDataExportJob(job, principalActor(principal));
+
+    return reply.code(202).send({ ok: true, data: toSgpDataExportJobResponse(job) });
+  });
+
+  app.get('/api/sgpdata/export/jobs/:jobId', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const params = sgpDataExportJobParamsSchema.safeParse(request.params ?? {});
+    if (!params.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_job_id_required' });
+    }
+    await cleanupSgpDataExportJobs();
+    const job = sgpDataExportJobs.get(params.data.jobId);
+    if (!job) {
+      return reply.code(404).send({ ok: false, error: 'sgpdata_export_job_not_found' });
+    }
+    return reply.send({ ok: true, data: toSgpDataExportJobResponse(job) });
+  });
+
+  app.get('/api/sgpdata/export/jobs/:jobId/download', async (request, reply) => {
+    const principal = requireRole(request, reply, 'admin');
+    if (!principal) {
+      return;
+    }
+    const params = sgpDataExportJobParamsSchema.safeParse(request.params ?? {});
+    if (!params.success) {
+      return reply.code(422).send({ ok: false, error: 'sgpdata_job_id_required' });
+    }
+    const job = sgpDataExportJobs.get(params.data.jobId);
+    if (!job) {
+      return reply.code(404).send({ ok: false, error: 'sgpdata_export_job_not_found' });
+    }
+    if (job.status !== 'completed' || !job.filePath || !job.fileName) {
+      return reply.code(409).send({ ok: false, error: 'sgpdata_export_job_not_ready', data: toSgpDataExportJobResponse(job) });
+    }
+    reply.header('content-type', 'application/vnd.sgpdata');
+    reply.header('content-disposition', `attachment; filename="${job.fileName}"`);
+    reply.header('cache-control', 'no-store');
+    if (job.sizeBytes) {
+      reply.header('content-length', String(job.sizeBytes));
+    }
+    return reply.send(createReadStream(job.filePath));
+  });
+
   app.get('/api/sgpdata/export', async (request, reply) => {
     const principal = requireRole(request, reply, 'admin');
     if (!principal) {
@@ -880,77 +1166,15 @@ export function registerRoutes({
       return reply.code(422).send({ ok: false, error: 'sgpdata_date_range_invalid' });
     }
 
-    const deviceMetadata = query.deviceId
-      ? [deviceService.getMetadata(query.deviceId)].filter((device): device is NonNullable<typeof device> => Boolean(device))
-      : deviceService.list().map((device) => device.metadata).filter((device): device is NonNullable<typeof device> => Boolean(device));
-    if (query.deviceId && deviceMetadata.length === 0) {
-      return reply.code(404).send({ ok: false, error: 'device_not_found' });
-    }
-
-    const measurements = await telemetryService.exportHistory({
-      from: range.from,
-      to: range.to,
+    const result = await buildSgpDataExportArchive({
+      range,
       deviceId: query.deviceId,
-    });
-    const spectrumFrames = (
-      await Promise.all(deviceMetadata.map((device) => spectrumStorageService.exportFrames(device.deviceId, range.from, range.to)))
-    ).flat();
-    const selectedDeviceIds = new Set<string>([
-      ...measurements.map((point) => point.deviceId),
-      ...spectrumFrames.map((frame) => frame.deviceId),
-    ]);
-    if (query.deviceId) {
-      selectedDeviceIds.add(query.deviceId);
-    }
-    const devices = deviceMetadata.filter((device) => selectedDeviceIds.has(device.deviceId));
-    const placementConfigs: Record<string, Record<string, unknown>> = {};
-    for (const device of devices) {
-      const config = await spectrumStorageService.readPlacementConfig(device.deviceId);
-      if (config) {
-        placementConfigs[device.deviceId] = config;
-      }
-    }
-
-    const archive: SgpDataArchive = {
-      manifest: {
-        format: 'sgpdata',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        dateRange: range,
-        deviceCount: devices.length,
-        measurementCount: measurements.length,
-        spectrumFrameCount: spectrumFrames.length,
-        placementConfigCount: Object.keys(placementConfigs).length,
-      },
-      devices,
-      measurements,
-      spectrumFrames,
-      placementConfigs,
-    };
-    archive.manifest.checksumSha256 = createSgpDataChecksum(archive);
-    const body = Buffer.from(JSON.stringify(archive));
-    const compressed = await gzipAsync(body);
-    const suffix = `${range.from.slice(0, 10)}_${range.to.slice(0, 10)}`;
-    const deviceSuffix = query.deviceId ? `_${query.deviceId.replace(/[^a-zA-Z0-9_.-]+/g, '-')}` : '';
-    const fileName = `sgp-data${deviceSuffix}_${suffix}.sgpdata`;
-    auditService.record({
-      action: 'sgpdata_export',
-      deviceId: query.deviceId ?? 'n/a',
-      commandId: 'n/a',
       actor: principalActor(principal),
-      result: 'exported',
-      metadata: {
-        dateRange: range,
-        deviceCount: devices.length,
-        measurementCount: measurements.length,
-        spectrumFrameCount: spectrumFrames.length,
-        sizeBytes: compressed.byteLength,
-      },
     });
     reply.header('content-type', 'application/vnd.sgpdata');
-    reply.header('content-disposition', `attachment; filename="${fileName}"`);
+    reply.header('content-disposition', `attachment; filename="${result.fileName}"`);
     reply.header('cache-control', 'no-store');
-    return reply.send(compressed);
+    return reply.send(result.compressed);
   });
 
   app.post('/api/sgpdata/import/preview', async (request, reply) => {
