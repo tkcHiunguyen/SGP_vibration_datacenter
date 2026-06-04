@@ -109,7 +109,6 @@ const TELEMETRY_HISTORY_RAW_MAX_POINTS = 12_000;
 const TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS = 60_000;
 const TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS = 10_000;
 const SPECTRUM_HISTORY_BUFFER_SIZE = 120;
-const SPECTRUM_FLUSH_INTERVAL_MS = 120;
 const TOAST_DURATION_MS = 10_000;
 const TOAST_EXIT_MS = 260;
 
@@ -675,8 +674,6 @@ export default function App() {
   const telemetryFetchStateRef = useRef<Map<string, { lastAttemptAt: number; cooldownUntil: number }>>(new Map());
   const telemetryPendingCountRef = useRef<Map<string, number>>(new Map());
   const telemetryRequestSeqRef = useRef<Map<string, number>>(new Map());
-  const spectrumPendingByDeviceRef = useRef<Map<string, DeviceSpectrumPoint[]>>(new Map());
-  const spectrumFlushTimerRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Map<number, { auto?: number; remove?: number }>>(new Map());
   const nextToastIdRef = useRef(1);
   const deviceOnlineMapRef = useRef<Map<string, { online: boolean; name: string }>>(new Map());
@@ -737,44 +734,16 @@ export default function App() {
     });
   }, []);
 
-  const flushSpectrumQueue = useCallback(() => {
-    spectrumFlushTimerRef.current = null;
-    const pendingByDevice = spectrumPendingByDeviceRef.current;
-    if (pendingByDevice.size === 0) {
-      return;
-    }
-
-    const entries = [...pendingByDevice.entries()];
-    spectrumPendingByDeviceRef.current = new Map();
-
+  const enqueueSpectrumPoint = useCallback((deviceId: string, point: DeviceSpectrumPoint) => {
+    setTelemetryLoadingByDevice((previous) => ({ ...previous, [deviceId]: false }));
     setSpectrumByDevice((previous) => {
-      const next = { ...previous };
-      for (const [deviceId, pendingPoints] of entries) {
-        if (pendingPoints.length === 0) {
-          continue;
-        }
-        const current = next[deviceId] || [];
-        next[deviceId] = mergeSpectrumPoints(current, pendingPoints);
-      }
-      return next;
+      const current = previous[deviceId] || [];
+      return {
+        ...previous,
+        [deviceId]: mergeSpectrumPoints(current, [point]),
+      };
     });
   }, []);
-
-  const scheduleSpectrumFlush = useCallback(() => {
-    if (spectrumFlushTimerRef.current !== null) {
-      return;
-    }
-    spectrumFlushTimerRef.current = window.setTimeout(() => {
-      flushSpectrumQueue();
-    }, SPECTRUM_FLUSH_INTERVAL_MS);
-  }, [flushSpectrumQueue]);
-
-  const enqueueSpectrumPoint = useCallback((deviceId: string, point: DeviceSpectrumPoint) => {
-    const queued = spectrumPendingByDeviceRef.current.get(deviceId) || [];
-    queued.push(point);
-    spectrumPendingByDeviceRef.current.set(deviceId, queued);
-    scheduleSpectrumFlush();
-  }, [scheduleSpectrumFlush]);
 
   const requestTelemetryHistory = useCallback(async (
     deviceId: string,
@@ -935,7 +904,6 @@ export default function App() {
     telemetryPendingCountRef.current.delete(targetDeviceId);
     telemetryRequestSeqRef.current.set(targetDeviceId, (telemetryRequestSeqRef.current.get(targetDeviceId) || 0) + 1);
     telemetryRetentionByDeviceRef.current.delete(targetDeviceId);
-    spectrumPendingByDeviceRef.current.delete(targetDeviceId);
     telemetryByDeviceRef.current = {
       ...telemetryByDeviceRef.current,
       [targetDeviceId]: [],
@@ -1147,19 +1115,12 @@ export default function App() {
     });
 
     return () => {
-      flushSpectrumQueue();
       socket.disconnect();
     };
-  }, [enqueueSpectrumPoint, flushSpectrumQueue, showToast]);
+  }, [enqueueSpectrumPoint, showToast]);
 
   useEffect(() => {
     return () => {
-      if (spectrumFlushTimerRef.current !== null) {
-        window.clearTimeout(spectrumFlushTimerRef.current);
-        spectrumFlushTimerRef.current = null;
-      }
-      spectrumPendingByDeviceRef.current.clear();
-
       for (const timeoutId of toastTimersRef.current.values()) {
         if (timeoutId.auto !== undefined) {
           window.clearTimeout(timeoutId.auto);

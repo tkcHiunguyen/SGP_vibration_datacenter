@@ -29,7 +29,6 @@ import {
   EMPTY_SPECTRUM_POINTS,
   GRAVITY_MS2,
   SPECTRUM_CHART_HEIGHT,
-  SPECTRUM_HOVER_FETCH_DEBOUNCE_MS,
   SPECTRUM_HOVER_FETCH_MIN_DELTA_MS,
   SPECTRUM_LOADING_LABEL,
   SPECTRUM_NO_DATA_LABEL,
@@ -886,6 +885,7 @@ function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySn
 
   return {
     ts,
+    telemetryUuid: point.telemetryUuid,
     temp:
       typeof point.temperature === "number" && Number.isFinite(point.temperature)
         ? Number(point.temperature.toFixed(2))
@@ -1107,6 +1107,8 @@ export function SensorChartModal({
   const spectrumHoverTimerRef = useRef<number | null>(null);
   const lastSpectrumHoverTsRef = useRef<number | null>(null);
   const spectrumRequestSeqRef = useRef(0);
+  const spectrumAbortRef = useRef<AbortController | null>(null);
+  const spectrumFrameCacheRef = useRef<Map<string, DeviceSpectrumPoint[]>>(new Map());
   const dataSettingsCloseTimerRef = useRef<number | null>(null);
   const dataSettingsSummaryFetchTimerRef = useRef<number | null>(null);
   const dataSummaryLoadedAtRef = useRef<number>(0);
@@ -1945,6 +1947,15 @@ export function SensorChartModal({
       }
 
       const requestAt = Math.floor(timestampMs);
+      const cacheKey = `${sensor.id}:${telemetryUuid || requestAt}`;
+      const cached = spectrumFrameCacheRef.current.get(cacheKey);
+      if (cached && !options?.force) {
+        setHoverSpectrumPoints(cached);
+        setHoverSpectrumLoading(false);
+        setHoverSpectrumDebouncing(false);
+        return;
+      }
+
       const previousRequestedAt = lastSpectrumHoverTsRef.current;
       if (
         !options?.force &&
@@ -1957,7 +1968,9 @@ export function SensorChartModal({
       lastSpectrumHoverTsRef.current = requestAt;
       const requestId = spectrumRequestSeqRef.current + 1;
       spectrumRequestSeqRef.current = requestId;
-      setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
+      spectrumAbortRef.current?.abort();
+      const abortController = new AbortController();
+      spectrumAbortRef.current = abortController;
       setHoverSpectrumLoading(true);
 
       try {
@@ -1973,6 +1986,7 @@ export function SensorChartModal({
             headers: {
               Accept: "application/json",
             },
+            signal: abortController.signal,
           },
         );
         const bodyText = await response.text();
@@ -1994,13 +2008,26 @@ export function SensorChartModal({
         }
 
         const points = parseSpectrumFramePayload(payload);
+        spectrumFrameCacheRef.current.set(cacheKey, points);
+        if (spectrumFrameCacheRef.current.size > 160) {
+          const oldestKey = spectrumFrameCacheRef.current.keys().next().value;
+          if (oldestKey) {
+            spectrumFrameCacheRef.current.delete(oldestKey);
+          }
+        }
         setHoverSpectrumPoints(points);
-      } catch {
+      } catch (error) {
+        if ((error as Error).name === "AbortError") {
+          return;
+        }
         if (requestId === spectrumRequestSeqRef.current) {
           setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
         }
       } finally {
         if (requestId === spectrumRequestSeqRef.current) {
+          if (spectrumAbortRef.current === abortController) {
+            spectrumAbortRef.current = null;
+          }
           setHoverSpectrumLoading(false);
         }
       }
@@ -2045,21 +2072,20 @@ export function SensorChartModal({
       if (!target) {
         return;
       }
-      setTrendHoverTarget(target);
-      setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
+      const nearestSnapshot = findNearestTelemetrySnapshot(target.timestampMs);
+      const targetTelemetryUuid = target.telemetryUuid || nearestSnapshot?.telemetryUuid;
+      const targetTimestampMs = nearestSnapshot?.telemetryUuid ? nearestSnapshot.ts : target.timestampMs;
+      setTrendHoverTarget({ ...target, timestampMs: targetTimestampMs, telemetryUuid: targetTelemetryUuid });
+      setHoverTelemetrySnapshot(nearestSnapshot);
 
       if (spectrumHoverTimerRef.current !== null) {
         window.clearTimeout(spectrumHoverTimerRef.current);
       }
       spectrumRequestSeqRef.current += 1;
-      setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
-      setHoverSpectrumLoading(false);
-      setHoverSpectrumDebouncing(true);
-      spectrumHoverTimerRef.current = window.setTimeout(() => {
-        spectrumHoverTimerRef.current = null;
-        setHoverSpectrumDebouncing(false);
-        void requestSpectrumFrameAt(target.timestampMs, target.telemetryUuid);
-      }, SPECTRUM_HOVER_FETCH_DEBOUNCE_MS);
+      spectrumAbortRef.current?.abort();
+      setHoverSpectrumLoading(true);
+      setHoverSpectrumDebouncing(false);
+      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid);
     },
     [findNearestTelemetrySnapshot, requestSpectrumFrameAt, spectrumPinnedTarget],
   );
@@ -2078,12 +2104,16 @@ export function SensorChartModal({
       spectrumRequestSeqRef.current += 1;
       setSpectrumYAxisMax(null);
       setHoverSpectrumDebouncing(false);
-      setSpectrumPinnedTarget(target);
-      setTrendHoverTarget(target);
-      setHoverTelemetrySnapshot(findNearestTelemetrySnapshot(target.timestampMs));
+      const nearestSnapshot = findNearestTelemetrySnapshot(target.timestampMs);
+      const targetTelemetryUuid = target.telemetryUuid || nearestSnapshot?.telemetryUuid;
+      const targetTimestampMs = nearestSnapshot?.telemetryUuid ? nearestSnapshot.ts : target.timestampMs;
+      const normalizedTarget = { ...target, timestampMs: targetTimestampMs, telemetryUuid: targetTelemetryUuid };
+      setSpectrumPinnedTarget(normalizedTarget);
+      setTrendHoverTarget(normalizedTarget);
+      setHoverTelemetrySnapshot(nearestSnapshot);
       setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
       setHoverSpectrumLoading(false);
-      void requestSpectrumFrameAt(target.timestampMs, target.telemetryUuid, { force: true });
+      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid, { force: true });
     },
     [findNearestTelemetrySnapshot, requestSpectrumFrameAt],
   );

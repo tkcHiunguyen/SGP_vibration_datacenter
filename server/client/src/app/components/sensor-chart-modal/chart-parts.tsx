@@ -35,7 +35,7 @@ export const DEFAULT_SPECTRUM_SAMPLE_RATE_HZ = 1000;
 export const DEFAULT_SPECTRUM_SOURCE_SAMPLES = 1024;
 export const SPECTRUM_RENDER_BARS = 512;
 export const SPECTRUM_HOVER_FETCH_DEBOUNCE_MS = 500;
-export const SPECTRUM_HOVER_FETCH_MIN_DELTA_MS = 500;
+export const SPECTRUM_HOVER_FETCH_MIN_DELTA_MS = 80;
 export const SPECTRUM_RMS_Y_MAX_MS2 = 160;
 export const SPECTRUM_RMS_Y_MIN_MS2 = 0.6;
 export const SPECTRUM_LOADING_LABEL = "Đang tải dữ liệu";
@@ -715,6 +715,7 @@ export const DEFAULT_ACCEL_TREND_MODE: AccelTrendMode = "rms";
 
 export type HoverTelemetrySnapshot = {
   ts: number;
+  telemetryUuid?: string;
   temp?: number;
   ax?: number;
   ay?: number;
