@@ -267,6 +267,17 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     return await this.mysql.execute('DELETE FROM device_datas WHERE device_id = ?', [deviceId]);
   }
 
+  async clearTelemetryDataBatch(deviceId: string, limit: number): Promise<number> {
+    if (!this.metadata.has(deviceId)) {
+      return 0;
+    }
+    if (!this.mysql) {
+      return 0;
+    }
+    const safeLimit = Math.max(1, Math.min(50_000, Math.floor(limit)));
+    return await this.mysql.execute(`DELETE FROM device_datas WHERE device_id = ? LIMIT ${safeLimit}`, [deviceId]);
+  }
+
   getMetadata(deviceId: string): DeviceMetadata | null {
     return this.metadata.get(deviceId) || null;
   }

@@ -390,6 +390,17 @@ export class DeviceService {
     return await this.repository.clearTelemetryData(normalizedDeviceId);
   }
 
+  async clearTelemetryDataBatchStrict(deviceId: string, limit: number): Promise<number | null> {
+    const normalizedDeviceId = this.normalizeOptionalText(deviceId);
+    if (!normalizedDeviceId) {
+      return null;
+    }
+    if (!this.repository.getMetadata(normalizedDeviceId)) {
+      return null;
+    }
+    return await this.repository.clearTelemetryDataBatch(normalizedDeviceId, limit);
+  }
+
   private matchesFilters(item: DeviceListItem, filters: DeviceListFilters): boolean {
     if (filters.status === 'online' && !item.online) {
       return false;

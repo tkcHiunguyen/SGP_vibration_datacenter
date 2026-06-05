@@ -59,6 +59,28 @@ export function registerRoutes({
   persistenceStatus,
 }: RegisterRoutesDeps): void {
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
+  type DeviceDataClearJob = {
+    jobId: string;
+    deviceId: string;
+    deviceName?: string;
+    status: 'queued' | 'running' | 'completed' | 'failed';
+    progress: number;
+    telemetryDeleted: number;
+    spectrumFramesDeleted: number;
+    spectrumFilesDeleted: number;
+    spectrumFileDeleteErrors: number;
+    error?: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string;
+  };
+  const dataClearJobs = new Map<string, DeviceDataClearJob>();
+  const dataClearJobsByDevice = new Map<string, string>();
+  const updateDataClearJob = (job: DeviceDataClearJob, patch: Partial<DeviceDataClearJob>) => {
+    Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+    dataClearJobs.set(job.jobId, { ...job });
+  };
+
   const deviceAxisLabelsSchema = z
     .object({
       ax: z.string().optional(),
@@ -2282,6 +2304,28 @@ export function registerRoutes({
     };
   });
 
+  app.get('/api/devices/:deviceId/data-clear-job', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+    const { deviceId } = z.object({ deviceId: z.string().min(1) }).parse(request.params);
+    const jobId = dataClearJobsByDevice.get(deviceId);
+    const job = jobId ? dataClearJobs.get(jobId) : null;
+    return { ok: true, data: job ?? null };
+  });
+
+  app.get('/api/device-data-clear-jobs/:jobId', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+    const { jobId } = z.object({ jobId: z.string().min(1) }).parse(request.params);
+    const job = dataClearJobs.get(jobId) ?? null;
+    if (!job) {
+      return reply.code(404).send({ ok: false, error: 'job_not_found' });
+    }
+    return { ok: true, data: job };
+  });
+
   app.delete('/api/devices/:deviceId/data', async (request, reply) => {
     const principal = requireRole(request, reply, 'admin');
     if (!principal) {
@@ -2295,44 +2339,73 @@ export function registerRoutes({
       return reply.code(404).send({ ok: false, error: 'device_not_found' });
     }
 
-    const telemetryDeleted = await deviceService.clearTelemetryDataStrict(deviceId);
-    if (telemetryDeleted === null) {
-      return reply.code(404).send({ ok: false, error: 'device_not_found' });
+    const activeJobId = dataClearJobsByDevice.get(deviceId);
+    const activeJob = activeJobId ? dataClearJobs.get(activeJobId) : null;
+    if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
+      return reply.code(202).send({ ok: true, data: activeJob });
     }
-    const spectrumPurge = await spectrumStorageService.purgeDeviceFrames(deviceId);
 
-    auditService.record({
-      action: 'device_data_clear',
+    const now = new Date().toISOString();
+    const job: DeviceDataClearJob = {
+      jobId: randomUUID(),
       deviceId,
-      commandId: 'n/a',
-      actor: principalActor(principal),
-      result: 'cleared',
-      metadata: {
-        targetResource: {
-          resourceType: 'device',
-          resourceId: deviceId,
-          resourceName: before.name,
-        },
-        afterSummary: summarize({
+      deviceName: before.name,
+      status: 'queued',
+      progress: 0,
+      telemetryDeleted: 0,
+      spectrumFramesDeleted: 0,
+      spectrumFilesDeleted: 0,
+      spectrumFileDeleteErrors: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    dataClearJobs.set(job.jobId, job);
+    dataClearJobsByDevice.set(deviceId, job.jobId);
+
+    void (async () => {
+      try {
+        updateDataClearJob(job, { status: 'running', progress: 1 });
+        let telemetryDeleted = 0;
+        for (;;) {
+          const deleted = await deviceService.clearTelemetryDataBatchStrict(deviceId, 10_000);
+          if (deleted === null || deleted <= 0) {
+            break;
+          }
+          telemetryDeleted += deleted;
+          updateDataClearJob(job, {
+            telemetryDeleted,
+            progress: Math.min(85, job.progress + 1),
+          });
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        updateDataClearJob(job, { progress: 90 });
+        const spectrumPurge = await spectrumStorageService.purgeDeviceFrames(deviceId);
+        updateDataClearJob(job, {
+          status: 'completed',
+          progress: 100,
           telemetryDeleted,
           spectrumFramesDeleted: spectrumPurge.framesDeleted,
           spectrumFilesDeleted: spectrumPurge.filesDeleted,
           spectrumFileDeleteErrors: spectrumPurge.fileDeleteErrors,
-        }),
-      },
-    });
+          completedAt: new Date().toISOString(),
+        });
+        auditService.record({
+          action: 'device_data_clear',
+          deviceId,
+          commandId: job.jobId,
+          actor: principalActor(principal),
+          result: 'cleared',
+          metadata: {
+            targetResource: { resourceType: 'device', resourceId: deviceId, resourceName: before.name },
+            afterSummary: summarize({ telemetryDeleted, ...spectrumPurge }),
+          },
+        });
+      } catch (error) {
+        updateDataClearJob(job, { status: 'failed', error: String(error) });
+      }
+    })();
 
-    return {
-      ok: true,
-      data: {
-        cleared: true,
-        deviceId,
-        telemetryDeleted,
-        spectrumFramesDeleted: spectrumPurge.framesDeleted,
-        spectrumFilesDeleted: spectrumPurge.filesDeleted,
-        spectrumFileDeleteErrors: spectrumPurge.fileDeleteErrors,
-      },
-    };
+    return reply.code(202).send({ ok: true, data: job });
   });
 
   app.post('/api/devices', async (request, reply) => {

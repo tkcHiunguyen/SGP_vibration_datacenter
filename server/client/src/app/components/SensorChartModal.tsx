@@ -1068,6 +1068,8 @@ export function SensorChartModal({
   const [clearDataConfirmMounted, setClearDataConfirmMounted] = useState(false);
   const [clearDataConfirmClosing, setClearDataConfirmClosing] = useState(false);
   const [clearingDeviceData, setClearingDeviceData] = useState(false);
+  const [dataClearJob, setDataClearJob] = useState<Record<string, unknown> | null>(null);
+  const dataClearJobActive = dataClearJob && (safeString(dataClearJob.status) === "queued" || safeString(dataClearJob.status) === "running");
   const [axisRenameTarget, setAxisRenameTarget] = useState<DeviceAxisKey | null>(null);
   const [axisRenameDraft, setAxisRenameDraft] = useState("");
   const [axisRenameSaving, setAxisRenameSaving] = useState(false);
@@ -1120,6 +1122,7 @@ export function SensorChartModal({
   const detailTileEntriesRef = useRef<Map<string, DetailTileCacheEntry>>(new Map());
   const detailTileRequestSeqRef = useRef(0);
   const statusHistoryRequestSeqRef = useRef(0);
+  const dataClearNotifiedJobIdRef = useRef<string | null>(null);
   const autoPresetLoadedSensorIdRef = useRef<string | null>(null);
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -1266,7 +1269,6 @@ export function SensorChartModal({
   const visualizeOverlay = modalLayout.viewportWidth < 1180;
 
   useEffect(() => {
-    setSpectrumYAxisMax(null);
     setTrendHoverTarget(null);
   }, [sensor?.id]);
   const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
@@ -1555,29 +1557,9 @@ export function SensorChartModal({
       }
 
       const payload = asRecord(asRecord(body).data);
-      const telemetryDeleted = Math.max(0, Math.floor(asFiniteNumber(payload.telemetryDeleted) ?? 0));
-      const spectrumFramesDeleted = Math.max(0, Math.floor(asFiniteNumber(payload.spectrumFramesDeleted) ?? 0));
-
-      setHoverSpectrumPoints(null);
-      setHoverSpectrumLoading(false);
-      setHoverSpectrumDebouncing(false);
-      setSpectrumPinnedTarget(null);
-      setHoverTelemetrySnapshot(null);
-      lastSpectrumHoverTsRef.current = null;
-      if (spectrumHoverTimerRef.current !== null) {
-        window.clearTimeout(spectrumHoverTimerRef.current);
-        spectrumHoverTimerRef.current = null;
-      }
-
-      onDeviceDataCleared?.(sensor.id);
-      onNotify?.({
-        type: "success",
-        title: "Đã xoá dữ liệu",
-        text: `${sensor.name || sensor.id}: ${telemetryDeleted} bản ghi telemetry, ${spectrumFramesDeleted} frame phổ.`,
-      });
-      closeClearDataConfirm({ force: true });
-      dataSummaryLoadedAtRef.current = 0;
-      void loadDeviceDataSummary({ silent: true });
+      setDataClearJob(payload);
+      onNotify?.({ type: "success", title: "Đã tạo job xoá", text: "Tiến độ hiển thị trong modal xoá." });
+      return;
     } catch (error) {
       onNotify?.({
         type: "warning",
@@ -1587,7 +1569,54 @@ export function SensorChartModal({
     } finally {
       setClearingDeviceData(false);
     }
-  }, [clearingDeviceData, closeClearDataConfirm, loadDeviceDataSummary, onDeviceDataCleared, onNotify, sensor]);
+  }, [clearingDeviceData, closeClearDataConfirm, onNotify, sensor]);
+
+  useEffect(() => {
+    setDataClearJob(null);
+  }, [sensor?.id]);
+
+  useEffect(() => {
+    if (!sensor) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const jobId = safeString(dataClearJob?.jobId || "");
+        const url = jobId
+          ? `/api/device-data-clear-jobs/${encodeURIComponent(jobId)}`
+          : `/api/devices/${encodeURIComponent(sensor.id)}/data-clear-job`;
+        const response = await fetch(url, { headers: { Accept: "application/json" } });
+        const body = await response.json().catch(() => ({}));
+        const job = asRecord(asRecord(body).data);
+        if (!cancelled && Object.keys(job).length > 0) {
+          setDataClearJob(job);
+          const status = safeString(job.status);
+          const currentJobId = safeString(job.jobId);
+          const active = status === "queued" || status === "running";
+          if (!active && currentJobId && dataClearNotifiedJobIdRef.current !== currentJobId) {
+            dataClearNotifiedJobIdRef.current = currentJobId;
+            if (status === "completed") {
+              onDeviceDataCleared?.(sensor.id);
+              onNotify?.({ type: "success", title: "Đã xoá dữ liệu", text: `${sensor.name || sensor.id}: job hoàn tất.` });
+              dataSummaryLoadedAtRef.current = 0;
+              void loadDeviceDataSummary({ silent: true });
+            } else if (status === "failed") {
+              onNotify?.({ type: "warning", title: "Job xoá thất bại", text: safeString(job.error || "unknown_error") });
+            }
+          }
+        }
+      } catch {
+        // keep polling
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [dataClearJob?.jobId, loadDeviceDataSummary, onDeviceDataCleared, onNotify, sensor]);
 
   useEffect(() => {
     if (!sensor || !dataSettingsOpen) {
@@ -2102,7 +2131,6 @@ export function SensorChartModal({
         spectrumHoverTimerRef.current = null;
       }
       spectrumRequestSeqRef.current += 1;
-      setSpectrumYAxisMax(null);
       setHoverSpectrumDebouncing(false);
       const nearestSnapshot = findNearestTelemetrySnapshot(target.timestampMs);
       const targetTelemetryUuid = target.telemetryUuid || nearestSnapshot?.telemetryUuid;
@@ -5161,7 +5189,8 @@ export function SensorChartModal({
         disableClose={clearingDeviceData}
         backdropClassName={`data-settings-modal-backdrop ${dataSettingsClosing ? "modal-closing" : "modal-open"}`}
         cardClassName={`data-settings-modal-card ${dataSettingsClosing ? "modal-closing" : "modal-open"}`}
-        footer={
+        footer={(
+          <>
 	          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
 	            <ConsoleButton
 	              variant="neutral"
@@ -5180,10 +5209,16 @@ export function SensorChartModal({
 		              disabled={clearingDeviceData}
 		            >
 	              <Trash2 size={14} strokeWidth={2.1} />
-	              {clearingDeviceData ? "Đang xoá..." : "Xoá dữ liệu"}
+	              {clearingDeviceData ? `Đang xoá ${Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}%` : "Xoá dữ liệu"}
 	            </ConsoleButton>
 	          </div>
-	        }
+                  {dataClearJob && (safeString(dataClearJob.status) === "queued" || safeString(dataClearJob.status) === "running") ? (
+                    <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>
+                      Job xoá: {Math.round(asFiniteNumber(dataClearJob.progress) ?? 0)}% · telemetry {Math.round(asFiniteNumber(dataClearJob.telemetryDeleted) ?? 0)}
+                    </div>
+                  ) : null}
+          </>
+	        )}
 	      >
 	        {dataSummaryLoading ? (
 	          <div
@@ -5367,7 +5402,7 @@ export function SensorChartModal({
       <Modal
         open={clearDataConfirmMounted}
         onClose={() => closeClearDataConfirm()}
-        title="Xoá dữ liệu thiết bị?"
+        title={dataClearJobActive ? "Đang xoá dữ liệu" : "Xoá dữ liệu thiết bị?"}
         width={440}
         zIndex={95}
         disableClose={clearingDeviceData}
@@ -5376,10 +5411,10 @@ export function SensorChartModal({
         footer={
           <>
             <ConsoleButton variant="neutral" size="sm" onClick={() => closeClearDataConfirm()} disabled={clearingDeviceData}>
-              Huỷ
+              Đóng
             </ConsoleButton>
-            <ConsoleButton variant="danger" size="sm" onClick={() => void clearDeviceData()} disabled={clearingDeviceData}>
-              {clearingDeviceData ? "Đang xoá..." : "Xoá dữ liệu"}
+            <ConsoleButton variant="danger" size="sm" onClick={() => void clearDeviceData()} disabled={clearingDeviceData || Boolean(dataClearJobActive)}>
+              {clearingDeviceData ? "Đang tạo job..." : dataClearJobActive ? `Đang xoá ${Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}%` : "Xoá dữ liệu"}
             </ConsoleButton>
           </>
         }
@@ -5392,6 +5427,16 @@ export function SensorChartModal({
           <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>
             Hành động này sẽ xoá telemetry và phổ đã lưu, không thể hoàn tác.
           </div>
+          {dataClearJobActive ? (
+            <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+              <div style={{ height: 8, borderRadius: 999, background: `${C.border}66`, overflow: "hidden" }}>
+                <div style={{ width: `${Math.max(0, Math.min(100, asFiniteNumber(dataClearJob?.progress) ?? 0))}%`, height: "100%", background: C.primary }} />
+              </div>
+              <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>
+                Tiến độ {Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}% · đã xoá {Math.round(asFiniteNumber(dataClearJob?.telemetryDeleted) ?? 0)} telemetry
+              </div>
+            </div>
+          ) : null}
         </div>
       </Modal>
     </>
