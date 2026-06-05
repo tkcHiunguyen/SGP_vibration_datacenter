@@ -14,6 +14,16 @@ const AXES: SpectrumAxis[] = ['x', 'y', 'z'];
 const DEFAULT_FRAME_FLUSH_MS = 700;
 const DEFAULT_MATCH_WINDOW_MS = 500;
 const DEFAULT_LOOKUP_MAX_DELTA_MS = 1200;
+const MYSQL_RETRYABLE_ERRORS = new Set(['ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK']);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableMysqlError(error: unknown): boolean {
+  const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
+  return MYSQL_RETRYABLE_ERRORS.has(code);
+}
 
 type PendingSpectrumFrame = {
   key: string;
@@ -360,6 +370,63 @@ export class SpectrumStorageService {
     };
   }
 
+  async countDeviceFramesUntil(deviceId: string, cutoffAt: string): Promise<number> {
+    const targetDeviceId = deviceId.trim();
+    if (!this.mysql || !targetDeviceId) {
+      return 0;
+    }
+    const rows = await this.mysql.query<SpectrumSummaryRow>(
+      `SELECT COUNT(*) AS total_frames, COALESCE(SUM(file_size_bytes), 0) AS total_bytes
+         FROM device_spectrum_frames
+        WHERE device_id = ? AND captured_at <= ?`,
+      [targetDeviceId, cutoffAt],
+    );
+    return Math.max(0, Math.floor(Number(rows[0]?.total_frames ?? 0)));
+  }
+
+  async purgeDeviceFramesBatchUntil(deviceId: string, cutoffAt: string, limit: number): Promise<SpectrumFramePurgeResult> {
+    const targetDeviceId = deviceId.trim();
+    if (!this.mysql || !targetDeviceId) {
+      return { framesDeleted: 0, filesDeleted: 0, fileDeleteErrors: 0 };
+    }
+    const safeLimit = Math.max(1, Math.min(10_000, Math.floor(limit)));
+    const frameRows = await this.mysql.query<SpectrumFrameRow>(
+      `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
+         FROM device_spectrum_frames
+        WHERE device_id = ? AND captured_at <= ?
+        ORDER BY captured_at ASC, id ASC
+        LIMIT ${safeLimit}`,
+      [targetDeviceId, cutoffAt],
+    );
+    if (frameRows.length === 0) {
+      return { framesDeleted: 0, filesDeleted: 0, fileDeleteErrors: 0 };
+    }
+    const ids = frameRows.map((row) => row.id).filter((id) => Number.isInteger(id) && id > 0);
+    if (ids.length === 0) {
+      return { framesDeleted: 0, filesDeleted: 0, fileDeleteErrors: 0 };
+    }
+    const placeholders = ids.map(() => '?').join(',');
+    const framesDeleted = await this.mysql.execute(`DELETE FROM device_spectrum_frames WHERE id IN (${placeholders})`, ids);
+    let filesDeleted = 0;
+    let fileDeleteErrors = 0;
+    for (const row of frameRows) {
+      const storagePath = typeof row.storage_path === 'string' ? row.storage_path.trim() : '';
+      if (!storagePath) {
+        continue;
+      }
+      try {
+        await unlink(join(this.baseDir, storagePath));
+        filesDeleted += 1;
+      } catch (error) {
+        const errorCode = error && typeof error === 'object' && 'code' in error ? (error as { code?: string }).code : undefined;
+        if (errorCode !== 'ENOENT') {
+          fileDeleteErrors += 1;
+        }
+      }
+    }
+    return { framesDeleted, filesDeleted, fileDeleteErrors };
+  }
+
   async summarizeDeviceFrames(deviceId: string): Promise<SpectrumFrameSummary> {
     const targetDeviceId = deviceId.trim();
     if (!this.mysql || !targetDeviceId) {
@@ -564,8 +631,7 @@ export class SpectrumStorageService {
 
     const deviceDataId = await this.resolveDeviceDataId(frame.deviceId, frame.telemetryUuid);
 
-    await this.mysql.execute(
-      `INSERT INTO device_spectrum_frames (
+    const persistSql = `INSERT INTO device_spectrum_frames (
          device_id,
          device_data_id,
          captured_at,
@@ -600,28 +666,39 @@ export class SpectrumStorageService {
          peak_y_freq_hz = VALUES(peak_y_freq_hz),
          peak_y_amplitude = VALUES(peak_y_amplitude),
          peak_z_freq_hz = VALUES(peak_z_freq_hz),
-         peak_z_amplitude = VALUES(peak_z_amplitude)`,
-      [
-        frame.deviceId,
-        deviceDataId,
-        capturedAt,
-        frame.telemetryUuid ?? null,
-        relativePath,
-        compressed.byteLength,
-        checksumSha256,
-        binCount,
-        sampleRateHz ?? null,
-        binHz ?? null,
-        magnitudeUnit ?? null,
-        axes.x?.peakFrequencyHz ?? null,
-        axes.x?.peakAmplitude ?? null,
-        axes.y?.peakFrequencyHz ?? null,
-        axes.y?.peakAmplitude ?? null,
-        axes.z?.peakFrequencyHz ?? null,
-        axes.z?.peakAmplitude ?? null,
-        new Date().toISOString(),
-      ],
-    );
+         peak_z_amplitude = VALUES(peak_z_amplitude)`;
+    const persistParams = [
+      frame.deviceId,
+      deviceDataId,
+      capturedAt,
+      frame.telemetryUuid ?? null,
+      relativePath,
+      compressed.byteLength,
+      checksumSha256,
+      binCount,
+      sampleRateHz ?? null,
+      binHz ?? null,
+      magnitudeUnit ?? null,
+      axes.x?.peakFrequencyHz ?? null,
+      axes.x?.peakAmplitude ?? null,
+      axes.y?.peakFrequencyHz ?? null,
+      axes.y?.peakAmplitude ?? null,
+      axes.z?.peakFrequencyHz ?? null,
+      axes.z?.peakAmplitude ?? null,
+      new Date().toISOString(),
+    ];
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        await this.mysql.execute(persistSql, persistParams);
+        return;
+      } catch (error) {
+        if (attempt >= 4 || !isRetryableMysqlError(error)) {
+          throw error;
+        }
+        await sleep(120 * attempt);
+      }
+    }
   }
 
   async exportFrames(deviceId: string, from: string, to: string): Promise<SpectrumArchiveFrame[]> {

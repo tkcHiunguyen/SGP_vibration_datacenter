@@ -278,6 +278,28 @@ export class InMemoryDeviceRepository implements DeviceRepository {
     return await this.mysql.execute(`DELETE FROM device_datas WHERE device_id = ? LIMIT ${safeLimit}`, [deviceId]);
   }
 
+  async clearTelemetryDataBatchUntil(deviceId: string, cutoffAt: string, limit: number): Promise<number> {
+    if (!this.metadata.has(deviceId) || !this.mysql) {
+      return 0;
+    }
+    const safeLimit = Math.max(1, Math.min(50_000, Math.floor(limit)));
+    return await this.mysql.execute(
+      `DELETE FROM device_datas WHERE device_id = ? AND received_at <= ? ORDER BY received_at ASC, id ASC LIMIT ${safeLimit}`,
+      [deviceId, cutoffAt],
+    );
+  }
+
+  async countTelemetryDataUntil(deviceId: string, cutoffAt: string): Promise<number> {
+    if (!this.metadata.has(deviceId) || !this.mysql) {
+      return 0;
+    }
+    const rows = await this.mysql.query<CountRow>(
+      'SELECT COUNT(*) AS total FROM device_datas WHERE device_id = ? AND received_at <= ?',
+      [deviceId, cutoffAt],
+    );
+    return toCount(rows[0]);
+  }
+
   getMetadata(deviceId: string): DeviceMetadata | null {
     return this.metadata.get(deviceId) || null;
   }

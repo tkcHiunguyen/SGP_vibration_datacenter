@@ -65,6 +65,10 @@ export function registerRoutes({
     deviceName?: string;
     status: 'queued' | 'running' | 'completed' | 'failed';
     progress: number;
+    cutoffAt: string;
+    totalRows: number;
+    telemetryTotal: number;
+    spectrumTotal: number;
     telemetryDeleted: number;
     spectrumFramesDeleted: number;
     spectrumFilesDeleted: number;
@@ -2346,12 +2350,22 @@ export function registerRoutes({
     }
 
     const now = new Date().toISOString();
+    const [telemetryTotalRaw, spectrumTotal] = await Promise.all([
+      deviceService.countTelemetryDataUntilStrict(deviceId, now),
+      spectrumStorageService.countDeviceFramesUntil(deviceId, now),
+    ]);
+    const telemetryTotal = telemetryTotalRaw ?? 0;
+    const totalRows = telemetryTotal + spectrumTotal;
     const job: DeviceDataClearJob = {
       jobId: randomUUID(),
       deviceId,
       deviceName: before.name,
       status: 'queued',
       progress: 0,
+      cutoffAt: now,
+      totalRows,
+      telemetryTotal,
+      spectrumTotal,
       telemetryDeleted: 0,
       spectrumFramesDeleted: 0,
       spectrumFilesDeleted: 0,
@@ -2364,29 +2378,48 @@ export function registerRoutes({
 
     void (async () => {
       try {
-        updateDataClearJob(job, { status: 'running', progress: 1 });
+        updateDataClearJob(job, { status: 'running', progress: totalRows > 0 ? 1 : 100 });
         let telemetryDeleted = 0;
+        let spectrumFramesDeleted = 0;
+        let spectrumFilesDeleted = 0;
+        let spectrumFileDeleteErrors = 0;
+        const updateProgress = () => {
+          const deletedRows = telemetryDeleted + spectrumFramesDeleted;
+          updateDataClearJob(job, {
+            telemetryDeleted,
+            spectrumFramesDeleted,
+            spectrumFilesDeleted,
+            spectrumFileDeleteErrors,
+            progress: totalRows > 0 ? Math.min(99, Math.floor((deletedRows / totalRows) * 100)) : 100,
+          });
+        };
         for (;;) {
-          const deleted = await deviceService.clearTelemetryDataBatchStrict(deviceId, 10_000);
+          const deleted = await deviceService.clearTelemetryDataBatchUntilStrict(deviceId, now, 5_000);
           if (deleted === null || deleted <= 0) {
             break;
           }
           telemetryDeleted += deleted;
-          updateDataClearJob(job, {
-            telemetryDeleted,
-            progress: Math.min(85, job.progress + 1),
-          });
-          await new Promise((resolve) => setTimeout(resolve, 25));
+          updateProgress();
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        updateDataClearJob(job, { progress: 90 });
-        const spectrumPurge = await spectrumStorageService.purgeDeviceFrames(deviceId);
+        for (;;) {
+          const spectrumPurge = await spectrumStorageService.purgeDeviceFramesBatchUntil(deviceId, now, 1_000);
+          if (spectrumPurge.framesDeleted <= 0) {
+            break;
+          }
+          spectrumFramesDeleted += spectrumPurge.framesDeleted;
+          spectrumFilesDeleted += spectrumPurge.filesDeleted;
+          spectrumFileDeleteErrors += spectrumPurge.fileDeleteErrors;
+          updateProgress();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
         updateDataClearJob(job, {
           status: 'completed',
           progress: 100,
           telemetryDeleted,
-          spectrumFramesDeleted: spectrumPurge.framesDeleted,
-          spectrumFilesDeleted: spectrumPurge.filesDeleted,
-          spectrumFileDeleteErrors: spectrumPurge.fileDeleteErrors,
+          spectrumFramesDeleted,
+          spectrumFilesDeleted,
+          spectrumFileDeleteErrors,
           completedAt: new Date().toISOString(),
         });
         auditService.record({
@@ -2397,7 +2430,7 @@ export function registerRoutes({
           result: 'cleared',
           metadata: {
             targetResource: { resourceType: 'device', resourceId: deviceId, resourceName: before.name },
-            afterSummary: summarize({ telemetryDeleted, ...spectrumPurge }),
+            afterSummary: summarize({ telemetryDeleted, spectrumFramesDeleted, spectrumFilesDeleted, spectrumFileDeleteErrors }),
           },
         });
       } catch (error) {

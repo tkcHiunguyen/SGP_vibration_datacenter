@@ -56,6 +56,14 @@ class FakeDeviceRepository implements DeviceRepository {
     return this.metadata.has(deviceId) ? 0 : 0;
   }
 
+  async clearTelemetryDataBatchUntil(deviceId: string, _cutoffAt: string, _limit: number): Promise<number> {
+    return this.metadata.has(deviceId) ? 0 : 0;
+  }
+
+  async countTelemetryDataUntil(deviceId: string, _cutoffAt: string): Promise<number> {
+    return this.metadata.has(deviceId) ? 0 : 0;
+  }
+
   getMetadata(deviceId: string): DeviceMetadata | null {
     return this.metadata.get(deviceId) ?? null;
   }

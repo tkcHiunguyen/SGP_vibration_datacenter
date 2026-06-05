@@ -32,6 +32,8 @@ export interface DeviceRepository {
   removeMetadata(deviceId: string): Promise<DeviceRemovalResult | null>;
   clearTelemetryData(deviceId: string): Promise<number>;
   clearTelemetryDataBatch(deviceId: string, limit: number): Promise<number>;
+  clearTelemetryDataBatchUntil(deviceId: string, cutoffAt: string, limit: number): Promise<number>;
+  countTelemetryDataUntil(deviceId: string, cutoffAt: string): Promise<number>;
   getMetadata(deviceId: string): DeviceMetadata | null;
   listMetadata(): DeviceMetadata[];
 
