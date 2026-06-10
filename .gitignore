@@ -4,6 +4,7 @@
 # Local tooling artifacts
 .playwright-cli/
 .vscode/
+.codegraph/
 
 # Logs
 *.log
@@ -52,6 +53,9 @@ server/data/telemetry/
 server/storage/
 server/uploads/
 output/
+
+# Local/reference documents not suitable for public source control
+ISO-20816-3-2022.pdf
 
 # Local AI memory/cache data
 .mem0-local/
