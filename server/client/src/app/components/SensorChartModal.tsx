@@ -886,6 +886,7 @@ function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySn
   return {
     ts,
     telemetryUuid: point.telemetryUuid,
+    vibrationAvailable: point.vibrationAvailable,
     temp:
       typeof point.temperature === "number" && Number.isFinite(point.temperature)
         ? Number(point.temperature.toFixed(2))
@@ -1012,7 +1013,7 @@ const FFT_AXIS_COLORS: Record<DeviceAxisKey, string> = {
 
 type FftAxisDisplayItem = (typeof FFT_AXIS_DISPLAY_ORDER)[number];
 
-export function SensorChartModal({
+export const SensorChartModal = React.memo(function SensorChartModal({
   sensor,
   telemetryPoints = [],
   telemetryLoading = false,
@@ -1271,7 +1272,9 @@ export function SensorChartModal({
   useEffect(() => {
     setTrendHoverTarget(null);
   }, [sensor?.id]);
-  const visualizeSidebarWidth = visualizeOverlay ? "min(520px, calc(100vw - 48px))" : "min(35vw, 520px)";
+  const visualizeSidebarWidth = visualizeOverlay
+    ? "min(var(--dc-chart-control-max), calc(100vw - 48px))"
+    : "min(35vw, var(--dc-chart-control-max))";
 
   useEffect(() => {
     if (sensor) { const t = setTimeout(() => setVisible(true), 10); return () => clearTimeout(t); }
@@ -1582,7 +1585,7 @@ export function SensorChartModal({
     let cancelled = false;
     const poll = async () => {
       try {
-        const jobId = safeString(dataClearJob?.jobId || "");
+        const jobId = asNonEmptyString(dataClearJob?.jobId) ?? "";
         const url = jobId
           ? `/api/device-data-clear-jobs/${encodeURIComponent(jobId)}`
           : `/api/devices/${encodeURIComponent(sensor.id)}/data-clear-job`;
@@ -2102,6 +2105,20 @@ export function SensorChartModal({
         return;
       }
       const nearestSnapshot = findNearestTelemetrySnapshot(target.timestampMs);
+      if (nearestSnapshot?.vibrationAvailable === false) {
+        setTrendHoverTarget({ ...target, timestampMs: nearestSnapshot.ts, telemetryUuid: undefined });
+        setHoverTelemetrySnapshot(nearestSnapshot);
+        if (spectrumHoverTimerRef.current !== null) {
+          window.clearTimeout(spectrumHoverTimerRef.current);
+          spectrumHoverTimerRef.current = null;
+        }
+        spectrumRequestSeqRef.current += 1;
+        spectrumAbortRef.current?.abort();
+        setHoverSpectrumDebouncing(false);
+        setHoverSpectrumLoading(false);
+        setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
+        return;
+      }
       const targetTelemetryUuid = target.telemetryUuid || nearestSnapshot?.telemetryUuid;
       const targetTimestampMs = nearestSnapshot?.telemetryUuid ? nearestSnapshot.ts : target.timestampMs;
       setTrendHoverTarget({ ...target, timestampMs: targetTimestampMs, telemetryUuid: targetTelemetryUuid });
@@ -2133,6 +2150,15 @@ export function SensorChartModal({
       spectrumRequestSeqRef.current += 1;
       setHoverSpectrumDebouncing(false);
       const nearestSnapshot = findNearestTelemetrySnapshot(target.timestampMs);
+      if (nearestSnapshot?.vibrationAvailable === false) {
+        const normalizedTarget = { ...target, timestampMs: nearestSnapshot.ts, telemetryUuid: undefined };
+        setSpectrumPinnedTarget(normalizedTarget);
+        setTrendHoverTarget(normalizedTarget);
+        setHoverTelemetrySnapshot(nearestSnapshot);
+        setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
+        setHoverSpectrumLoading(false);
+        return;
+      }
       const targetTelemetryUuid = target.telemetryUuid || nearestSnapshot?.telemetryUuid;
       const targetTimestampMs = nearestSnapshot?.telemetryUuid ? nearestSnapshot.ts : target.timestampMs;
       const normalizedTarget = { ...target, timestampMs: targetTimestampMs, telemetryUuid: targetTelemetryUuid };
@@ -5441,4 +5467,4 @@ export function SensorChartModal({
       </Modal>
     </>
   );
-}
+});

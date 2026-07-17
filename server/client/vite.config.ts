@@ -27,7 +27,10 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
-      '/socket.io': 'http://localhost:8080',
+      '/socket.io': {
+        target: 'http://localhost:8080',
+        ws: true,
+      },
     },
   },
   resolve: {

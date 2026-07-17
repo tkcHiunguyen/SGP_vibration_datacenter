@@ -39,6 +39,7 @@ interface MainPanelProps {
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastItem, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onChartClosed?: (deviceId: string) => void;
   onSensorUpdated?: (sensor: Sensor) => void;
 }
 
@@ -51,6 +52,7 @@ export function MainPanel({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onChartClosed,
   onSensorUpdated,
 }: MainPanelProps) {
   const { C } = useTheme();
@@ -72,12 +74,14 @@ export function MainPanel({
     }}>
       {isDashboard ? (
         <div style={{
+          width: "min(100%, var(--dc-content-max))",
+          margin: "0 auto",
           flex: 1,
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          padding: "0 26px 32px",
+          padding: "0 var(--dc-page-gutter) var(--dc-page-bottom)",
         }}>
           <DeviceManagement
             sensors={sensors}
@@ -87,6 +91,7 @@ export function MainPanel({
             onRequestTelemetryHistory={onRequestTelemetryHistory}
             onNotify={onNotify}
             onDeviceDataCleared={onDeviceDataCleared}
+            onChartClosed={onChartClosed}
             onSensorUpdated={onSensorUpdated}
           />
         </div>
@@ -95,7 +100,7 @@ export function MainPanel({
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: "22px 26px 32px",
+            padding: "22px var(--dc-page-gutter) var(--dc-page-bottom)",
             scrollbarWidth: "thin",
             scrollbarColor: `${C.scrollbar} transparent`,
           }}

@@ -8,7 +8,8 @@ import { launch as launchChrome } from 'chrome-launcher';
 const OUTPUT_DIR = resolve(process.cwd(), 'output/perf/ux-delay');
 const DEFAULT_URL = 'http://127.0.0.1:8080/app/';
 const DEFAULT_RUNS = 5;
-const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
+const DEFAULT_VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
+const CHROME_DURATION_METRICS = ['TaskDuration', 'ScriptDuration', 'LayoutDuration', 'RecalcStyleDuration'];
 const SELECTORS = {
   deviceCard: '[data-ux="device-card"]',
   deviceSearch: '[data-ux="device-search"]',
@@ -25,11 +26,29 @@ function parseArgs(argv) {
     url: DEFAULT_URL,
     runs: DEFAULT_RUNS,
     startServer: false,
+    screenshot: false,
+    profileReact: false,
+    collectGarbage: false,
+    observeMs: 0,
+    width: DEFAULT_VIEWPORT.width,
+    height: DEFAULT_VIEWPORT.height,
   };
 
   for (const arg of argv) {
     if (arg === '--start-server') {
       args.startServer = true;
+      continue;
+    }
+    if (arg === '--screenshot') {
+      args.screenshot = true;
+      continue;
+    }
+    if (arg === '--profile-react') {
+      args.profileReact = true;
+      continue;
+    }
+    if (arg === '--collect-garbage') {
+      args.collectGarbage = true;
       continue;
     }
     if (arg.startsWith('--url=')) {
@@ -42,9 +61,30 @@ function parseArgs(argv) {
         args.runs = Math.floor(parsed);
       }
     }
+    if (arg.startsWith('--width=')) {
+      const parsed = Number(arg.slice('--width='.length));
+      if (Number.isFinite(parsed) && parsed >= 320) args.width = Math.floor(parsed);
+    }
+    if (arg.startsWith('--height=')) {
+      const parsed = Number(arg.slice('--height='.length));
+      if (Number.isFinite(parsed) && parsed >= 320) args.height = Math.floor(parsed);
+    }
+    if (arg.startsWith('--observe-ms=')) {
+      const parsed = Number(arg.slice('--observe-ms='.length));
+      if (Number.isFinite(parsed) && parsed >= 0) args.observeMs = Math.floor(parsed);
+    }
   }
 
   return args;
+}
+
+function enableReactProfiler(url, enabled) {
+  if (!enabled) {
+    return url;
+  }
+  const target = new URL(url);
+  target.searchParams.set('perf', '1');
+  return target.toString();
 }
 
 function percentile(values, p) {
@@ -104,7 +144,7 @@ async function maybeStartServer(url, enabled) {
     return null;
   }
 
-  const child = spawn('pnpm', ['-C', 'server', 'start:prod'], {
+  const child = spawn('pnpm', ['-C', 'server', 'start'], {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -178,6 +218,31 @@ async function setSearchValue(page, value) {
 async function installPageInstrumentation(page) {
   await page.evaluateOnNewDocument(() => {
     window.__uxLongTasks = [];
+    window.__uxReactDevtoolsCommits = [];
+
+    // React calls this hook in both benchmark targets, so commit counts remain
+    // comparable even when only the current app enables the React Profiler.
+    const reactDevtoolsHook = {
+      supportsFiber: true,
+      renderers: new Map(),
+      inject(renderer) {
+        const id = this.renderers.size + 1;
+        this.renderers.set(id, renderer);
+        return id;
+      },
+      onCommitFiberRoot(rendererId) {
+        if (window.__uxReactDevtoolsCommits.length < 10_000) {
+          window.__uxReactDevtoolsCommits.push({ rendererId, at: performance.now() });
+        }
+      },
+      onPostCommitFiberRoot() {},
+      onCommitFiberUnmount() {},
+    };
+    Object.defineProperty(window, '__REACT_DEVTOOLS_GLOBAL_HOOK__', {
+      configurable: true,
+      value: reactDevtoolsHook,
+    });
+
     try {
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
@@ -207,7 +272,17 @@ async function collectBrowserStats(page) {
     const navigation = performance.getEntriesByType('navigation')[0];
     const apiDevices = resources.filter((entry) => entry.name.includes('/api/devices?limit=500')).at(-1) || null;
     const telemetry = resources.filter((entry) => /\/api\/devices\/.+\/telemetry\?/.test(entry.name));
+    const reactProfile = Array.isArray(window.__sgpDashboardProfile) ? window.__sgpDashboardProfile : [];
+    const devtoolsCommits = Array.isArray(window.__uxReactDevtoolsCommits) ? window.__uxReactDevtoolsCommits : [];
+    const memory = performance.memory
+      ? {
+          usedJSHeapSize: performance.memory.usedJSHeapSize,
+          totalJSHeapSize: performance.memory.totalJSHeapSize,
+          jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
+        }
+      : null;
     return {
+      visibilityState: document.visibilityState,
       navigation: navigation
         ? {
             domInteractive: navigation.domInteractive,
@@ -223,15 +298,111 @@ async function collectBrowserStats(page) {
         transferSize: entry.transferSize,
       })),
       longTasks: window.__uxLongTasks || [],
+      memory,
+      reactProfile: {
+        commits: reactProfile.length,
+        totalActualDuration: reactProfile.reduce((sum, entry) => sum + (Number(entry.actualDuration) || 0), 0),
+        maxActualDuration: reactProfile.reduce((max, entry) => Math.max(max, Number(entry.actualDuration) || 0), 0),
+        devtoolsCommits: devtoolsCommits.length,
+      },
     };
   });
 }
 
-async function runSingleBenchmark(browser, url, runIndex) {
+async function collectGarbage(page, enabled) {
+  if (!enabled) {
+    return;
+  }
+  const session = await page.target().createCDPSession();
+  try {
+    await session.send('HeapProfiler.collectGarbage');
+  } finally {
+    await session.detach();
+  }
+}
+
+function createStreamObservation(before, after, durationMs, beforeChromeMetrics, afterChromeMetrics) {
+  const beforeHeap = before.memory?.usedJSHeapSize;
+  const afterHeap = after.memory?.usedJSHeapSize;
+  return {
+    durationMs,
+    heapBeforeBytes: typeof beforeHeap === 'number' ? beforeHeap : null,
+    heapAfterBytes: typeof afterHeap === 'number' ? afterHeap : null,
+    heapDeltaBytes: typeof beforeHeap === 'number' && typeof afterHeap === 'number'
+      ? afterHeap - beforeHeap
+      : null,
+    profilerCommits: after.reactProfile.commits - before.reactProfile.commits,
+    profilerActualDuration: after.reactProfile.totalActualDuration - before.reactProfile.totalActualDuration,
+    devtoolsCommits: after.reactProfile.devtoolsCommits - before.reactProfile.devtoolsCommits,
+    longTaskCount: after.longTasks.length - before.longTasks.length,
+    longTaskDuration: after.longTasks
+      .slice(before.longTasks.length)
+      .reduce((sum, task) => sum + (Number(task.duration) || 0), 0),
+    chromeDurationMs: Object.fromEntries(
+      CHROME_DURATION_METRICS.map((name) => [
+        name,
+        Number.isFinite(beforeChromeMetrics?.[name]) && Number.isFinite(afterChromeMetrics?.[name])
+          ? (afterChromeMetrics[name] - beforeChromeMetrics[name]) * 1000
+          : null,
+      ]),
+    ),
+  };
+}
+
+async function runSingleBenchmark(browser, url, runIndex, viewport, screenshotPath, observeMs, collectGarbageBeforeStats) {
   const page = await browser.newPage();
-  await page.setViewport(VIEWPORT);
+  const socketFrames = {
+    received: 0,
+    sent: 0,
+    telemetry: 0,
+    spectrum: 0,
+    heartbeat: 0,
+    samples: { telemetry: [], spectrum: [], heartbeat: [] },
+  };
+  const consoleErrors = [];
+  let networkSession = null;
+  await page.setViewport(viewport);
   await page.setCacheEnabled(false);
   await installPageInstrumentation(page);
+  page.on('console', (message) => {
+    if (message.type() === 'error' && consoleErrors.length < 50) {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => {
+    if (consoleErrors.length < 50) {
+      consoleErrors.push(error.message);
+    }
+  });
+
+  try {
+    networkSession = await page.target().createCDPSession();
+    await networkSession.send('Network.enable');
+    const countSocketFrame = (frame, direction) => {
+      socketFrames[direction] += 1;
+      const payload = frame?.payloadData;
+      if (typeof payload !== 'string') return;
+      const recordSample = (kind) => {
+        if (socketFrames.samples[kind].length < 2) {
+          socketFrames.samples[kind].push(payload.slice(0, 800));
+        }
+      };
+      if (payload.includes('telemetry:spectrum')) {
+        socketFrames.spectrum += 1;
+        recordSample('spectrum');
+      } else if (payload.includes('device:heartbeat')) {
+        socketFrames.heartbeat += 1;
+        recordSample('heartbeat');
+      } else if (payload.includes('telemetry')) {
+        socketFrames.telemetry += 1;
+        recordSample('telemetry');
+      }
+    };
+    networkSession.on('Network.webSocketFrameReceived', ({ response }) => countSocketFrame(response, 'received'));
+    networkSession.on('Network.webSocketFrameSent', ({ response }) => countSocketFrame(response, 'sent'));
+  } catch {
+    networkSession = null;
+  }
 
   const interactions = {};
   const skipped = [];
@@ -241,13 +412,24 @@ async function runSingleBenchmark(browser, url, runIndex) {
   try {
     const appReady = await measure('dashboardReady', async () => {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.bringToFront();
       await page.waitForSelector(SELECTORS.deviceCard, { visible: true, timeout: 30_000 });
       await waitForPaint(page);
     });
     interactions[appReady.name] = appReady.ms;
 
+    // Effects register after the first paint. Let them subscribe before
+    // simulating the foreground transition used by headless Chrome.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+
     initialCardCount = await countCards(page);
     firstDevice = await getFirstDevice(page);
+    if (screenshotPath) {
+      // Device cards use a short staggered entrance; capture after it has settled.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 450));
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+    }
 
     if (firstDevice.id) {
       const searchExact = await measure('searchExactDevice', async () => {
@@ -281,18 +463,24 @@ async function runSingleBenchmark(browser, url, runIndex) {
       skipped.push('clearSearch');
     }
 
-    const filterOnline = await measure('filterOnline', async () => {
-      await page.click(SELECTORS.filterOnline);
-      await waitForPaint(page);
-    });
-    interactions[filterOnline.name] = filterOnline.ms;
+    const hasFilterControls = Boolean(await page.$(SELECTORS.filterOnline)) && Boolean(await page.$(SELECTORS.filterAll));
+    if (hasFilterControls) {
+      const filterOnline = await measure('filterOnline', async () => {
+        await page.click(SELECTORS.filterOnline);
+        await waitForPaint(page);
+      });
+      interactions[filterOnline.name] = filterOnline.ms;
 
-    const filterAll = await measure('filterAll', async () => {
-      await page.click(SELECTORS.filterAll);
-      await page.waitForSelector(SELECTORS.deviceCard, { visible: true, timeout: 10_000 });
-      await waitForPaint(page);
-    });
-    interactions[filterAll.name] = filterAll.ms;
+      const filterAll = await measure('filterAll', async () => {
+        await page.click(SELECTORS.filterAll);
+        await page.waitForSelector(SELECTORS.deviceCard, { visible: true, timeout: 10_000 });
+        await waitForPaint(page);
+      });
+      interactions[filterAll.name] = filterAll.ms;
+    } else {
+      skipped.push('filterOnline');
+      skipped.push('filterAll');
+    }
 
     const pageSizeOptions = await page.$$eval(`${SELECTORS.pageSizeSelect} option`, (options) =>
       options.map((option) => option.value),
@@ -360,18 +548,40 @@ async function runSingleBenchmark(browser, url, runIndex) {
     });
     interactions[openChartWarm.name] = openChartWarm.ms;
 
+    await collectGarbage(page, collectGarbageBeforeStats);
+    const statsBeforeObservation = observeMs > 0 ? await collectBrowserStats(page) : null;
+    const chromeMetricsBeforeObservation = observeMs > 0 ? await page.metrics() : null;
+    if (observeMs > 0) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, observeMs));
+    }
+    await collectGarbage(page, collectGarbageBeforeStats);
     const browserStats = await collectBrowserStats(page);
+    const chromeMetricsAfterObservation = observeMs > 0 ? await page.metrics() : null;
+    browserStats.socketFrames = socketFrames;
+    browserStats.consoleErrors = consoleErrors;
+    const streamObservation = statsBeforeObservation
+      ? createStreamObservation(
+        statsBeforeObservation,
+        browserStats,
+        observeMs,
+        chromeMetricsBeforeObservation,
+        chromeMetricsAfterObservation,
+      )
+      : null;
 
     return {
       run: runIndex,
-      viewport: VIEWPORT,
+      viewport,
       initialCardCount,
       firstDevice,
+      screenshotPath: screenshotPath || null,
       interactions,
       skipped,
       browserStats,
+      streamObservation,
     };
   } finally {
+    await networkSession?.detach().catch(() => undefined);
     await page.close();
   }
 }
@@ -390,27 +600,46 @@ function printSummary(summary) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const server = await maybeStartServer(args.url, args.startServer);
+  const benchmarkUrl = enableReactProfiler(args.url, args.profileReact);
+  const viewport = { width: args.width, height: args.height, deviceScaleFactor: 1 };
+  const screenshotPath = args.screenshot
+    ? resolve(OUTPUT_DIR, `dashboard-${viewport.width}x${viewport.height}.png`)
+    : undefined;
+  const server = await maybeStartServer(benchmarkUrl, args.startServer);
   let chrome;
   let browser;
 
   try {
+    if (screenshotPath) {
+      await mkdir(OUTPUT_DIR, { recursive: true });
+    }
     chrome = await launchChrome({
       chromeFlags: [
         '--headless=new',
         '--no-sandbox',
         '--disable-dev-shm-usage',
-        `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        `--window-size=${viewport.width},${viewport.height}`,
       ],
     });
     browser = await puppeteer.connect({
       browserURL: `http://127.0.0.1:${chrome.port}`,
-      defaultViewport: VIEWPORT,
+      defaultViewport: viewport,
     });
 
     const runs = [];
     for (let i = 1; i <= args.runs; i += 1) {
-      runs.push(await runSingleBenchmark(browser, args.url, i));
+      runs.push(await runSingleBenchmark(
+        browser,
+        benchmarkUrl,
+        i,
+        viewport,
+        i === 1 ? screenshotPath : undefined,
+        args.observeMs,
+        args.collectGarbage,
+      ));
     }
 
     const metricNames = [...new Set(runs.flatMap((run) => Object.keys(run.interactions)))];
@@ -429,7 +658,10 @@ async function main() {
     const longTasks = runs.flatMap((run) => run.browserStats.longTasks || []);
     const result = {
       generatedAt: new Date().toISOString(),
-      url: args.url,
+      url: benchmarkUrl,
+      profileReact: args.profileReact,
+      collectGarbage: args.collectGarbage,
+      observeMs: args.observeMs,
       runs,
       metrics,
       api: {

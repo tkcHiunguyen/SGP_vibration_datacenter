@@ -97,9 +97,9 @@ export function getChartModalLayout(): ChartModalLayout {
   const narrowWidth = viewportWidth < 1500;
   const compactWidth = viewportWidth < 1280;
   const baseChartHeight = tightHeight
-    ? 98
+    ? 112
     : compactHeight
-      ? 138
+      ? 164
       : midHeight
         ? 138
         : scaledDesktopHeight
@@ -107,9 +107,9 @@ export function getChartModalLayout(): ChartModalLayout {
           : 164;
   const baseOverviewHeight = 40;
   const baseSpectrumHeight = tightHeight
-    ? 70
+    ? 84
     : compactHeight
-      ? 125
+      ? 146
       : midHeight
         ? 102
         : scaledDesktopHeight
@@ -118,13 +118,17 @@ export function getChartModalLayout(): ChartModalLayout {
   const verticalFill = viewportWidth >= 900
     ? Math.max(0, Math.min(80, Math.round((viewportHeight - 760) * 0.35)))
     : 0;
+  // Use the otherwise idle vertical space of 4K dashboards for the charts themselves.
+  const largeScreenVerticalRoom = viewportWidth >= 1800
+    ? Math.max(0, viewportHeight - 1200)
+    : 0;
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: baseChartHeight + Math.round(verticalFill * 1),
-    overviewHeight: baseOverviewHeight,
-    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9),
+    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.4),
+    overviewHeight: baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07),
+    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15),
     topGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
     sectionGap: tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
     chartTitleGap: tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,
@@ -240,6 +244,9 @@ export const TELEMETRY_HISTORY_BUCKET_STEPS_MS = [
 
 export function getTelemetryHistoryBucketMs(windowMs: number): number {
   const safeWindowMs = Math.max(1, Math.floor(windowMs));
+  if (safeWindowMs >= 30 * DAY_IN_MS) {
+    return 60 * 60 * 1000;
+  }
   const targetStepMs = Math.ceil(safeWindowMs / TELEMETRY_HISTORY_BUCKET_TARGET_POINTS);
   return TELEMETRY_HISTORY_BUCKET_STEPS_MS.find((stepMs) => stepMs >= targetStepMs)
     ?? TELEMETRY_HISTORY_BUCKET_STEPS_MS[TELEMETRY_HISTORY_BUCKET_STEPS_MS.length - 1];
@@ -716,6 +723,7 @@ export const DEFAULT_ACCEL_TREND_MODE: AccelTrendMode = "rms";
 export type HoverTelemetrySnapshot = {
   ts: number;
   telemetryUuid?: string;
+  vibrationAvailable?: boolean;
   temp?: number;
   ax?: number;
   ay?: number;
@@ -2027,35 +2035,16 @@ export function TelemetryTrendChart({
     };
   }, [localPointerHover, visibleMissingDataBands]);
 
-  const tooltipAnchorX = localPointerHover?.x ?? (activeHoverTarget ? xScale(new Date(activeHoverTarget.timestampMs)) : 0);
-  const tooltipAnchorY = localPointerHover?.y
-    ?? (hoverSeriesRows[0]?.value !== null && hoverSeriesRows[0]?.value !== undefined
-      ? yScale(hoverSeriesRows[0].value)
-      : margin.top + 8);
   const tooltipEstimatedWidth = activeStatusTooltip || activeMissingDataTooltip ? 170 : 112;
   const tooltipEstimatedHeight = activeStatusTooltip || activeMissingDataTooltip ? 104 : Math.max(58, 36 + hoverSeriesRows.length * 18);
   const tooltipPlacement = useMemo(() => {
-    const offset = 14;
     const safeLeft = 8;
     const safeTop = 8;
-    const safeRight = Math.max(safeLeft, chartWidth - tooltipEstimatedWidth - 8);
-    const safeBottom = Math.max(safeTop, height - tooltipEstimatedHeight - 8);
-    const clampX = (value: number) => Math.min(Math.max(safeLeft, value), safeRight);
-    const clampY = (value: number) => Math.min(Math.max(safeTop, value), safeBottom);
-    const centeredX = tooltipAnchorX - tooltipEstimatedWidth / 2;
-    const centeredY = tooltipAnchorY - tooltipEstimatedHeight / 2;
-
-    if (tooltipAnchorX + offset + tooltipEstimatedWidth <= chartWidth - 8) {
-      return { left: tooltipAnchorX + offset, top: clampY(centeredY) };
-    }
-    if (tooltipAnchorX - offset - tooltipEstimatedWidth >= 8) {
-      return { left: tooltipAnchorX - offset - tooltipEstimatedWidth, top: clampY(centeredY) };
-    }
-    if (tooltipAnchorY + offset + tooltipEstimatedHeight <= height - 8) {
-      return { left: clampX(centeredX), top: tooltipAnchorY + offset };
-    }
-    return { left: clampX(centeredX), top: clampY(tooltipAnchorY - offset - tooltipEstimatedHeight) };
-  }, [chartWidth, height, tooltipAnchorX, tooltipAnchorY, tooltipEstimatedHeight, tooltipEstimatedWidth]);
+    return {
+      left: Math.max(safeLeft, Math.min(margin.left + 8, chartWidth - tooltipEstimatedWidth - safeLeft)),
+      top: Math.max(safeTop, Math.min(margin.top + 8, height - tooltipEstimatedHeight - safeTop)),
+    };
+  }, [chartWidth, height, margin.left, margin.top, tooltipEstimatedHeight, tooltipEstimatedWidth]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
+import React, { lazy, Suspense, useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   Info, Search, AlertTriangle,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
@@ -85,7 +85,7 @@ function TelemetryValue({
 }
 
 /* ── Device Card ── */
-function DeviceCard({
+const DeviceCard = React.memo(function DeviceCard({
   sensor,
   idx,
   onInfo,
@@ -118,6 +118,8 @@ function DeviceCard({
   const [webHovered, setWebHovered] = useState(false);
   const isOnline   = sensor.online;
   const isAbnormal = sensor.status === "abnormal";
+  const adxlStatus = sensor.adxlHealth?.status;
+  const adxlBadgeLabel = adxlStatus === "fault" ? "ADXL fault" : adxlStatus === "recovering" ? "ADXL recovering" : "";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
   const telemetryReadout = buildDeviceTelemetryCardReadout(telemetryPoint, sensor.axisLabels);
@@ -196,6 +198,25 @@ function DeviceCard({
           >
             {sensor.name}
           </div>
+          {adxlBadgeLabel ? (
+            <span
+              title={sensor.adxlHealth?.reason ? `${adxlBadgeLabel}: ${sensor.adxlHealth.reason}` : adxlBadgeLabel}
+              style={{
+                flexShrink: 0,
+                borderRadius: 4,
+                padding: "2px 4px",
+                color: adxlStatus === "fault" ? C.danger : C.warning,
+                background: adxlStatus === "fault" ? `${C.danger}18` : `${C.warning}18`,
+                border: `1px solid ${adxlStatus === "fault" ? C.danger : C.warning}55`,
+                fontSize: "0.4rem",
+                fontWeight: 850,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {adxlBadgeLabel}
+            </span>
+          ) : null}
           <div style={{ display: "inline-flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
             <div style={{ position: "relative" }}>
             <button
@@ -413,7 +434,7 @@ function DeviceCard({
 
     </div>
   );
-}
+});
 
 /* ── Sort dropdown ── */
 type SortKey = DeviceSortKey;
@@ -767,6 +788,7 @@ interface DeviceManagementProps {
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastItem, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onChartClosed?: (deviceId: string) => void;
   onSensorUpdated?: (sensor: Sensor) => void;
 }
 
@@ -834,6 +856,7 @@ export function DeviceManagement({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onChartClosed,
   onSensorUpdated,
 }: DeviceManagementProps) {
   const { C } = useTheme();
@@ -1171,7 +1194,7 @@ export function DeviceManagement({
     });
   }, [sensors]);
 
-  function closeContextMenu(): void {
+  const closeContextMenu = useCallback((): void => {
     setContextHoveredItem(null);
     setContextMenu((current) => {
       if (!current.open) {
@@ -1179,15 +1202,15 @@ export function DeviceManagement({
       }
       return { open: false, x: 0, y: 0, sensor: null };
     });
-  }
+  }, []);
 
-  function openDeviceInfo(sensor: Sensor, mode: DeviceInfoMode): void {
+  const openDeviceInfo = useCallback((sensor: Sensor, mode: DeviceInfoMode): void => {
     closeContextMenu();
     setSelectedSensorMode(mode);
     setSelectedSensor(sensor);
-  }
+  }, [closeContextMenu]);
 
-  function openDeviceContextMenu(event: React.MouseEvent<HTMLDivElement>, sensor: Sensor): void {
+  const openDeviceContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>, sensor: Sensor): void => {
     event.preventDefault();
     event.stopPropagation();
 
@@ -1210,9 +1233,9 @@ export function DeviceManagement({
       sensor,
     });
     setContextHoveredItem(null);
-  }
+  }, []);
 
-  function markDeviceExiting(deviceId: string): void {
+  const markDeviceExiting = useCallback((deviceId: string): void => {
     if (!deviceId) {
       return;
     }
@@ -1250,7 +1273,7 @@ export function DeviceManagement({
       });
       delete exitTimeoutsRef.current[deviceId];
     }, DEVICE_CARD_EXIT_MS + 30);
-  }
+  }, []);
 
   useEffect(() => {
     if (!contextMenu.open) {
@@ -1303,7 +1326,17 @@ export function DeviceManagement({
   }
 
   const contextTarget = contextMenu.sensor;
-  const activeChartSensor = chartSensor ?? visibleSensors[0] ?? null;
+  const openCardInfo = useCallback((sensor: Sensor) => openDeviceInfo(sensor, "view"), [openDeviceInfo]);
+  const openCardChart = useCallback((sensor: Sensor) => {
+    closeContextMenu();
+    setChartSidebarDismissed(false);
+    setChartSensor(sensor);
+  }, [closeContextMenu]);
+  const openCardWeb = useCallback((sensor: Sensor) => {
+    closeContextMenu();
+    setWebSensor(sensor);
+  }, [closeContextMenu]);
+  const activeChartSensor = chartSensor;
   const chartSidebarOpen = !chartSidebarDismissed && activeChartSensor !== null;
   const chartSidebarStacked = viewportWidth < CHART_SIDEBAR_STACKED_BREAKPOINT_PX;
   const chartSidebarWidthPxSafe = clampChartSidebarWidth(chartSidebarWidthPx, viewportWidth);
@@ -1313,9 +1346,13 @@ export function DeviceManagement({
     : 0;
   const dashboardContentWidth = Math.max(320, layoutHostWidth - chartSidebarReservedWidthPx);
   const dashboardHeaderControlsSingleColumn = dashboardContentWidth < 840;
-  const deviceGridMinCardWidth = dashboardContentWidth < 760 ? 106 : dashboardContentWidth < 980 ? 118 : 128;
-  const deviceGridMaxCardWidth = dashboardContentWidth < 760 ? 146 : dashboardContentWidth < 980 ? 158 : 168;
-  const deviceGridTemplateColumns = `repeat(auto-fill, minmax(min(${deviceGridMinCardWidth}px, 100%), ${deviceGridMaxCardWidth}px))`;
+  const deviceGridMinCardWidth = dashboardContentWidth < 760
+    ? "106px"
+    : dashboardContentWidth < 980 ? "118px" : "var(--dc-device-card-min)";
+  const deviceGridMaxCardWidth = dashboardContentWidth < 760
+    ? "146px"
+    : dashboardContentWidth < 980 ? "158px" : "var(--dc-device-card-max)";
+  const deviceGridTemplateColumns = `repeat(auto-fill, minmax(min(${deviceGridMinCardWidth}, 100%), ${deviceGridMaxCardWidth}))`;
   const chartSidebarReservedWidth = chartSidebarReservedWidthPx > 0
     ? `${chartSidebarReservedWidthPx}px`
     : "0px";
@@ -1385,7 +1422,6 @@ export function DeviceManagement({
             order: chartSidebarStacked ? 2 : 1,
             paddingTop: chartSidebarStacked ? 12 : 22,
             paddingRight: chartSidebarReservedWidth,
-            transition: "padding-right 220ms ease",
           }}
         >
       {/* Stat summary moved to sidebar */}
@@ -1589,16 +1625,9 @@ export function DeviceManagement({
                             telemetryLoading={Boolean(telemetryLoadingByDevice[sensor.id])}
                             showAxisReadout
                             exiting={exitingDeviceIds.has(sensor.id)}
-                            onInfo={(target) => openDeviceInfo(target, "view")}
-                            onChart={(target) => {
-                              closeContextMenu();
-                              setChartSidebarDismissed(false);
-                              setChartSensor(target);
-                            }}
-                            onOpenWeb={(target) => {
-                              closeContextMenu();
-                              setWebSensor(target);
-                            }}
+                            onInfo={openCardInfo}
+                            onChart={openCardChart}
+                            onOpenWeb={openCardWeb}
                             onContextMenu={openDeviceContextMenu}
                             onPrepareInfo={loadDeviceInfoModal}
                             onPrepareChart={loadSensorChartModal}
@@ -1626,16 +1655,9 @@ export function DeviceManagement({
                       telemetryLoading={Boolean(telemetryLoadingByDevice[sensor.id])}
                       showAxisReadout
                       exiting={exitingDeviceIds.has(sensor.id)}
-                      onInfo={(target) => openDeviceInfo(target, "view")}
-                      onChart={(target) => {
-                        closeContextMenu();
-                        setChartSidebarDismissed(false);
-                        setChartSensor(target);
-                      }}
-                      onOpenWeb={(target) => {
-                        closeContextMenu();
-                        setWebSensor(target);
-                      }}
+                      onInfo={openCardInfo}
+                      onChart={openCardChart}
+                      onOpenWeb={openCardWeb}
                       onContextMenu={openDeviceContextMenu}
                       onPrepareInfo={loadDeviceInfoModal}
                       onPrepareChart={loadSensorChartModal}
@@ -1787,7 +1809,7 @@ export function DeviceManagement({
             marginBottom: chartSidebarStacked && chartSidebarOpen ? 12 : 0,
             opacity: chartSidebarOpen ? 1 : 0,
             transform: chartSidebarOpen ? "translateX(0)" : "translateX(12px)",
-            transition: "width 220ms ease, max-width 220ms ease, opacity 180ms ease, transform 220ms ease",
+            transition: "opacity 180ms ease, transform 220ms ease",
             pointerEvents: chartSidebarOpen ? "auto" : "none",
             overflow: "visible",
             zIndex: 2,
@@ -1862,6 +1884,8 @@ export function DeviceManagement({
                   onClose={() => {
                     setChartSidebarDismissed(true);
                     setChartSidebarResizing(false);
+                    onChartClosed?.(activeChartSensor.id);
+                    setChartSensor(null);
                   }}
                 />
               </Suspense>

@@ -52,7 +52,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
       zIndex: 30,
       position: "relative",
     }}>
-      <div style={{ padding: "0 20px", height: 54, display: "flex", alignItems: "center", gap: 0 }}>
+      <div style={{ padding: "0 var(--dc-page-gutter)", height: "clamp(54px, 2.8vw, 68px)", display: "flex", alignItems: "center", gap: 0 }}>
 
         <button
           type="button"
@@ -152,7 +152,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           {/* Search */}
           <div style={{
             display: "flex", alignItems: "center", gap: 7,
-            height: 30, padding: "0 10px", borderRadius: 8, width: 148,
+            height: "clamp(30px, 1.7vw, 38px)", padding: "0 10px", borderRadius: 8, width: "clamp(148px, 10vw, 240px)",
             background: C.input, border: `1px solid ${C.border}`,
           }}>
             <Search size={11} color={C.textMuted} strokeWidth={2} />

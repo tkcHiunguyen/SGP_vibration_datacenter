@@ -7,6 +7,55 @@ body,
   min-height: 100%;
 }
 
+:root {
+  --dc-page-gutter: 26px;
+  --dc-page-bottom: 32px;
+  --dc-content-max: 1760px;
+  --dc-sidebar-width: 240px;
+  --dc-device-card-min: 128px;
+  --dc-device-card-max: 168px;
+  --dc-chart-control-max: 520px;
+}
+
+@media (min-width: 1920px) {
+  :root {
+    --font-size: 17px;
+    --dc-page-gutter: 32px;
+    --dc-page-bottom: 40px;
+    --dc-content-max: 2400px;
+    --dc-sidebar-width: 264px;
+    --dc-device-card-min: 156px;
+    --dc-device-card-max: 216px;
+    --dc-chart-control-max: 600px;
+  }
+}
+
+@media (min-width: 2560px) {
+  :root {
+    --font-size: 18px;
+    --dc-page-gutter: 44px;
+    --dc-page-bottom: 52px;
+    --dc-content-max: 3200px;
+    --dc-sidebar-width: 296px;
+    --dc-device-card-min: 192px;
+    --dc-device-card-max: 264px;
+    --dc-chart-control-max: 680px;
+  }
+}
+
+@media (min-width: 3200px) {
+  :root {
+    --font-size: 24px;
+    --dc-page-gutter: 64px;
+    --dc-page-bottom: 72px;
+    --dc-content-max: 3600px;
+    --dc-sidebar-width: 352px;
+    --dc-device-card-min: 240px;
+    --dc-device-card-max: 336px;
+    --dc-chart-control-max: 800px;
+  }
+}
+
 button,
 [role='button'] {
   -webkit-user-select: none;

@@ -12,7 +12,10 @@ import { calculateSceneLoadProgress } from "./motorSceneLoading";
 const MOTOR_MODEL_URL = `${import.meta.env.BASE_URL}models/electric_motor.glb`;
 const MACHINE_TRAIN_MODEL_URL = `${import.meta.env.BASE_URL}models/motor_pump_train.glb`;
 const SENSOR_MODEL_URL = `${import.meta.env.BASE_URL}models/vibration_sensor.glb`;
-const PANORAMA_URL = `${import.meta.env.BASE_URL}panoramas/university_workshop.jpg`;
+const PANORAMA_BALANCED_URL = `${import.meta.env.BASE_URL}panoramas/university_workshop_4k.webp`;
+const PANORAMA_HIGH_URL = `${import.meta.env.BASE_URL}panoramas/university_workshop.jpg`;
+const SCENE_RENDER_PIXEL_BUDGET = 4_000_000;
+const SCENE_MIN_PIXEL_RATIO = 0.65;
 const MOTOR_GROUND_Y = 0;
 const MOTOR_MODEL_TARGET_SIZE = 3.25;
 const MOTOR_COUPLING_X_OFFSET = -2.38;
@@ -37,6 +40,7 @@ export type PlacementAxisSceneMatch = {
 
 type MotorSceneCanvasProps = {
   className?: string;
+  panoramaQuality?: "balanced" | "high";
   placementMode?: boolean;
   selectedPlacementObject?: MotorPlacementObjectKey | null;
   placementMotorRotation?: PlacementRotation;
@@ -52,6 +56,12 @@ type MotorSceneCanvasProps = {
 
 type SceneAsset = "environment" | "motorModel" | "machineTrainModel" | "sensorModel";
 type SceneLoadProgress = Record<SceneAsset, number>;
+
+function getScenePixelRatio(width: number, height: number): number {
+  const nativeRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  const budgetRatio = Math.sqrt(SCENE_RENDER_PIXEL_BUDGET / Math.max(1, width * height));
+  return Math.max(SCENE_MIN_PIXEL_RATIO, Math.min(nativeRatio, budgetRatio));
+}
 
 function isWebGLAvailable() {
   try {
@@ -629,6 +639,7 @@ function createMotorTwinInstance(
 
 export function MotorSceneCanvas({
   className,
+  panoramaQuality = "balanced",
   placementMode = false,
   selectedPlacementObject = null,
   placementMotorRotation,
@@ -740,7 +751,10 @@ export function MotorSceneCanvas({
       return;
     }
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setPixelRatio(getScenePixelRatio(
+      Math.max(1, mount.clientWidth),
+      Math.max(1, mount.clientHeight),
+    ));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
@@ -851,7 +865,7 @@ export function MotorSceneCanvas({
         },
       );
     };
-    loadPanorama(PANORAMA_URL);
+    loadPanorama(panoramaQuality === "high" ? PANORAMA_HIGH_URL : PANORAMA_BALANCED_URL);
 
     const world = new THREE.Group();
     scene.add(world);
@@ -905,7 +919,10 @@ export function MotorSceneCanvas({
     controls.update();
 
     const composer = new EffectComposer(renderer);
-    composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    composer.setPixelRatio(getScenePixelRatio(
+      Math.max(1, mount.clientWidth),
+      Math.max(1, mount.clientHeight),
+    ));
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
@@ -917,6 +934,33 @@ export function MotorSceneCanvas({
     outlinePass.hiddenEdgeColor.set("#cbd5e1");
     composer.addPass(outlinePass);
     composer.addPass(new OutputPass());
+
+    let renderFrameId: number | null = null;
+    const renderFrame = () => {
+      renderFrameId = null;
+      if (!active || document.hidden) {
+        return;
+      }
+      syncPlacementSensorAxes();
+      const controlsChanged = controls.update();
+      composer.render();
+      if (controlsChanged) {
+        requestRender();
+      }
+    };
+    const requestRender = () => {
+      if (!active || document.hidden || renderFrameId !== null) {
+        return;
+      }
+      renderFrameId = window.requestAnimationFrame(renderFrame);
+    };
+    const handleSceneVisibilityChange = () => {
+      if (!document.hidden) {
+        requestRender();
+      }
+    };
+    controls.addEventListener("change", requestRender);
+    document.addEventListener("visibilitychange", handleSceneVisibilityChange);
 
     const rotationGizmo = createSlicerRotationGizmo();
     scene.add(rotationGizmo);
@@ -988,6 +1032,7 @@ export function MotorSceneCanvas({
       const selectedObjects = [hoveredObject, selectedObject]
         .filter((object): object is THREE.Object3D => Boolean(object));
       outlinePass.selectedObjects = Array.from(new Set(selectedObjects));
+      requestRender();
     };
 
     const selectPlacementObject = (objectKey: MotorPlacementObjectKey | null) => {
@@ -1029,6 +1074,7 @@ export function MotorSceneCanvas({
         positionRotationGizmo(rotationGizmo, placementMode ? null : selectedObject, camera);
         syncOutlineSelection();
       }
+      requestRender();
     };
     applyPlacementRotationRef.current = applyPlacementRotation;
 
@@ -1344,26 +1390,30 @@ export function MotorSceneCanvas({
       controls.target.copy(cameraTarget);
       camera.aspect = width / resolvedHeight;
       camera.updateProjectionMatrix();
+      const pixelRatio = getScenePixelRatio(width, resolvedHeight);
+      renderer.setPixelRatio(pixelRatio);
+      composer.setPixelRatio(pixelRatio);
       renderer.setSize(width, resolvedHeight);
       composer.setSize(width, resolvedHeight);
       outlinePass.setSize(width, resolvedHeight);
       controls.update();
+      requestRender();
     };
 
     resize();
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(mount);
 
-    renderer.setAnimationLoop(() => {
-      syncPlacementSensorAxes();
-      controls.update();
-      composer.render();
-    });
+    requestRender();
 
     return () => {
       active = false;
-      renderer.setAnimationLoop(null);
+      if (renderFrameId !== null) {
+        window.cancelAnimationFrame(renderFrameId);
+      }
       resizeObserver.disconnect();
+      controls.removeEventListener("change", requestRender);
+      document.removeEventListener("visibilitychange", handleSceneVisibilityChange);
       renderer.domElement.removeEventListener("pointermove", updateHoverFromPointer, true);
       renderer.domElement.removeEventListener("pointerdown", selectObjectFromPointer, true);
       renderer.domElement.removeEventListener("pointerup", finishGizmoDrag, true);
@@ -1382,7 +1432,7 @@ export function MotorSceneCanvas({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [panoramaQuality]);
 
   return (
     <div

@@ -2,6 +2,16 @@ type SensorStatus = "normal" | "abnormal";
 
 export type DeviceAxisKey = "ax" | "ay" | "az";
 export type DeviceAxisLabels = Partial<Record<DeviceAxisKey, string>>;
+export type AdxlStatus = "ok" | "fault" | "recovering";
+export type AdxlFaultReason = "not_detected" | "i2c_read_error" | "capture_timeout" | "unknown";
+
+export interface DeviceAdxlHealth {
+  status: AdxlStatus;
+  reason?: AdxlFaultReason;
+  updatedAt?: string;
+  captureTimeoutCount?: number;
+  i2cReadErrorCount?: number;
+}
 
 interface VibrationPoint {
   time: string;
@@ -30,6 +40,7 @@ export interface Sensor {
   signal: string;
   uptime: string;
   axisLabels?: DeviceAxisLabels;
+  adxlHealth?: DeviceAdxlHealth;
   vibration1h: VibrationPoint[];
   vibration5h: VibrationPoint[];
 }
@@ -41,6 +52,7 @@ interface DeviceMetadata {
   zone?: string;
   firmwareVersion?: string;
   axisLabels?: DeviceAxisLabels;
+  adxlHealth?: DeviceAdxlHealth;
 }
 
 interface DeviceHeartbeat {
@@ -67,6 +79,11 @@ export interface DeviceTelemetryPoint {
   sampleRateHz?: number;
   lsbPerG?: number;
   temperature?: number;
+  messageId?: string;
+  temperatureAvailable?: boolean;
+  vibrationAvailable?: boolean;
+  adxlStatus?: AdxlStatus;
+  adxlFaultReason?: AdxlFaultReason;
   ax?: number;
   ay?: number;
   az?: number;
@@ -226,6 +243,7 @@ export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
           : "--",
       uptime: formatUptimeSeconds(device.heartbeat?.uptimeSec),
       axisLabels: normalizeAxisLabels(device.metadata?.axisLabels),
+      adxlHealth: device.metadata?.adxlHealth,
       vibration1h: [],
       vibration5h: [],
     };

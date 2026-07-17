@@ -67,7 +67,7 @@ export function LeftPanel({
         height: "100%",
         background: `linear-gradient(180deg, ${C.surface} 0%, ${C.bg} 100%)`,
         borderRight: `1px solid ${C.border}`,
-        padding: "12px 9px",
+        padding: "clamp(12px, 0.9vw, 20px) clamp(9px, 0.7vw, 16px)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

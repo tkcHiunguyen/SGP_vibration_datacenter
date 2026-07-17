@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Profiler, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from "react";
 import { io } from "socket.io-client";
 import { ThemeProvider, useTheme } from "./app/context/ThemeContext";
 import { TopHeader } from "./app/components/TopHeader";
@@ -7,6 +7,7 @@ import { MainPanel } from "./app/components/MainPanel";
 import { ToastStack } from "./app/components/ui";
 import {
   DeviceListItem,
+  DeviceAdxlHealth,
   DeviceSpectrumPoint,
   DeviceTelemetryPoint,
   SpectrumAxis,
@@ -104,11 +105,15 @@ type ApiResult<T> = {
   payload: T | null;
 };
 
-const TELEMETRY_VISIBLE_POINTS = 100;
-const TELEMETRY_HISTORY_RAW_MAX_POINTS = 12_000;
-const TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS = 60_000;
-const TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS = 10_000;
-const SPECTRUM_HISTORY_BUFFER_SIZE = 120;
+const TELEMETRY_OVERVIEW_POINTS = 1;
+const TELEMETRY_CHART_INITIAL_POINTS = 100;
+// Charts never need more samples than they can draw. Long ranges use server buckets.
+const TELEMETRY_HISTORY_RAW_MAX_POINTS = 8_000;
+const TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS = 8_000;
+const TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS = 8_000;
+const SPECTRUM_OVERVIEW_BUFFER_SIZE = 6;
+const REALTIME_FLUSH_INTERVAL_MS = 125;
+const INVENTORY_REFRESH_INTERVAL_MS = 30_000;
 const TOAST_DURATION_MS = 10_000;
 const TOAST_EXIT_MS = 260;
 
@@ -169,16 +174,19 @@ function parseDevices(payload: unknown): DeviceListItem[] {
 
   return source
     .map((item) => asRecord(item))
-    .map((item) => ({
-      deviceId: safeString(item.deviceId || item.id || item.device_id),
-      online: Boolean(item.online),
-      clientIp: safeString(item.clientIp || item.client_ip || item.ipAddress || item.ip_address) || undefined,
-      connectedAt: safeString(item.connectedAt || item.connected_at) || undefined,
-      lastHeartbeatAt:
-        safeString(item.lastHeartbeatAt || item.last_heartbeat_at) || undefined,
-      heartbeat: asRecord(item.heartbeat),
-      metadata: asRecord(item.metadata),
-    }))
+    .map((item) => {
+      const metadata = asRecord(item.metadata);
+      return {
+        deviceId: safeString(item.deviceId || item.id || item.device_id),
+        online: Boolean(item.online),
+        clientIp: safeString(item.clientIp || item.client_ip || item.ipAddress || item.ip_address) || undefined,
+        connectedAt: safeString(item.connectedAt || item.connected_at) || undefined,
+        lastHeartbeatAt:
+          safeString(item.lastHeartbeatAt || item.last_heartbeat_at) || undefined,
+        heartbeat: asRecord(item.heartbeat),
+        metadata: { ...metadata, adxlHealth: parseAdxlHealth(metadata.adxlHealth || metadata.adxl_health) },
+      };
+    })
     .filter((item) => Boolean(item.deviceId));
 }
 
@@ -195,9 +203,39 @@ function asNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1") {
+    return true;
+  }
+  if (value === 0 || value === "0") {
+    return false;
+  }
+  return undefined;
+}
+
+function parseAdxlHealth(value: unknown): DeviceAdxlHealth | undefined {
+  const record = asRecord(value);
+  const status = safeString(record.status).trim().toLowerCase();
+  if (status !== "ok" && status !== "fault" && status !== "recovering") {
+    return undefined;
+  }
+  const reason = safeString(record.reason).trim().toLowerCase();
+  const validReason = reason === "not_detected" || reason === "i2c_read_error" || reason === "capture_timeout" || reason === "unknown";
+  return {
+    status,
+    reason: status === "fault" && validReason ? reason : undefined,
+    updatedAt: safeString(record.updatedAt || record.updated_at) || undefined,
+    captureTimeoutCount: asNumber(record.captureTimeoutCount ?? record.capture_timeout_count),
+    i2cReadErrorCount: asNumber(record.i2cReadErrorCount ?? record.i2c_read_error_count),
+  };
+}
+
 function getBucketRetentionLimit(bucketMs: number | undefined, from: string, to: string): number {
   if (!bucketMs) {
-    return TELEMETRY_VISIBLE_POINTS;
+    return TELEMETRY_CHART_INITIAL_POINTS;
   }
 
   const fromMs = Date.parse(from);
@@ -206,10 +244,10 @@ function getBucketRetentionLimit(bucketMs: number | undefined, from: string, to:
     return TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS;
   }
 
-  return Math.max(
-    TELEMETRY_VISIBLE_POINTS,
+  return Math.min(TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS, Math.max(
+    TELEMETRY_CHART_INITIAL_POINTS,
     Math.ceil((toMs - fromMs + 1) / bucketMs) + 4,
-  );
+  ));
 }
 
 function asSpectrumAxis(value: unknown): SpectrumAxis | undefined {
@@ -249,28 +287,40 @@ function parseTelemetryEvent(payload: unknown): { deviceId: string; point: Devic
     return null;
   }
 
+  const temperatureAvailable = asBoolean(body.temperatureAvailable ?? body.temperature_available);
+  const vibrationAvailable = asBoolean(body.vibrationAvailable ?? body.vibration_available);
+  const isVibrationUnavailable = vibrationAvailable === false;
+  const adxlHealth = parseAdxlHealth({
+    status: body.adxlStatus ?? body.adxl_status,
+    reason: body.adxlFaultReason ?? body.adxl_fault_reason,
+  });
   const point: DeviceTelemetryPoint = {
     receivedAt: safeString(root.receivedAt || root.timestamp || body.receivedAt || body.timestamp) || new Date().toISOString(),
     available: typeof body.available === "boolean" ? body.available : undefined,
     sampleCount: asNumber(body.sample_count ?? body.sampleCount),
     sampleRateHz: asNumber(body.sample_rate_hz ?? body.sampleRateHz),
     lsbPerG: asNumber(body.lsb_per_g ?? body.lsbPerG),
-    temperature: asNumber(body.temperature),
-    ax: asNumber(body.ax),
-    ay: asNumber(body.ay),
-    az: asNumber(body.az),
-    vrmsXMms: asNumber(root.vrmsXMms ?? root.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
-    vrmsYMms: asNumber(root.vrmsYMms ?? root.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
-    vrmsZMms: asNumber(root.vrmsZMms ?? root.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
-    vrmsUnit: safeString(root.vrmsUnit || root.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
-    drmsXUm: asNumber(root.drmsXUm ?? root.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
-    drmsYUm: asNumber(root.drmsYUm ?? root.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
-    drmsZUm: asNumber(root.drmsZUm ?? root.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
-    drmsBandMinHz: asNumber(root.drmsBandMinHz ?? root.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
-    drmsBandMaxHz: asNumber(root.drmsBandMaxHz ?? root.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
-    drmsUnit: safeString(root.drmsUnit || root.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
+    messageId: safeString(body.messageId || body.message_id) || undefined,
+    temperatureAvailable,
+    vibrationAvailable,
+    adxlStatus: adxlHealth?.status,
+    adxlFaultReason: adxlHealth?.reason,
+    temperature: temperatureAvailable === false ? undefined : asNumber(body.temperature),
+    ax: isVibrationUnavailable ? undefined : asNumber(body.ax),
+    ay: isVibrationUnavailable ? undefined : asNumber(body.ay),
+    az: isVibrationUnavailable ? undefined : asNumber(body.az),
+    vrmsXMms: isVibrationUnavailable ? undefined : asNumber(root.vrmsXMms ?? root.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
+    vrmsYMms: isVibrationUnavailable ? undefined : asNumber(root.vrmsYMms ?? root.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
+    vrmsZMms: isVibrationUnavailable ? undefined : asNumber(root.vrmsZMms ?? root.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
+    vrmsUnit: isVibrationUnavailable ? undefined : safeString(root.vrmsUnit || root.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
+    drmsXUm: isVibrationUnavailable ? undefined : asNumber(root.drmsXUm ?? root.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
+    drmsYUm: isVibrationUnavailable ? undefined : asNumber(root.drmsYUm ?? root.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
+    drmsZUm: isVibrationUnavailable ? undefined : asNumber(root.drmsZUm ?? root.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
+    drmsBandMinHz: isVibrationUnavailable ? undefined : asNumber(root.drmsBandMinHz ?? root.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
+    drmsBandMaxHz: isVibrationUnavailable ? undefined : asNumber(root.drmsBandMaxHz ?? root.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
+    drmsUnit: isVibrationUnavailable ? undefined : safeString(root.drmsUnit || root.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
     uuid: safeString(body.uuid) || undefined,
-    telemetryUuid: safeString(root.telemetryUuid || root.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
+    telemetryUuid: isVibrationUnavailable ? undefined : safeString(root.telemetryUuid || root.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
   };
 
   return { deviceId, point };
@@ -327,28 +377,40 @@ function parseTelemetryPoint(item: unknown): DeviceTelemetryPoint | null {
     return null;
   }
 
+  const temperatureAvailable = asBoolean(body.temperatureAvailable ?? body.temperature_available);
+  const vibrationAvailable = asBoolean(body.vibrationAvailable ?? body.vibration_available);
+  const isVibrationUnavailable = vibrationAvailable === false;
+  const adxlHealth = parseAdxlHealth({
+    status: body.adxlStatus ?? body.adxl_status,
+    reason: body.adxlFaultReason ?? body.adxl_fault_reason,
+  });
   return {
     receivedAt,
     available: typeof body.available === "boolean" ? body.available : undefined,
     sampleCount: asNumber(body.sample_count ?? body.sampleCount),
     sampleRateHz: asNumber(body.sample_rate_hz ?? body.sampleRateHz),
     lsbPerG: asNumber(body.lsb_per_g ?? body.lsbPerG),
-    temperature: asNumber(body.temperature),
-    ax: asNumber(body.ax),
-    ay: asNumber(body.ay),
-    az: asNumber(body.az),
-    vrmsXMms: asNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
-    vrmsYMms: asNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
-    vrmsZMms: asNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
-    vrmsUnit: safeString(row.vrmsUnit || row.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
-    drmsXUm: asNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
-    drmsYUm: asNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
-    drmsZUm: asNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
-    drmsBandMinHz: asNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
-    drmsBandMaxHz: asNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
-    drmsUnit: safeString(row.drmsUnit || row.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
+    messageId: safeString(body.messageId || body.message_id) || undefined,
+    temperatureAvailable,
+    vibrationAvailable,
+    adxlStatus: adxlHealth?.status,
+    adxlFaultReason: adxlHealth?.reason,
+    temperature: temperatureAvailable === false ? undefined : asNumber(body.temperature),
+    ax: isVibrationUnavailable ? undefined : asNumber(body.ax),
+    ay: isVibrationUnavailable ? undefined : asNumber(body.ay),
+    az: isVibrationUnavailable ? undefined : asNumber(body.az),
+    vrmsXMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
+    vrmsYMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
+    vrmsZMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
+    vrmsUnit: isVibrationUnavailable ? undefined : safeString(row.vrmsUnit || row.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
+    drmsXUm: isVibrationUnavailable ? undefined : asNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
+    drmsYUm: isVibrationUnavailable ? undefined : asNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
+    drmsZUm: isVibrationUnavailable ? undefined : asNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
+    drmsBandMinHz: isVibrationUnavailable ? undefined : asNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
+    drmsBandMaxHz: isVibrationUnavailable ? undefined : asNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
+    drmsUnit: isVibrationUnavailable ? undefined : safeString(row.drmsUnit || row.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
     uuid: safeString(body.uuid) || undefined,
-    telemetryUuid: safeString(row.telemetryUuid || row.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
+    telemetryUuid: isVibrationUnavailable ? undefined : safeString(row.telemetryUuid || row.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
   };
 }
 
@@ -364,7 +426,7 @@ function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] 
 }
 
 function telemetryKey(point: DeviceTelemetryPoint): string {
-  return point.telemetryUuid || point.receivedAt;
+  return point.messageId || point.telemetryUuid || point.receivedAt;
 }
 
 function telemetryTimestampMs(point: DeviceTelemetryPoint): number {
@@ -372,26 +434,61 @@ function telemetryTimestampMs(point: DeviceTelemetryPoint): number {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
+function insertRealtimePoint<T extends { receivedAt: string }>(
+  current: T[],
+  incoming: T,
+  keyOf: (point: T) => string,
+  maxPoints: number,
+): T[] {
+  if (current.length === 0) {
+    return [incoming];
+  }
+
+  const incomingKey = keyOf(incoming);
+  const lastIndex = current.length - 1;
+  const last = current[lastIndex];
+  if (keyOf(last) === incomingKey) {
+    const next = current.slice();
+    next[lastIndex] = incoming;
+    return next;
+  }
+
+  // Device events are normally ordered. Keep the hot path O(1), with a binary
+  // insertion fallback for a delayed packet rather than sorting every update.
+  if (incoming.receivedAt >= last.receivedAt) {
+    return [...current, incoming].slice(-maxPoints);
+  }
+
+  let low = 0;
+  let high = current.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (current[middle].receivedAt < incoming.receivedAt) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  const existing = current[low];
+  const next = current.slice();
+  if (existing && keyOf(existing) === incomingKey) {
+    next[low] = incoming;
+  } else {
+    next.splice(low, 0, incoming);
+  }
+  return next.slice(-maxPoints);
+}
+
 function mergeTelemetryPoints(
   current: DeviceTelemetryPoint[],
   incoming: DeviceTelemetryPoint[],
-  maxPoints = TELEMETRY_VISIBLE_POINTS,
+  maxPoints = TELEMETRY_OVERVIEW_POINTS,
 ): DeviceTelemetryPoint[] {
-  if (incoming.length === 0) {
-    return current.slice(-maxPoints);
-  }
-
-  const map = new Map<string, DeviceTelemetryPoint>();
-  for (const point of current) {
-    map.set(telemetryKey(point), point);
-  }
-  for (const point of incoming) {
-    map.set(telemetryKey(point), point);
-  }
-
-  return [...map.values()]
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
-    .slice(-maxPoints);
+  return incoming.reduce(
+    (points, point) => insertRealtimePoint(points, point, telemetryKey, maxPoints),
+    current.slice(-maxPoints),
+  );
 }
 
 function spectrumKey(point: DeviceSpectrumPoint): string {
@@ -403,22 +500,28 @@ function spectrumKey(point: DeviceSpectrumPoint): string {
 function mergeSpectrumPoints(
   current: DeviceSpectrumPoint[],
   incoming: DeviceSpectrumPoint[],
-  maxPoints = SPECTRUM_HISTORY_BUFFER_SIZE,
+  maxPoints = SPECTRUM_OVERVIEW_BUFFER_SIZE,
 ): DeviceSpectrumPoint[] {
-  if (incoming.length === 0) {
-    return current.slice(-maxPoints);
-  }
+  return incoming.reduce(
+    (points, point) => insertRealtimePoint(points, point, spectrumKey, maxPoints),
+    current.slice(-maxPoints),
+  );
+}
 
-  const map = new Map<string, DeviceSpectrumPoint>();
+function mergeTelemetryHistory(
+  current: DeviceTelemetryPoint[],
+  incoming: DeviceTelemetryPoint[],
+  maxPoints: number,
+): DeviceTelemetryPoint[] {
+  const unique = new Map<string, DeviceTelemetryPoint>();
   for (const point of current) {
-    map.set(spectrumKey(point), point);
+    unique.set(telemetryKey(point), point);
   }
   for (const point of incoming) {
-    map.set(spectrumKey(point), point);
+    unique.set(telemetryKey(point), point);
   }
-
-  return [...map.values()]
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+  return [...unique.values()]
+    .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt))
     .slice(-maxPoints);
 }
 
@@ -476,6 +579,7 @@ function DashboardShell({
   onRequestTelemetryHistory,
   onNotify,
   onDeviceDataCleared,
+  onChartClosed,
   onSensorUpdated,
   toasts,
   onDismissToast,
@@ -488,6 +592,7 @@ function DashboardShell({
   onRequestTelemetryHistory: (deviceId: string, options?: TelemetryHistoryRequestOptions) => Promise<void>;
   onNotify: (message: Omit<ToastMessage, "id">) => void;
   onDeviceDataCleared: (deviceId: string) => void;
+  onChartClosed: (deviceId: string) => void;
   onSensorUpdated: (sensor: Sensor) => void;
   toasts: ToastMessage[];
   onDismissToast: (toastId: number) => void;
@@ -613,12 +718,10 @@ function DashboardShell({
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <div
           style={{
-            width: sidebarOpen ? 240 : 0,
-            minWidth: sidebarOpen ? 240 : 0,
+            width: sidebarOpen ? "var(--dc-sidebar-width)" : 0,
+            minWidth: sidebarOpen ? "var(--dc-sidebar-width)" : 0,
             overflow: "hidden",
             flexShrink: 0,
-            transition:
-              "width 0.25s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
           }}
         >
           <LeftPanel
@@ -643,6 +746,7 @@ function DashboardShell({
           onRequestTelemetryHistory={onRequestTelemetryHistory}
           onNotify={onNotify}
           onDeviceDataCleared={onDeviceDataCleared}
+          onChartClosed={onChartClosed}
           onSensorUpdated={onSensorUpdated}
         />
       </div>
@@ -669,17 +773,44 @@ export default function App() {
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [signalAlerts, setSignalAlerts] = useState<SignalAlert[]>([]);
+  const performanceProfileEnabled = new URLSearchParams(window.location.search).has("perf");
   const telemetryByDeviceRef = useRef<Record<string, DeviceTelemetryPoint[]>>({});
   const telemetryRetentionByDeviceRef = useRef<Map<string, number>>(new Map());
   const telemetryFetchStateRef = useRef<Map<string, { lastAttemptAt: number; cooldownUntil: number }>>(new Map());
   const telemetryPendingCountRef = useRef<Map<string, number>>(new Map());
   const telemetryRequestSeqRef = useRef<Map<string, number>>(new Map());
+  const telemetryRequestAbortRef = useRef<Map<string, AbortController>>(new Map());
+  const realtimeTelemetryQueueRef = useRef<Map<string, DeviceTelemetryPoint>>(new Map());
+  const realtimeSpectrumQueueRef = useRef<Map<string, { deviceId: string; point: DeviceSpectrumPoint }>>(new Map());
+  const realtimeInventoryPatchQueueRef = useRef<Map<string, Partial<DeviceListItem>>>(new Map());
+  const realtimeFlushTimerRef = useRef<number | null>(null);
+  const documentVisibleRef = useRef(typeof document === "undefined" || !document.hidden);
+  const inventoryRequestInFlightRef = useRef(false);
+  const inventorySignatureRef = useRef("");
   const toastTimersRef = useRef<Map<number, { auto?: number; remove?: number }>>(new Map());
   const nextToastIdRef = useRef(1);
   const deviceOnlineMapRef = useRef<Map<string, { online: boolean; name: string }>>(new Map());
   const inventoryReadyRef = useRef(false);
   const signalAlertsRef = useRef<SignalAlert[]>([]);
   const dismissedWeakSignalDevicesRef = useRef<Set<string>>(new Set());
+
+  const captureDashboardRender: ProfilerOnRenderCallback = useCallback((
+    id,
+    phase,
+    actualDuration,
+    baseDuration,
+    startTime,
+    commitTime,
+  ) => {
+    const profileWindow = window as Window & {
+      __sgpDashboardProfile?: Array<Record<string, number | string>>;
+    };
+    const entries = profileWindow.__sgpDashboardProfile || [];
+    if (entries.length < 2_000) {
+      entries.push({ id, phase, actualDuration, baseDuration, startTime, commitTime });
+    }
+    profileWindow.__sgpDashboardProfile = entries;
+  }, []);
 
   const removeToast = useCallback((toastId: number) => {
     const timerBucket = toastTimersRef.current.get(toastId);
@@ -734,16 +865,92 @@ export default function App() {
     });
   }, []);
 
-  const enqueueSpectrumPoint = useCallback((deviceId: string, point: DeviceSpectrumPoint) => {
-    setTelemetryLoadingByDevice((previous) => ({ ...previous, [deviceId]: false }));
-    setSpectrumByDevice((previous) => {
-      const current = previous[deviceId] || [];
-      return {
-        ...previous,
-        [deviceId]: mergeSpectrumPoints(current, [point]),
-      };
-    });
+  const flushRealtimeUpdates = useCallback(() => {
+    realtimeFlushTimerRef.current = null;
+    if (!documentVisibleRef.current) {
+      return;
+    }
+
+    const telemetryUpdates = [...realtimeTelemetryQueueRef.current.entries()];
+    const spectrumUpdates = [...realtimeSpectrumQueueRef.current.values()];
+    const inventoryPatches = [...realtimeInventoryPatchQueueRef.current.entries()];
+    realtimeTelemetryQueueRef.current.clear();
+    realtimeSpectrumQueueRef.current.clear();
+    realtimeInventoryPatchQueueRef.current.clear();
+
+    if (telemetryUpdates.length > 0) {
+      setTelemetryByDevice((previous) => {
+        const next = { ...previous };
+        for (const [deviceId, point] of telemetryUpdates) {
+          const retentionLimit = telemetryRetentionByDeviceRef.current.get(deviceId) || TELEMETRY_OVERVIEW_POINTS;
+          next[deviceId] = mergeTelemetryPoints(previous[deviceId] || [], [point], retentionLimit);
+        }
+        return next;
+      });
+      setTelemetryLoadingByDevice((previous) => {
+        const next = { ...previous };
+        let changed = false;
+        for (const [deviceId] of telemetryUpdates) {
+          if (next[deviceId]) {
+            next[deviceId] = false;
+            changed = true;
+          }
+        }
+        return changed ? next : previous;
+      });
+    }
+
+    if (spectrumUpdates.length > 0) {
+      setSpectrumByDevice((previous) => {
+        const next = { ...previous };
+        for (const { deviceId, point } of spectrumUpdates) {
+          // A batch normally contains X/Y/Z frames for one device. Merge from
+          // the progressively built value so later axes do not replace earlier ones.
+          next[deviceId] = mergeSpectrumPoints(next[deviceId] || [], [point]);
+        }
+        return next;
+      });
+    }
+
+    if (inventoryPatches.length > 0) {
+      const patchesByDeviceId = new Map(inventoryPatches);
+      setInventoryDevices((current) => {
+        let changed = false;
+        const next = current.map((device) => {
+          const patch = patchesByDeviceId.get(device.deviceId);
+          if (!patch) {
+            return device;
+          }
+          changed = true;
+          return {
+            ...device,
+            ...patch,
+            metadata: patch.metadata ? { ...device.metadata, ...patch.metadata } : device.metadata,
+          };
+        });
+        return changed ? next : current;
+      });
+    }
   }, []);
+
+  const scheduleRealtimeFlush = useCallback(() => {
+    if (!documentVisibleRef.current || realtimeFlushTimerRef.current !== null) {
+      return;
+    }
+    realtimeFlushTimerRef.current = window.setTimeout(flushRealtimeUpdates, REALTIME_FLUSH_INTERVAL_MS);
+  }, [flushRealtimeUpdates]);
+
+  const enqueueTelemetryPoint = useCallback((deviceId: string, point: DeviceTelemetryPoint) => {
+    // The server is the source of truth for history; the dashboard only needs the latest queued sample.
+    realtimeTelemetryQueueRef.current.set(deviceId, point);
+    scheduleRealtimeFlush();
+  }, [scheduleRealtimeFlush]);
+
+  const enqueueSpectrumPoint = useCallback((deviceId: string, point: DeviceSpectrumPoint) => {
+    // Store the latest frame per device/axis until the batch flushes, not every incoming FFT frame.
+    realtimeSpectrumQueueRef.current.set(`${deviceId}:${point.axis}`, { deviceId, point });
+    scheduleRealtimeFlush();
+  }, [scheduleRealtimeFlush]);
 
   const requestTelemetryHistory = useCallback(async (
     deviceId: string,
@@ -763,7 +970,7 @@ export default function App() {
     const requestedLimit = Math.max(
       1,
       Math.min(
-        Math.floor(requestedLimitValue ?? TELEMETRY_VISIBLE_POINTS),
+        Math.floor(requestedLimitValue ?? TELEMETRY_CHART_INITIAL_POINTS),
         TELEMETRY_HISTORY_RAW_MAX_POINTS,
       ),
     );
@@ -789,7 +996,7 @@ export default function App() {
       lastAttemptAt: now,
     });
 
-    const currentRetention = telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_VISIBLE_POINTS;
+    const currentRetention = telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_OVERVIEW_POINTS;
     const unboundedBucketRequest = Boolean(bucketMs && !hasExplicitLimit);
     const appendDetailRequest = force && !replace;
     const nextRetention = replace
@@ -800,13 +1007,13 @@ export default function App() {
         ? Math.min(
             TELEMETRY_HISTORY_DETAIL_CACHE_MAX_POINTS,
             Math.max(
-              TELEMETRY_VISIBLE_POINTS,
+              TELEMETRY_CHART_INITIAL_POINTS,
               currentRetention + (unboundedBucketRequest ? bucketRetentionLimit : requestedLimit),
             ),
           )
         : Math.min(
             TELEMETRY_HISTORY_RAW_MAX_POINTS,
-            Math.max(TELEMETRY_VISIBLE_POINTS, currentRetention, requestedLimit),
+            Math.max(TELEMETRY_OVERVIEW_POINTS, currentRetention, requestedLimit),
           );
     telemetryRetentionByDeviceRef.current.set(targetDeviceId, nextRetention);
 
@@ -831,8 +1038,12 @@ export default function App() {
       query.set("to", to);
     }
 
+    telemetryRequestAbortRef.current.get(targetDeviceId)?.abort();
+    const abortController = new AbortController();
+    telemetryRequestAbortRef.current.set(targetDeviceId, abortController);
     const result = await requestJson<unknown>(
       `/api/devices/${encodeURIComponent(targetDeviceId)}/telemetry?${query.toString()}`,
+      { signal: abortController.signal },
     );
     try {
       if (!result.ok && result.status === 429) {
@@ -862,7 +1073,7 @@ export default function App() {
       setTelemetryByDevice((previous) => {
         const current = previous[targetDeviceId] || [];
         const retentionLimit =
-          telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_VISIBLE_POINTS;
+          telemetryRetentionByDeviceRef.current.get(targetDeviceId) || TELEMETRY_OVERVIEW_POINTS;
         const incomingLatestMs = points.reduce(
           (latest, point) => Math.max(latest, telemetryTimestampMs(point)),
           Number.NEGATIVE_INFINITY,
@@ -875,8 +1086,8 @@ export default function App() {
           ? current.filter((point) => telemetryTimestampMs(point) > incomingLatestMs)
           : [];
         const nextPoints = replace
-          ? mergeTelemetryPoints(points, newerRealtimePoints, retentionLimit)
-          : mergeTelemetryPoints(current, points, retentionLimit);
+          ? mergeTelemetryHistory(points, newerRealtimePoints, retentionLimit)
+          : mergeTelemetryHistory(current, points, retentionLimit);
         return {
           ...previous,
           [targetDeviceId]: nextPoints,
@@ -891,6 +1102,9 @@ export default function App() {
       } else {
         telemetryPendingCountRef.current.set(targetDeviceId, pendingAfter);
       }
+      if (telemetryRequestAbortRef.current.get(targetDeviceId) === abortController) {
+        telemetryRequestAbortRef.current.delete(targetDeviceId);
+      }
     }
   }, []);
 
@@ -902,6 +1116,8 @@ export default function App() {
 
     telemetryFetchStateRef.current.delete(targetDeviceId);
     telemetryPendingCountRef.current.delete(targetDeviceId);
+    telemetryRequestAbortRef.current.get(targetDeviceId)?.abort();
+    telemetryRequestAbortRef.current.delete(targetDeviceId);
     telemetryRequestSeqRef.current.set(targetDeviceId, (telemetryRequestSeqRef.current.get(targetDeviceId) || 0) + 1);
     telemetryRetentionByDeviceRef.current.delete(targetDeviceId);
     telemetryByDeviceRef.current = {
@@ -921,6 +1137,34 @@ export default function App() {
       ...previous,
       [targetDeviceId]: [],
     }));
+  }, []);
+
+  const releaseDeviceChartCache = useCallback((deviceId: string): void => {
+    const targetDeviceId = safeString(deviceId).trim();
+    if (!targetDeviceId) {
+      return;
+    }
+
+    telemetryRequestAbortRef.current.get(targetDeviceId)?.abort();
+    telemetryRequestAbortRef.current.delete(targetDeviceId);
+    telemetryRequestSeqRef.current.set(targetDeviceId, (telemetryRequestSeqRef.current.get(targetDeviceId) || 0) + 1);
+    telemetryRetentionByDeviceRef.current.set(targetDeviceId, TELEMETRY_OVERVIEW_POINTS);
+    setTelemetryByDevice((previous) => {
+      const current = previous[targetDeviceId] || [];
+      const nextPoints = current.slice(-TELEMETRY_OVERVIEW_POINTS);
+      if (nextPoints.length === current.length) {
+        return previous;
+      }
+      return { ...previous, [targetDeviceId]: nextPoints };
+    });
+    setSpectrumByDevice((previous) => {
+      const current = previous[targetDeviceId] || [];
+      const nextPoints = current.slice(-SPECTRUM_OVERVIEW_BUFFER_SIZE);
+      if (nextPoints.length === current.length) {
+        return previous;
+      }
+      return { ...previous, [targetDeviceId]: nextPoints };
+    });
   }, []);
 
   const updateInventoryDeviceFromSensor = useCallback((updatedSensor: Sensor): void => {
@@ -943,20 +1187,58 @@ export default function App() {
     );
   }, []);
 
-  async function loadDeviceInventory(): Promise<void> {
-    setLoadingInventory(true);
+  const patchInventoryDevice = useCallback((deviceId: string, patch: Partial<DeviceListItem>): void => {
+    if (!deviceId) {
+      return;
+    }
+    const currentPatch = realtimeInventoryPatchQueueRef.current.get(deviceId);
+    realtimeInventoryPatchQueueRef.current.set(deviceId, {
+      ...currentPatch,
+      ...patch,
+      metadata: patch.metadata ? { ...currentPatch?.metadata, ...patch.metadata } : currentPatch?.metadata,
+    });
+    scheduleRealtimeFlush();
+  }, [scheduleRealtimeFlush]);
+
+  async function loadDeviceInventory(initialLoad = false): Promise<void> {
+    if (inventoryRequestInFlightRef.current || (!initialLoad && document.hidden)) {
+      return;
+    }
+    inventoryRequestInFlightRef.current = true;
+    if (initialLoad) {
+      setLoadingInventory(true);
+    }
     const result = await requestJson<unknown>("/api/devices?limit=500");
-    setLoadingInventory(false);
+    inventoryRequestInFlightRef.current = false;
+    if (initialLoad) {
+      setLoadingInventory(false);
+    }
 
     if (!result.ok || !result.payload) {
-      setInventoryDevices([]);
-      setStatus("Không tải được danh sách thiết bị");
+      if (initialLoad) {
+        setInventoryDevices([]);
+        setStatus("Không tải được danh sách thiết bị");
+      }
       return;
     }
 
     const parsed = parseDevices(result.payload).sort((left, right) =>
       left.deviceId.localeCompare(right.deviceId, "vi"),
     );
+    const signature = parsed
+      .map((device) => [
+        device.deviceId,
+        device.online ? "1" : "0",
+        device.lastHeartbeatAt || "",
+        device.metadata?.name || "",
+        device.metadata?.zone || "",
+        device.metadata?.firmwareVersion || "",
+      ].join("|"))
+      .join("\n");
+    if (inventorySignatureRef.current === signature) {
+      return;
+    }
+    inventorySignatureRef.current = signature;
 
     const nextOnlineMap = new Map(
       parsed.map((item) => [item.deviceId, { online: item.online, name: item.metadata?.name?.trim() || item.deviceId }]),
@@ -1055,16 +1337,28 @@ export default function App() {
 
   useEffect(() => {
     document.title = "SGP Vibration Datacenter";
-    void loadDeviceInventory();
+    void loadDeviceInventory(true);
 
-    const refreshInventory = window.setInterval(() => {
-      void loadDeviceInventory();
-    }, 5000);
+    const refreshInventory = () => {
+      if (!document.hidden) {
+        void loadDeviceInventory();
+      }
+    };
+    const refreshTimer = window.setInterval(refreshInventory, INVENTORY_REFRESH_INTERVAL_MS);
+    const handleVisibilityChange = () => {
+      documentVisibleRef.current = !document.hidden;
+      if (documentVisibleRef.current) {
+        flushRealtimeUpdates();
+        refreshInventory();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      window.clearInterval(refreshInventory);
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [showToast]);
+  }, [flushRealtimeUpdates, showToast]);
 
   useEffect(() => {
     const socket = io(window.location.origin, {
@@ -1078,6 +1372,7 @@ export default function App() {
         text: "Đã kết nối tới server realtime",
         type: "success",
       });
+      void loadDeviceInventory();
     });
 
     socket.on("disconnect", () => {
@@ -1093,16 +1388,7 @@ export default function App() {
         return;
       }
 
-      setTelemetryByDevice((previous) => {
-        const current = previous[parsed.deviceId] || [];
-        const retentionLimit =
-          telemetryRetentionByDeviceRef.current.get(parsed.deviceId) || TELEMETRY_VISIBLE_POINTS;
-        const next = mergeTelemetryPoints(current, [parsed.point], retentionLimit);
-        return {
-          ...previous,
-          [parsed.deviceId]: next,
-        };
-      });
+      enqueueTelemetryPoint(parsed.deviceId, parsed.point);
     });
 
     socket.on("telemetry:spectrum", (event: unknown) => {
@@ -1114,13 +1400,52 @@ export default function App() {
       enqueueSpectrumPoint(parsed.deviceId, parsed.point);
     });
 
+    socket.on("device:heartbeat", (event: unknown) => {
+      const payload = asRecord(event);
+      const deviceId = safeString(payload.deviceId).trim();
+      if (!deviceId) {
+        return;
+      }
+      patchInventoryDevice(deviceId, {
+        online: true,
+        connectedAt: safeString(payload.connectedAt) || undefined,
+        lastHeartbeatAt: safeString(payload.lastHeartbeatAt) || new Date().toISOString(),
+        heartbeat: asRecord(payload.heartbeat),
+      });
+    });
+
+    socket.on("device:metadata", (event: unknown) => {
+      const payload = asRecord(event);
+      const deviceId = safeString(payload.deviceId).trim();
+      if (!deviceId) {
+        return;
+      }
+      patchInventoryDevice(deviceId, { metadata: asRecord(payload.metadata) });
+    });
+
+    socket.on("device:sensor-status", (event: unknown) => {
+      const payload = asRecord(event);
+      const deviceId = safeString(payload.deviceId).trim();
+      const adxlHealth = parseAdxlHealth(payload);
+      if (!deviceId || !adxlHealth) {
+        return;
+      }
+      patchInventoryDevice(deviceId, { metadata: { adxlHealth } });
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, [enqueueSpectrumPoint, showToast]);
+  }, [enqueueSpectrumPoint, enqueueTelemetryPoint, patchInventoryDevice, showToast]);
 
   useEffect(() => {
     return () => {
+      if (realtimeFlushTimerRef.current !== null) {
+        window.clearTimeout(realtimeFlushTimerRef.current);
+      }
+      telemetryRequestAbortRef.current.forEach((controller) => controller.abort());
+      telemetryRequestAbortRef.current.clear();
+      realtimeInventoryPatchQueueRef.current.clear();
       for (const timeoutId of toastTimersRef.current.values()) {
         if (timeoutId.auto !== undefined) {
           window.clearTimeout(timeoutId.auto);
@@ -1177,7 +1502,7 @@ export default function App() {
               `[telemetry:reconcile] mismatch detected for ${deviceId}, syncing latest history`,
               { realtime: localLatest, db: dbLatest },
             );
-            await requestTelemetryHistory(deviceId, { limit: TELEMETRY_VISIBLE_POINTS });
+            await requestTelemetryHistory(deviceId, { limit: TELEMETRY_OVERVIEW_POINTS });
           }
         }),
       );
@@ -1190,19 +1515,39 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <DashboardShell
-        sensors={sensors}
-        telemetryByDevice={telemetryByDevice}
-        telemetryLoadingByDevice={telemetryLoadingByDevice}
-        spectrumByDevice={spectrumByDevice}
-        onRequestTelemetryHistory={requestTelemetryHistory}
-        onNotify={showToast}
-        onDeviceDataCleared={clearDeviceChartData}
-        onSensorUpdated={updateInventoryDeviceFromSensor}
-        toasts={toasts}
-        onDismissToast={dismissToast}
-        signalAlerts={signalAlerts}
-      />
+      {performanceProfileEnabled ? (
+        <Profiler id="dashboard" onRender={captureDashboardRender}>
+          <DashboardShell
+            sensors={sensors}
+            telemetryByDevice={telemetryByDevice}
+            telemetryLoadingByDevice={telemetryLoadingByDevice}
+            spectrumByDevice={spectrumByDevice}
+            onRequestTelemetryHistory={requestTelemetryHistory}
+            onNotify={showToast}
+            onDeviceDataCleared={clearDeviceChartData}
+            onChartClosed={releaseDeviceChartCache}
+            onSensorUpdated={updateInventoryDeviceFromSensor}
+            toasts={toasts}
+            onDismissToast={dismissToast}
+            signalAlerts={signalAlerts}
+          />
+        </Profiler>
+      ) : (
+        <DashboardShell
+          sensors={sensors}
+          telemetryByDevice={telemetryByDevice}
+          telemetryLoadingByDevice={telemetryLoadingByDevice}
+          spectrumByDevice={spectrumByDevice}
+          onRequestTelemetryHistory={requestTelemetryHistory}
+          onNotify={showToast}
+          onDeviceDataCleared={clearDeviceChartData}
+          onChartClosed={releaseDeviceChartCache}
+          onSensorUpdated={updateInventoryDeviceFromSensor}
+          toasts={toasts}
+          onDismissToast={dismissToast}
+          signalAlerts={signalAlerts}
+        />
+      )}
     </ThemeProvider>
   );
 }
