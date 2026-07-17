@@ -5,6 +5,7 @@ import type {
   DeviceCommand,
   DeviceHeartbeat,
   DeviceMetadata,
+  DeviceSensorStatusMessage,
   TelemetryMessage,
   TelemetrySpectrumMessage,
 } from '../../shared/types.js';
@@ -40,6 +41,10 @@ export class CompositeRealtimeGateway implements RealtimeGateway {
 
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void {
     this.forEachGateway((gateway) => gateway.broadcastDeviceMetadata(payload));
+  }
+
+  broadcastDeviceSensorStatus(payload: DeviceSensorStatusMessage): void {
+    this.forEachGateway((gateway) => gateway.broadcastDeviceSensorStatus(payload));
   }
 
   sendCommand(deviceId: string, command: DeviceCommand): void {

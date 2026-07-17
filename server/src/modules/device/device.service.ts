@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository, DeviceStatusHistoryQuery } from './device.repository.js';
-import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
+import type {
+  AdxlFaultReason,
+  AdxlStatus,
+  DeviceAdxlHealth,
+  DeviceAxisLabels,
+  DeviceHeartbeat,
+  DeviceMetadata,
+  DeviceSession,
+  DeviceStatusHistoryEntry,
+} from '../../shared/types.js';
 
 const AXIS_LABEL_KEYS = ['ax', 'ay', 'az'] as const;
 
@@ -35,6 +44,18 @@ type SocketZoneResolver = (zone: string) => Promise<string | undefined> | string
 
 type DeviceServiceOptions = {
   resolveSocketZone?: SocketZoneResolver;
+};
+
+export type UpdateAdxlHealthInput = {
+  status: AdxlStatus;
+  reason?: AdxlFaultReason;
+  captureTimeoutCount?: number;
+  i2cReadErrorCount?: number;
+};
+
+export type UpdateAdxlHealthResult = {
+  health: DeviceAdxlHealth;
+  updated: boolean;
 };
 
 type DeviceListItem = {
@@ -254,6 +275,41 @@ export class DeviceService {
 
   getMetadata(deviceId: string): DeviceMetadata | null {
     return this.repository.getMetadata(deviceId);
+  }
+
+  async updateAdxlHealth(
+    deviceId: string,
+    input: UpdateAdxlHealthInput,
+  ): Promise<UpdateAdxlHealthResult | null> {
+    const existing = this.repository.getMetadata(deviceId);
+    if (!existing) {
+      return null;
+    }
+
+    const current = existing.adxlHealth;
+    const nextHealth: DeviceAdxlHealth = {
+      status: input.status,
+      reason: input.status === 'fault' ? input.reason : undefined,
+      captureTimeoutCount: input.captureTimeoutCount ?? current?.captureTimeoutCount,
+      i2cReadErrorCount: input.i2cReadErrorCount ?? current?.i2cReadErrorCount,
+      updatedAt: new Date().toISOString(),
+    };
+    const unchanged =
+      current?.status === nextHealth.status &&
+      current.reason === nextHealth.reason &&
+      current.captureTimeoutCount === nextHealth.captureTimeoutCount &&
+      current.i2cReadErrorCount === nextHealth.i2cReadErrorCount;
+    if (unchanged && current) {
+      return { health: current, updated: false };
+    }
+
+    const next: DeviceMetadata = {
+      ...existing,
+      adxlHealth: nextHealth,
+      updatedAt: nextHealth.updatedAt,
+    };
+    await this.repository.upsertMetadata(next);
+    return { health: nextHealth, updated: true };
   }
 
   connect(deviceId: string, socketId: string, clientIp?: string): DeviceSession {

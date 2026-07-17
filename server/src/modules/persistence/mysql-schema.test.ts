@@ -50,3 +50,39 @@ test('runtime MySQL schema includes data export job table', () => {
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
   }
 });
+
+test('runtime MySQL schema includes hourly telemetry availability summaries', () => {
+  assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS device_telemetry_hour_summaries/i);
+  for (const column of ['device_id', 'hour_started_at', 'sample_count', 'first_received_at', 'last_received_at']) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
+  }
+});
+
+test('runtime MySQL schema includes hourly telemetry metric summaries', () => {
+  assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS device_telemetry_hour_metric_summaries/i);
+  for (const column of ['temperature', 'vibration', 'vrms_x_mms', 'drms_x_um']) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
+  }
+});
+
+test('runtime MySQL schema includes ADXL health and partial telemetry fields', () => {
+  for (const column of [
+    'adxl_status',
+    'adxl_fault_reason',
+    'adxl_status_updated_at',
+    'adxl_capture_timeout_count',
+    'adxl_i2c_read_error_count',
+    'message_id',
+    'temperature_available',
+    'vibration_available',
+  ]) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
+  }
+  assert.match(MYSQL_SCHEMA_SQL, /uq_device_datas_device_message_id/i);
+});
+
+test('runtime MySQL schema keeps separate metric sample counts for partial telemetry', () => {
+  for (const column of ['temperature_sample_count', 'vibration_sample_count', 'ax_sample_count']) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
+  }
+});

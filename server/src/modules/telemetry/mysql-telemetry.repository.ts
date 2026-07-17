@@ -35,6 +35,11 @@ type TelemetryRow = {
   drms_unit: string | null;
   sample_count: number | string | bigint | null;
   telemetry_uuid: string | null;
+  message_id: string | null;
+  temperature_available: number | boolean | null;
+  vibration_available: number | boolean | null;
+  adxl_status: 'ok' | 'fault' | 'recovering' | null;
+  adxl_fault_reason: 'not_detected' | 'i2c_read_error' | 'capture_timeout' | 'unknown' | null;
 };
 
 type TelemetryBucketRow = TelemetryRow & {
@@ -44,6 +49,7 @@ type TelemetryBucketRow = TelemetryRow & {
 
 const DEFAULT_HISTORY_LIMIT = 200;
 const MAX_HISTORY_LIMIT = 12_000;
+const HOUR_MS = 60 * 60 * 1000;
 
 type CountRow = {
   total: number;
@@ -61,6 +67,34 @@ type TelemetryAvailabilityRow = {
   first_at: string | Date | null;
   last_at: string | Date | null;
 };
+
+function isHourlyAvailabilityRange(
+  fromTimestamp: number | null,
+  toTimestamp: number | null,
+  shiftMinutes: number,
+): boolean {
+  if (shiftMinutes % 60 !== 0) {
+    return false;
+  }
+  const shiftMs = shiftMinutes * 60 * 1000;
+  if (fromTimestamp !== null && (fromTimestamp + shiftMs) % HOUR_MS !== 0) {
+    return false;
+  }
+  return toTimestamp === null || (toTimestamp + shiftMs + 1) % HOUR_MS === 0;
+}
+
+function toHourStartedAt(timestamp: number): string {
+  return new Date(Math.floor(timestamp / HOUR_MS) * HOUR_MS).toISOString();
+}
+
+function isMissingHourlySummaryTable(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'ER_NO_SUCH_TABLE',
+  );
+}
 
 function toIsoTimestamp(value: string | Date): string {
   if (value instanceof Date) {
@@ -87,6 +121,16 @@ function toFiniteNumber(value: number | string | bigint | null | undefined): num
     return Number.isFinite(normalized) ? normalized : undefined;
   }
 
+  return undefined;
+}
+
+function toOptionalBoolean(value: number | boolean | null | undefined): boolean | undefined {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (value === false || value === 0) {
+    return false;
+  }
   return undefined;
 }
 
@@ -118,6 +162,8 @@ function toPayload(row: TelemetryRow): TelemetryPayload {
   const drmsBandMin = toFiniteNumber(row.drms_band_min_hz);
   const drmsBandMax = toFiniteNumber(row.drms_band_max_hz);
   const sampleCount = toFiniteNumber(row.sample_count);
+  const temperatureAvailable = toOptionalBoolean(row.temperature_available);
+  const vibrationAvailable = toOptionalBoolean(row.vibration_available);
 
   if (temperature !== undefined) payload.temperature = temperature;
   if (vibration !== undefined) payload.vibration = vibration;
@@ -135,6 +181,11 @@ function toPayload(row: TelemetryRow): TelemetryPayload {
   if (drmsBandMax !== undefined) payload.drms_band_max_hz = drmsBandMax;
   if (typeof row.drms_unit === 'string' && row.drms_unit.trim()) payload.drms_unit = row.drms_unit;
   if (sampleCount !== undefined) payload.sample_count = sampleCount;
+  if (typeof row.message_id === 'string' && row.message_id.trim()) payload.messageId = row.message_id;
+  if (temperatureAvailable !== undefined) payload.temperatureAvailable = temperatureAvailable;
+  if (vibrationAvailable !== undefined) payload.vibrationAvailable = vibrationAvailable;
+  if (row.adxl_status) payload.adxlStatus = row.adxl_status;
+  if (row.adxl_status === 'fault' && row.adxl_fault_reason) payload.adxlFaultReason = row.adxl_fault_reason;
   if (typeof row.telemetry_uuid === 'string' && row.telemetry_uuid.trim()) {
     payload.telemetry_uuid = row.telemetry_uuid;
     payload.telemetryUuid = row.telemetry_uuid;
@@ -155,7 +206,66 @@ function normalizeTelemetryUuid(payload: TelemetryPayload): string | null {
   return normalized.slice(0, 255);
 }
 
-function createArchiveTelemetryUuid(row: TelemetryRow): string {
+function normalizeMessageId(payload: TelemetryPayload): string | null {
+  if (typeof payload.messageId !== 'string') {
+    return null;
+  }
+  const normalized = payload.messageId.trim();
+  return normalized ? normalized.slice(0, 255) : null;
+}
+
+type TelemetryMetricValues = {
+  temperature: number | null;
+  vibration: number | null;
+  ax: number | null;
+  ay: number | null;
+  az: number | null;
+  vrmsX: number | null;
+  vrmsY: number | null;
+  vrmsZ: number | null;
+  vrmsUnit: string | null;
+  drmsX: number | null;
+  drmsY: number | null;
+  drmsZ: number | null;
+  drmsBandMin: number | null;
+  drmsBandMax: number | null;
+  drmsUnit: string | null;
+};
+
+function numberMetric(value: unknown, enabled: boolean): number | null {
+  return enabled && typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function textMetric(value: unknown, enabled: boolean): string | null {
+  return enabled && typeof value === 'string' ? value : null;
+}
+
+function createTelemetryMetricValues(payload: TelemetryPayload): TelemetryMetricValues {
+  const hasTemperature = payload.temperatureAvailable !== false;
+  const hasVibration = payload.vibrationAvailable !== false;
+  return {
+    temperature: numberMetric(payload.temperature, hasTemperature),
+    vibration: numberMetric(payload.vibration, hasVibration),
+    ax: numberMetric(payload.ax, hasVibration),
+    ay: numberMetric(payload.ay, hasVibration),
+    az: numberMetric(payload.az, hasVibration),
+    vrmsX: numberMetric(payload.vrms_x_mms ?? payload.vx_rms_mms, hasVibration),
+    vrmsY: numberMetric(payload.vrms_y_mms ?? payload.vy_rms_mms, hasVibration),
+    vrmsZ: numberMetric(payload.vrms_z_mms ?? payload.vz_rms_mms, hasVibration),
+    vrmsUnit: textMetric(payload.vrms_unit, hasVibration),
+    drmsX: numberMetric(payload.drms_x_um, hasVibration),
+    drmsY: numberMetric(payload.drms_y_um, hasVibration),
+    drmsZ: numberMetric(payload.drms_z_um, hasVibration),
+    drmsBandMin: numberMetric(payload.drms_band_min_hz, hasVibration),
+    drmsBandMax: numberMetric(payload.drms_band_max_hz, hasVibration),
+    drmsUnit: textMetric(payload.drms_unit, hasVibration),
+  };
+}
+
+function createArchiveTelemetryUuid(row: TelemetryRow): string | undefined {
+  if (toOptionalBoolean(row.vibration_available) === false) {
+    return undefined;
+  }
   if (row.telemetry_uuid && row.telemetry_uuid.trim()) {
     return row.telemetry_uuid.trim().slice(0, 255);
   }
@@ -259,6 +369,16 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     const whereSql = where.join(' AND ');
 
+    if (bucketMs && bucketMs >= HOUR_MS) {
+      try {
+        return await this.listHourlyMetricHistory(query.deviceId, fromTimestamp, toTimestamp, bucketMs, explicitBucketLimit);
+      } catch (error) {
+        if (!isMissingHourlySummaryTable(error)) {
+          throw error;
+        }
+      }
+    }
+
     const countRows = await this.mysql.query<CountRow>(
       `SELECT COUNT(*) AS total FROM device_datas WHERE ${whereSql}`,
       params,
@@ -340,7 +460,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
               vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
               drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
-              sample_count, telemetry_uuid
+              sample_count, telemetry_uuid, message_id,
+              temperature_available, vibration_available, adxl_status, adxl_fault_reason
          FROM device_datas
          WHERE ${whereSql}
          ORDER BY received_at DESC
@@ -356,6 +477,107 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       items,
       totalMatched,
       truncated: totalMatched > items.length,
+      bucketMs,
+    };
+  }
+
+  private async listHourlyMetricHistory(
+    deviceId: string,
+    fromTimestamp: number | null,
+    toTimestamp: number | null,
+    bucketMs: number,
+    explicitBucketLimit: number | undefined,
+  ): Promise<TelemetryHistoryResult> {
+    const where: string[] = ['device_id = ?'];
+    const params: Array<string | number | boolean | null | Date | Buffer> = [deviceId];
+    if (fromTimestamp !== null) {
+      where.push('hour_started_at >= ?');
+      params.push(toHourStartedAt(fromTimestamp));
+    }
+    if (toTimestamp !== null) {
+      where.push('hour_started_at <= ?');
+      params.push(toHourStartedAt(toTimestamp));
+    }
+
+    const bucketUs = bucketMs * 1000;
+    const bucketRows = await this.mysql!.query<TelemetryBucketRow>(
+      `SELECT
+         0 AS id,
+         device_id,
+         MIN(first_received_at) AS received_at,
+         SUM(temperature * temperature_sample_count) / NULLIF(SUM(temperature_sample_count), 0) AS temperature,
+         SUM(vibration * vibration_sample_count) / NULLIF(SUM(vibration_sample_count), 0) AS vibration,
+         SUM(ax * ax_sample_count) / NULLIF(SUM(ax_sample_count), 0) AS ax,
+         SUM(ay * ay_sample_count) / NULLIF(SUM(ay_sample_count), 0) AS ay,
+         SUM(az * az_sample_count) / NULLIF(SUM(az_sample_count), 0) AS az,
+         SUM(vrms_x_mms * vrms_x_sample_count) / NULLIF(SUM(vrms_x_sample_count), 0) AS vrms_x_mms,
+         SUM(vrms_y_mms * vrms_y_sample_count) / NULLIF(SUM(vrms_y_sample_count), 0) AS vrms_y_mms,
+         SUM(vrms_z_mms * vrms_z_sample_count) / NULLIF(SUM(vrms_z_sample_count), 0) AS vrms_z_mms,
+         MAX(vrms_unit) AS vrms_unit,
+         SUM(drms_x_um * drms_x_sample_count) / NULLIF(SUM(drms_x_sample_count), 0) AS drms_x_um,
+         SUM(drms_y_um * drms_y_sample_count) / NULLIF(SUM(drms_y_sample_count), 0) AS drms_y_um,
+         SUM(drms_z_um * drms_z_sample_count) / NULLIF(SUM(drms_z_sample_count), 0) AS drms_z_um,
+         SUM(drms_band_min_hz * drms_band_min_sample_count) / NULLIF(SUM(drms_band_min_sample_count), 0) AS drms_band_min_hz,
+         SUM(drms_band_max_hz * drms_band_max_sample_count) / NULLIF(SUM(drms_band_max_sample_count), 0) AS drms_band_max_hz,
+         MAX(drms_unit) AS drms_unit,
+         SUM(sample_count) AS sample_count,
+         NULL AS telemetry_uuid,
+         bucket_index * ? AS bucket_started_ms,
+         (bucket_index + 1) * ? AS bucket_ended_ms
+       FROM (
+         SELECT
+           device_id,
+           hour_started_at,
+           sample_count,
+           first_received_at,
+           temperature,
+           vibration,
+           ax,
+           ay,
+           az,
+           vrms_x_mms,
+           vrms_y_mms,
+           vrms_z_mms,
+           vrms_unit,
+           drms_x_um,
+           drms_y_um,
+           drms_z_um,
+            drms_band_min_hz,
+            drms_band_max_hz,
+            drms_unit,
+            temperature_sample_count,
+            vibration_sample_count,
+            ax_sample_count,
+            ay_sample_count,
+            az_sample_count,
+            vrms_x_sample_count,
+            vrms_y_sample_count,
+            vrms_z_sample_count,
+            drms_x_sample_count,
+            drms_y_sample_count,
+            drms_z_sample_count,
+            drms_band_min_sample_count,
+            drms_band_max_sample_count,
+           FLOOR(TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', hour_started_at) / ?) AS bucket_index
+         FROM device_telemetry_hour_metric_summaries
+         WHERE ${where.join(' AND ')}
+       ) AS hourly
+       GROUP BY device_id, bucket_index
+       ORDER BY bucket_index ${explicitBucketLimit ? 'DESC' : 'ASC'}
+       ${explicitBucketLimit ? 'LIMIT ?' : ''}`,
+      explicitBucketLimit
+        ? [bucketMs, bucketMs, bucketUs, ...params, explicitBucketLimit]
+        : [bucketMs, bucketMs, bucketUs, ...params],
+    );
+
+    const items = bucketRows
+      .map((row) => toBucketHistoryPoint(row))
+      .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
+    const totalMatched = items.reduce((total, item) => total + (item.sampleCount ?? 0), 0);
+    return {
+      items,
+      totalMatched,
+      truncated: explicitBucketLimit !== undefined && bucketRows.length >= explicitBucketLimit,
       bucketMs,
     };
   }
@@ -390,7 +612,7 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       whereParams.push(new Date(toTimestamp).toISOString());
     }
 
-    const rows = await this.mysql.query<TelemetryAvailabilityRow>(
+    const loadRawAvailability = async (): Promise<TelemetryAvailabilityRow[]> => await this.mysql!.query<TelemetryAvailabilityRow>(
       `SELECT
          DATE_FORMAT(DATE_ADD(received_at, INTERVAL ? MINUTE), '%Y-%m-%d') AS day_key,
          COUNT(*) AS total,
@@ -403,6 +625,42 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
        LIMIT ?`,
       [shiftMinutes, ...whereParams, limitDays],
     );
+
+    let rows: TelemetryAvailabilityRow[];
+    if (isHourlyAvailabilityRange(fromTimestamp, toTimestamp, shiftMinutes)) {
+      const summaryWhere: string[] = ['device_id = ?'];
+      const summaryParams: Array<string | number | boolean | null | Date | Buffer> = [targetDeviceId];
+      if (fromTimestamp !== null) {
+        summaryWhere.push('hour_started_at >= ?');
+        summaryParams.push(toHourStartedAt(fromTimestamp));
+      }
+      if (toTimestamp !== null) {
+        summaryWhere.push('hour_started_at <= ?');
+        summaryParams.push(toHourStartedAt(toTimestamp));
+      }
+      try {
+        rows = await this.mysql.query<TelemetryAvailabilityRow>(
+          `SELECT
+             DATE_FORMAT(DATE_ADD(hour_started_at, INTERVAL ? MINUTE), '%Y-%m-%d') AS day_key,
+             SUM(sample_count) AS total,
+             MIN(first_received_at) AS first_at,
+             MAX(last_received_at) AS last_at
+           FROM device_telemetry_hour_summaries
+           WHERE ${summaryWhere.join(' AND ')}
+           GROUP BY day_key
+           ORDER BY day_key DESC
+           LIMIT ?`,
+          [shiftMinutes, ...summaryParams, limitDays],
+        );
+      } catch (error) {
+        if (!isMissingHourlySummaryTable(error)) {
+          throw error;
+        }
+        rows = await loadRawAvailability();
+      }
+    } else {
+      rows = await loadRawAvailability();
+    }
 
     const days: DeviceTelemetryAvailabilityDay[] = [];
     for (const row of rows) {
@@ -508,7 +766,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
               vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
               drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
-              sample_count, telemetry_uuid
+              sample_count, telemetry_uuid, message_id,
+              temperature_available, vibration_available, adxl_status, adxl_fault_reason
          FROM device_datas
         WHERE ${where.join(' AND ')}
         ORDER BY device_id ASC, received_at ASC, id ASC`,
@@ -517,11 +776,11 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     return rows.map((row) => {
       const telemetryUuid = createArchiveTelemetryUuid(row);
-      const payload = {
-        ...toPayload(row),
-        telemetry_uuid: telemetryUuid,
-        telemetryUuid,
-      };
+      const payload: TelemetryPayload = { ...toPayload(row) };
+      if (telemetryUuid) {
+        payload.telemetry_uuid = telemetryUuid;
+        payload.telemetryUuid = telemetryUuid;
+      }
       return {
         deviceId: row.device_id,
         receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
@@ -541,7 +800,10 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
 
     for (const point of points) {
       const payload = point.payload ?? {};
-      const telemetryUuid = point.telemetryUuid ?? normalizeTelemetryUuid(payload);
+      const metrics = createTelemetryMetricValues(payload);
+      const telemetryUuid = payload.vibrationAvailable === false
+        ? null
+        : point.telemetryUuid ?? normalizeTelemetryUuid(payload);
       const affectedRows = await this.mysql.execute(
         `INSERT INTO device_datas (
            device_id,
@@ -560,10 +822,15 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
            drms_z_um,
            drms_band_min_hz,
            drms_band_max_hz,
-           drms_unit,
-           sample_count,
-           telemetry_uuid
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            drms_unit,
+            sample_count,
+            telemetry_uuid,
+            message_id,
+            temperature_available,
+            vibration_available,
+            adxl_status,
+            adxl_fault_reason
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            temperature = VALUES(temperature),
            vibration = VALUES(vibration),
@@ -578,33 +845,44 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
            drms_y_um = VALUES(drms_y_um),
            drms_z_um = VALUES(drms_z_um),
            drms_band_min_hz = VALUES(drms_band_min_hz),
-           drms_band_max_hz = VALUES(drms_band_max_hz),
-           drms_unit = VALUES(drms_unit),
-           sample_count = VALUES(sample_count)`,
+            drms_band_max_hz = VALUES(drms_band_max_hz),
+            drms_unit = VALUES(drms_unit),
+            sample_count = VALUES(sample_count),
+            telemetry_uuid = VALUES(telemetry_uuid),
+            message_id = VALUES(message_id),
+            temperature_available = VALUES(temperature_available),
+            vibration_available = VALUES(vibration_available),
+            adxl_status = VALUES(adxl_status),
+            adxl_fault_reason = VALUES(adxl_fault_reason)`,
         [
           point.deviceId,
           point.receivedAt,
-          typeof payload.temperature === 'number' ? payload.temperature : null,
-          typeof payload.vibration === 'number' ? payload.vibration : null,
-          typeof payload.ax === 'number' ? payload.ax : null,
-          typeof payload.ay === 'number' ? payload.ay : null,
-          typeof payload.az === 'number' ? payload.az : null,
-          typeof payload.vrms_x_mms === 'number' ? payload.vrms_x_mms : (typeof payload.vx_rms_mms === 'number' ? payload.vx_rms_mms : null),
-          typeof payload.vrms_y_mms === 'number' ? payload.vrms_y_mms : (typeof payload.vy_rms_mms === 'number' ? payload.vy_rms_mms : null),
-          typeof payload.vrms_z_mms === 'number' ? payload.vrms_z_mms : (typeof payload.vz_rms_mms === 'number' ? payload.vz_rms_mms : null),
-          typeof payload.vrms_unit === 'string' ? payload.vrms_unit : null,
-          typeof payload.drms_x_um === 'number' ? payload.drms_x_um : null,
-          typeof payload.drms_y_um === 'number' ? payload.drms_y_um : null,
-          typeof payload.drms_z_um === 'number' ? payload.drms_z_um : null,
-          typeof payload.drms_band_min_hz === 'number' ? payload.drms_band_min_hz : null,
-          typeof payload.drms_band_max_hz === 'number' ? payload.drms_band_max_hz : null,
-          typeof payload.drms_unit === 'string' ? payload.drms_unit : null,
+          metrics.temperature,
+          metrics.vibration,
+          metrics.ax,
+          metrics.ay,
+          metrics.az,
+          metrics.vrmsX,
+          metrics.vrmsY,
+          metrics.vrmsZ,
+          metrics.vrmsUnit,
+          metrics.drmsX,
+          metrics.drmsY,
+          metrics.drmsZ,
+          metrics.drmsBandMin,
+          metrics.drmsBandMax,
+          metrics.drmsUnit,
           typeof point.sampleCount === 'number'
             ? point.sampleCount
             : typeof payload.sample_count === 'number'
               ? payload.sample_count
               : null,
           telemetryUuid,
+          normalizeMessageId(payload),
+          typeof payload.temperatureAvailable === 'boolean' ? Number(payload.temperatureAvailable) : null,
+          typeof payload.vibrationAvailable === 'boolean' ? Number(payload.vibrationAvailable) : null,
+          payload.adxlStatus ?? null,
+          payload.adxlStatus === 'fault' ? payload.adxlFaultReason ?? null : null,
         ],
       );
       if (affectedRows === 1) {
@@ -651,7 +929,8 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
               vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
               drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
-              sample_count, telemetry_uuid
+              sample_count, telemetry_uuid, message_id,
+              temperature_available, vibration_available, adxl_status, adxl_fault_reason
          FROM device_datas
          ORDER BY received_at DESC
          LIMIT 1`,
@@ -676,9 +955,10 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     }
 
     const payload = message.payload;
-    const telemetryUuid = normalizeTelemetryUuid(payload);
+    const metrics = createTelemetryMetricValues(payload);
+    const telemetryUuid = payload.vibrationAvailable === false ? null : normalizeTelemetryUuid(payload);
 
-    await this.mysql.execute(
+    const affectedRows = await this.mysql.execute(
       `INSERT INTO device_datas (
          device_id,
          received_at,
@@ -698,8 +978,13 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          drms_band_max_hz,
          drms_unit,
          sample_count,
-         telemetry_uuid
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         telemetry_uuid,
+         message_id,
+         temperature_available,
+         vibration_available,
+         adxl_status,
+         adxl_fault_reason
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          received_at = VALUES(received_at),
          temperature = VALUES(temperature),
@@ -717,27 +1002,159 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          drms_band_min_hz = VALUES(drms_band_min_hz),
          drms_band_max_hz = VALUES(drms_band_max_hz),
          drms_unit = VALUES(drms_unit),
-         sample_count = VALUES(sample_count)`,
+         sample_count = VALUES(sample_count),
+         telemetry_uuid = VALUES(telemetry_uuid),
+         message_id = VALUES(message_id),
+         temperature_available = VALUES(temperature_available),
+         vibration_available = VALUES(vibration_available),
+         adxl_status = VALUES(adxl_status),
+         adxl_fault_reason = VALUES(adxl_fault_reason)`,
       [
         message.deviceId,
         message.receivedAt,
-        typeof payload.temperature === 'number' ? payload.temperature : null,
-        typeof payload.vibration === 'number' ? payload.vibration : null,
-        typeof payload.ax === 'number' ? payload.ax : null,
-        typeof payload.ay === 'number' ? payload.ay : null,
-        typeof payload.az === 'number' ? payload.az : null,
-        typeof payload.vrms_x_mms === 'number' ? payload.vrms_x_mms : (typeof payload.vx_rms_mms === 'number' ? payload.vx_rms_mms : null),
-        typeof payload.vrms_y_mms === 'number' ? payload.vrms_y_mms : (typeof payload.vy_rms_mms === 'number' ? payload.vy_rms_mms : null),
-        typeof payload.vrms_z_mms === 'number' ? payload.vrms_z_mms : (typeof payload.vz_rms_mms === 'number' ? payload.vz_rms_mms : null),
-        typeof payload.vrms_unit === 'string' ? payload.vrms_unit : null,
-        typeof payload.drms_x_um === 'number' ? payload.drms_x_um : null,
-        typeof payload.drms_y_um === 'number' ? payload.drms_y_um : null,
-        typeof payload.drms_z_um === 'number' ? payload.drms_z_um : null,
-        typeof payload.drms_band_min_hz === 'number' ? payload.drms_band_min_hz : null,
-        typeof payload.drms_band_max_hz === 'number' ? payload.drms_band_max_hz : null,
-        typeof payload.drms_unit === 'string' ? payload.drms_unit : null,
+        metrics.temperature,
+        metrics.vibration,
+        metrics.ax,
+        metrics.ay,
+        metrics.az,
+        metrics.vrmsX,
+        metrics.vrmsY,
+        metrics.vrmsZ,
+        metrics.vrmsUnit,
+        metrics.drmsX,
+        metrics.drmsY,
+        metrics.drmsZ,
+        metrics.drmsBandMin,
+        metrics.drmsBandMax,
+        metrics.drmsUnit,
         typeof payload.sample_count === 'number' ? payload.sample_count : null,
         telemetryUuid,
+        normalizeMessageId(payload),
+        typeof payload.temperatureAvailable === 'boolean' ? Number(payload.temperatureAvailable) : null,
+        typeof payload.vibrationAvailable === 'boolean' ? Number(payload.vibrationAvailable) : null,
+        payload.adxlStatus ?? null,
+        payload.adxlStatus === 'fault' ? payload.adxlFaultReason ?? null : null,
+      ],
+    );
+    if (affectedRows === 1) {
+      await this.upsertHourlyAvailability(message.deviceId, message.receivedAt);
+      try {
+        await this.upsertHourlyMetricSummary(message.deviceId, message.receivedAt, payload);
+      } catch (error) {
+        if (!isMissingHourlySummaryTable(error)) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  private async upsertHourlyAvailability(deviceId: string, receivedAt: string): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+    const timestamp = Date.parse(receivedAt);
+    if (!Number.isFinite(timestamp)) {
+      return;
+    }
+    const hourStartedAt = toHourStartedAt(timestamp);
+    await this.mysql.execute(
+      `INSERT INTO device_telemetry_hour_summaries (
+         device_id, hour_started_at, sample_count, first_received_at, last_received_at
+       ) VALUES (?, ?, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         sample_count = sample_count + 1,
+         first_received_at = LEAST(first_received_at, VALUES(first_received_at)),
+         last_received_at = GREATEST(last_received_at, VALUES(last_received_at))`,
+      [deviceId, hourStartedAt, receivedAt, receivedAt],
+    );
+  }
+
+  private async upsertHourlyMetricSummary(deviceId: string, receivedAt: string, payload: TelemetryPayload): Promise<void> {
+    if (!this.mysql) {
+      return;
+    }
+    const timestamp = Date.parse(receivedAt);
+    if (!Number.isFinite(timestamp)) {
+      return;
+    }
+    const hourStartedAt = toHourStartedAt(timestamp);
+    const metrics = createTelemetryMetricValues(payload);
+    await this.mysql.execute(
+      `INSERT INTO device_telemetry_hour_metric_summaries (
+         device_id, hour_started_at, sample_count, first_received_at, last_received_at,
+         temperature, vibration, ax, ay, az,
+         vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+         drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
+         temperature_sample_count, vibration_sample_count, ax_sample_count, ay_sample_count, az_sample_count,
+         vrms_x_sample_count, vrms_y_sample_count, vrms_z_sample_count,
+         drms_x_sample_count, drms_y_sample_count, drms_z_sample_count,
+         drms_band_min_sample_count, drms_band_max_sample_count
+       ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         temperature = CASE WHEN VALUES(temperature_sample_count) = 0 THEN temperature WHEN temperature IS NULL THEN VALUES(temperature) ELSE (temperature * temperature_sample_count + VALUES(temperature) * VALUES(temperature_sample_count)) / (temperature_sample_count + VALUES(temperature_sample_count)) END,
+         vibration = CASE WHEN VALUES(vibration_sample_count) = 0 THEN vibration WHEN vibration IS NULL THEN VALUES(vibration) ELSE (vibration * vibration_sample_count + VALUES(vibration) * VALUES(vibration_sample_count)) / (vibration_sample_count + VALUES(vibration_sample_count)) END,
+         ax = CASE WHEN VALUES(ax_sample_count) = 0 THEN ax WHEN ax IS NULL THEN VALUES(ax) ELSE (ax * ax_sample_count + VALUES(ax) * VALUES(ax_sample_count)) / (ax_sample_count + VALUES(ax_sample_count)) END,
+         ay = CASE WHEN VALUES(ay_sample_count) = 0 THEN ay WHEN ay IS NULL THEN VALUES(ay) ELSE (ay * ay_sample_count + VALUES(ay) * VALUES(ay_sample_count)) / (ay_sample_count + VALUES(ay_sample_count)) END,
+         az = CASE WHEN VALUES(az_sample_count) = 0 THEN az WHEN az IS NULL THEN VALUES(az) ELSE (az * az_sample_count + VALUES(az) * VALUES(az_sample_count)) / (az_sample_count + VALUES(az_sample_count)) END,
+         vrms_x_mms = CASE WHEN VALUES(vrms_x_sample_count) = 0 THEN vrms_x_mms WHEN vrms_x_mms IS NULL THEN VALUES(vrms_x_mms) ELSE (vrms_x_mms * vrms_x_sample_count + VALUES(vrms_x_mms) * VALUES(vrms_x_sample_count)) / (vrms_x_sample_count + VALUES(vrms_x_sample_count)) END,
+         vrms_y_mms = CASE WHEN VALUES(vrms_y_sample_count) = 0 THEN vrms_y_mms WHEN vrms_y_mms IS NULL THEN VALUES(vrms_y_mms) ELSE (vrms_y_mms * vrms_y_sample_count + VALUES(vrms_y_mms) * VALUES(vrms_y_sample_count)) / (vrms_y_sample_count + VALUES(vrms_y_sample_count)) END,
+         vrms_z_mms = CASE WHEN VALUES(vrms_z_sample_count) = 0 THEN vrms_z_mms WHEN vrms_z_mms IS NULL THEN VALUES(vrms_z_mms) ELSE (vrms_z_mms * vrms_z_sample_count + VALUES(vrms_z_mms) * VALUES(vrms_z_sample_count)) / (vrms_z_sample_count + VALUES(vrms_z_sample_count)) END,
+         vrms_unit = COALESCE(VALUES(vrms_unit), vrms_unit),
+         drms_x_um = CASE WHEN VALUES(drms_x_sample_count) = 0 THEN drms_x_um WHEN drms_x_um IS NULL THEN VALUES(drms_x_um) ELSE (drms_x_um * drms_x_sample_count + VALUES(drms_x_um) * VALUES(drms_x_sample_count)) / (drms_x_sample_count + VALUES(drms_x_sample_count)) END,
+         drms_y_um = CASE WHEN VALUES(drms_y_sample_count) = 0 THEN drms_y_um WHEN drms_y_um IS NULL THEN VALUES(drms_y_um) ELSE (drms_y_um * drms_y_sample_count + VALUES(drms_y_um) * VALUES(drms_y_sample_count)) / (drms_y_sample_count + VALUES(drms_y_sample_count)) END,
+         drms_z_um = CASE WHEN VALUES(drms_z_sample_count) = 0 THEN drms_z_um WHEN drms_z_um IS NULL THEN VALUES(drms_z_um) ELSE (drms_z_um * drms_z_sample_count + VALUES(drms_z_um) * VALUES(drms_z_sample_count)) / (drms_z_sample_count + VALUES(drms_z_sample_count)) END,
+         drms_band_min_hz = CASE WHEN VALUES(drms_band_min_sample_count) = 0 THEN drms_band_min_hz WHEN drms_band_min_hz IS NULL THEN VALUES(drms_band_min_hz) ELSE (drms_band_min_hz * drms_band_min_sample_count + VALUES(drms_band_min_hz) * VALUES(drms_band_min_sample_count)) / (drms_band_min_sample_count + VALUES(drms_band_min_sample_count)) END,
+         drms_band_max_hz = CASE WHEN VALUES(drms_band_max_sample_count) = 0 THEN drms_band_max_hz WHEN drms_band_max_hz IS NULL THEN VALUES(drms_band_max_hz) ELSE (drms_band_max_hz * drms_band_max_sample_count + VALUES(drms_band_max_hz) * VALUES(drms_band_max_sample_count)) / (drms_band_max_sample_count + VALUES(drms_band_max_sample_count)) END,
+         drms_unit = COALESCE(VALUES(drms_unit), drms_unit),
+         temperature_sample_count = temperature_sample_count + VALUES(temperature_sample_count),
+         vibration_sample_count = vibration_sample_count + VALUES(vibration_sample_count),
+         ax_sample_count = ax_sample_count + VALUES(ax_sample_count),
+         ay_sample_count = ay_sample_count + VALUES(ay_sample_count),
+         az_sample_count = az_sample_count + VALUES(az_sample_count),
+         vrms_x_sample_count = vrms_x_sample_count + VALUES(vrms_x_sample_count),
+         vrms_y_sample_count = vrms_y_sample_count + VALUES(vrms_y_sample_count),
+         vrms_z_sample_count = vrms_z_sample_count + VALUES(vrms_z_sample_count),
+         drms_x_sample_count = drms_x_sample_count + VALUES(drms_x_sample_count),
+         drms_y_sample_count = drms_y_sample_count + VALUES(drms_y_sample_count),
+         drms_z_sample_count = drms_z_sample_count + VALUES(drms_z_sample_count),
+         drms_band_min_sample_count = drms_band_min_sample_count + VALUES(drms_band_min_sample_count),
+         drms_band_max_sample_count = drms_band_max_sample_count + VALUES(drms_band_max_sample_count),
+         sample_count = sample_count + 1,
+         first_received_at = LEAST(first_received_at, VALUES(first_received_at)),
+         last_received_at = GREATEST(last_received_at, VALUES(last_received_at))`,
+      [
+        deviceId,
+        hourStartedAt,
+        receivedAt,
+        receivedAt,
+        metrics.temperature,
+        metrics.vibration,
+        metrics.ax,
+        metrics.ay,
+        metrics.az,
+        metrics.vrmsX,
+        metrics.vrmsY,
+        metrics.vrmsZ,
+        metrics.vrmsUnit,
+        metrics.drmsX,
+        metrics.drmsY,
+        metrics.drmsZ,
+        metrics.drmsBandMin,
+        metrics.drmsBandMax,
+        metrics.drmsUnit,
+        metrics.temperature === null ? 0 : 1,
+        metrics.vibration === null ? 0 : 1,
+        metrics.ax === null ? 0 : 1,
+        metrics.ay === null ? 0 : 1,
+        metrics.az === null ? 0 : 1,
+        metrics.vrmsX === null ? 0 : 1,
+        metrics.vrmsY === null ? 0 : 1,
+        metrics.vrmsZ === null ? 0 : 1,
+        metrics.drmsX === null ? 0 : 1,
+        metrics.drmsY === null ? 0 : 1,
+        metrics.drmsZ === null ? 0 : 1,
+        metrics.drmsBandMin === null ? 0 : 1,
+        metrics.drmsBandMax === null ? 0 : 1,
       ],
     );
   }

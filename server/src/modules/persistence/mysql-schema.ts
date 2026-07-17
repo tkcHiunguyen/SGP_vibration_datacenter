@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS devices (
   axis_label_ay VARCHAR(64) NULL,
   axis_label_az VARCHAR(64) NULL,
   notes TEXT NULL,
+  adxl_status VARCHAR(16) NULL,
+  adxl_fault_reason VARCHAR(32) NULL,
+  adxl_status_updated_at DATETIME(3) NULL,
+  adxl_capture_timeout_count INT UNSIGNED NULL,
+  adxl_i2c_read_error_count INT UNSIGNED NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
@@ -240,6 +245,30 @@ SET @enforce_devices_uuid_not_null_sql := IF(
 PREPARE enforce_devices_uuid_not_null_stmt FROM @enforce_devices_uuid_not_null_sql;
 EXECUTE enforce_devices_uuid_not_null_stmt;
 DEALLOCATE PREPARE enforce_devices_uuid_not_null_stmt;
+
+SET @add_devices_adxl_columns_sql := (
+  SELECT COALESCE(
+    CONCAT('ALTER TABLE devices ', GROUP_CONCAT(CONCAT('ADD COLUMN ', column_definition) ORDER BY column_name SEPARATOR ', ')),
+    'SELECT 1'
+  )
+  FROM (
+    SELECT 'adxl_status' AS column_name, 'adxl_status VARCHAR(16) NULL' AS column_definition
+    UNION ALL SELECT 'adxl_fault_reason', 'adxl_fault_reason VARCHAR(32) NULL'
+    UNION ALL SELECT 'adxl_status_updated_at', 'adxl_status_updated_at DATETIME(3) NULL'
+    UNION ALL SELECT 'adxl_capture_timeout_count', 'adxl_capture_timeout_count INT UNSIGNED NULL'
+    UNION ALL SELECT 'adxl_i2c_read_error_count', 'adxl_i2c_read_error_count INT UNSIGNED NULL'
+  ) AS required_columns
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'devices'
+      AND column_name = required_columns.column_name
+  )
+);
+PREPARE add_devices_adxl_columns_stmt FROM @add_devices_adxl_columns_sql;
+EXECUTE add_devices_adxl_columns_stmt;
+DEALLOCATE PREPARE add_devices_adxl_columns_stmt;
 
 SET @has_uq_devices_device_id := (
   SELECT COUNT(*)
@@ -655,13 +684,75 @@ CREATE TABLE IF NOT EXISTS device_datas (
   drms_unit VARCHAR(32) NULL,
   sample_count INT NULL,
   telemetry_uuid VARCHAR(255) NULL,
+  message_id VARCHAR(255) NULL,
+  temperature_available TINYINT(1) NULL,
+  vibration_available TINYINT(1) NULL,
+  adxl_status VARCHAR(16) NULL,
+  adxl_fault_reason VARCHAR(32) NULL,
   KEY idx_device_datas_device_time (device_id, received_at),
   KEY idx_device_datas_received_at (received_at),
   UNIQUE KEY uq_device_datas_device_telemetry_uuid (device_id, telemetry_uuid),
+  UNIQUE KEY uq_device_datas_device_message_id (device_id, message_id),
   CONSTRAINT fk_device_datas_device
     FOREIGN KEY (device_id) REFERENCES devices(device_id)
     ON UPDATE CASCADE
     ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS device_telemetry_hour_summaries (
+  device_id VARCHAR(191) NOT NULL,
+  hour_started_at DATETIME NOT NULL,
+  sample_count INT UNSIGNED NOT NULL,
+  first_received_at DATETIME(3) NOT NULL,
+  last_received_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (device_id, hour_started_at),
+  KEY idx_device_telemetry_hour_summaries_hour (hour_started_at),
+  CONSTRAINT fk_device_telemetry_hour_summaries_device
+    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS device_telemetry_hour_metric_summaries (
+  device_id VARCHAR(191) NOT NULL,
+  hour_started_at DATETIME NOT NULL,
+  sample_count INT UNSIGNED NOT NULL,
+  first_received_at DATETIME(3) NOT NULL,
+  last_received_at DATETIME(3) NOT NULL,
+  temperature DOUBLE NULL,
+  vibration DOUBLE NULL,
+  ax DOUBLE NULL,
+  ay DOUBLE NULL,
+  az DOUBLE NULL,
+  vrms_x_mms DOUBLE NULL,
+  vrms_y_mms DOUBLE NULL,
+  vrms_z_mms DOUBLE NULL,
+  vrms_unit VARCHAR(32) NULL,
+  drms_x_um DOUBLE NULL,
+  drms_y_um DOUBLE NULL,
+  drms_z_um DOUBLE NULL,
+  drms_band_min_hz DOUBLE NULL,
+  drms_band_max_hz DOUBLE NULL,
+  drms_unit VARCHAR(32) NULL,
+  temperature_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  vibration_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  ax_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  ay_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  az_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  vrms_x_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  vrms_y_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  vrms_z_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  drms_x_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  drms_y_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  drms_z_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  drms_band_min_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  drms_band_max_sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (device_id, hour_started_at),
+  KEY idx_device_telemetry_hour_metric_summaries_hour (hour_started_at),
+  CONSTRAINT fk_device_telemetry_hour_metric_summaries_device
+    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS device_spectrum_frames (
@@ -838,6 +929,106 @@ SET @add_device_datas_telemetry_uuid_sql := IF(
 PREPARE add_device_datas_telemetry_uuid_stmt FROM @add_device_datas_telemetry_uuid_sql;
 EXECUTE add_device_datas_telemetry_uuid_stmt;
 DEALLOCATE PREPARE add_device_datas_telemetry_uuid_stmt;
+
+SET @add_device_datas_adxl_columns_sql := (
+  SELECT COALESCE(
+    CONCAT('ALTER TABLE device_datas ', GROUP_CONCAT(CONCAT('ADD COLUMN ', column_definition) ORDER BY column_name SEPARATOR ', ')),
+    'SELECT 1'
+  )
+  FROM (
+    SELECT 'message_id' AS column_name, 'message_id VARCHAR(255) NULL' AS column_definition
+    UNION ALL SELECT 'temperature_available', 'temperature_available TINYINT(1) NULL'
+    UNION ALL SELECT 'vibration_available', 'vibration_available TINYINT(1) NULL'
+    UNION ALL SELECT 'adxl_status', 'adxl_status VARCHAR(16) NULL'
+    UNION ALL SELECT 'adxl_fault_reason', 'adxl_fault_reason VARCHAR(32) NULL'
+  ) AS required_columns
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'device_datas'
+      AND column_name = required_columns.column_name
+  )
+);
+
+SET @hour_metric_counts_preexisting := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE()
+    AND table_name = 'device_telemetry_hour_metric_summaries'
+    AND column_name = 'temperature_sample_count'
+);
+SET @add_hour_metric_count_columns_sql := (
+  SELECT COALESCE(
+    CONCAT('ALTER TABLE device_telemetry_hour_metric_summaries ', GROUP_CONCAT(CONCAT('ADD COLUMN ', column_definition) ORDER BY column_name SEPARATOR ', ')),
+    'SELECT 1'
+  )
+  FROM (
+    SELECT 'temperature_sample_count' AS column_name, 'temperature_sample_count INT UNSIGNED NOT NULL DEFAULT 0' AS column_definition
+    UNION ALL SELECT 'vibration_sample_count', 'vibration_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'ax_sample_count', 'ax_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'ay_sample_count', 'ay_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'az_sample_count', 'az_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'vrms_x_sample_count', 'vrms_x_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'vrms_y_sample_count', 'vrms_y_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'vrms_z_sample_count', 'vrms_z_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'drms_x_sample_count', 'drms_x_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'drms_y_sample_count', 'drms_y_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'drms_z_sample_count', 'drms_z_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'drms_band_min_sample_count', 'drms_band_min_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+    UNION ALL SELECT 'drms_band_max_sample_count', 'drms_band_max_sample_count INT UNSIGNED NOT NULL DEFAULT 0'
+  ) AS required_columns
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'device_telemetry_hour_metric_summaries'
+      AND column_name = required_columns.column_name
+  )
+);
+PREPARE add_hour_metric_count_columns_stmt FROM @add_hour_metric_count_columns_sql;
+EXECUTE add_hour_metric_count_columns_stmt;
+DEALLOCATE PREPARE add_hour_metric_count_columns_stmt;
+
+SET @backfill_hour_metric_count_columns_sql := IF(
+  @hour_metric_counts_preexisting = 0,
+  'UPDATE device_telemetry_hour_metric_summaries SET temperature_sample_count = IF(temperature IS NULL, 0, sample_count), vibration_sample_count = IF(vibration IS NULL, 0, sample_count), ax_sample_count = IF(ax IS NULL, 0, sample_count), ay_sample_count = IF(ay IS NULL, 0, sample_count), az_sample_count = IF(az IS NULL, 0, sample_count), vrms_x_sample_count = IF(vrms_x_mms IS NULL, 0, sample_count), vrms_y_sample_count = IF(vrms_y_mms IS NULL, 0, sample_count), vrms_z_sample_count = IF(vrms_z_mms IS NULL, 0, sample_count), drms_x_sample_count = IF(drms_x_um IS NULL, 0, sample_count), drms_y_sample_count = IF(drms_y_um IS NULL, 0, sample_count), drms_z_sample_count = IF(drms_z_um IS NULL, 0, sample_count), drms_band_min_sample_count = IF(drms_band_min_hz IS NULL, 0, sample_count), drms_band_max_sample_count = IF(drms_band_max_hz IS NULL, 0, sample_count)',
+  'SELECT 1'
+);
+PREPARE backfill_hour_metric_count_columns_stmt FROM @backfill_hour_metric_count_columns_sql;
+EXECUTE backfill_hour_metric_count_columns_stmt;
+DEALLOCATE PREPARE backfill_hour_metric_count_columns_stmt;
+PREPARE add_device_datas_adxl_columns_stmt FROM @add_device_datas_adxl_columns_sql;
+EXECUTE add_device_datas_adxl_columns_stmt;
+DEALLOCATE PREPARE add_device_datas_adxl_columns_stmt;
+
+UPDATE device_datas
+SET message_id = NULL
+WHERE message_id IS NOT NULL AND TRIM(message_id) = '';
+
+DELETE d1
+FROM device_datas d1
+JOIN device_datas d2
+  ON d1.device_id = d2.device_id
+ AND d1.message_id = d2.message_id
+ AND d1.message_id IS NOT NULL
+ AND d1.id < d2.id;
+
+SET @has_uq_device_datas_device_message_id := (
+  SELECT COUNT(*)
+  FROM information_schema.statistics
+  WHERE table_schema = DATABASE()
+    AND table_name = 'device_datas'
+    AND index_name = 'uq_device_datas_device_message_id'
+);
+SET @add_uq_device_datas_device_message_id_sql := IF(
+  @has_uq_device_datas_device_message_id = 0,
+  'ALTER TABLE device_datas ADD UNIQUE KEY uq_device_datas_device_message_id (device_id, message_id)',
+  'SELECT 1'
+);
+PREPARE add_uq_device_datas_device_message_id_stmt FROM @add_uq_device_datas_device_message_id_sql;
+EXECUTE add_uq_device_datas_device_message_id_stmt;
+DEALLOCATE PREPARE add_uq_device_datas_device_message_id_stmt;
 
 SET @has_device_datas_vrms_x_mms := (
   SELECT COUNT(*)

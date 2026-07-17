@@ -12,6 +12,7 @@ export function registerTelemetryIngestHandlers(
   {
     alertService,
     app,
+    deviceService,
     realtimeGateway,
     telemetryIngressGuard,
     telemetryService,
@@ -23,7 +24,7 @@ export function registerTelemetryIngestHandlers(
 
   const { deviceId } = context;
 
-  socket.on('device:telemetry', (rawPayload: unknown) => {
+  socket.on('device:telemetry', async (rawPayload: unknown) => {
     const decision = telemetryIngressGuard.evaluate(deviceId, rawPayload);
     if (!decision.accepted) {
       app.log.warn(
@@ -42,6 +43,19 @@ export function registerTelemetryIngestHandlers(
 
     const message = telemetryService.ingest(deviceId, rawPayload);
     realtimeGateway.broadcastTelemetry(message);
+    if (message.payload.adxlStatus) {
+      const sensorStatus = await deviceService.updateAdxlHealth(deviceId, {
+        status: message.payload.adxlStatus,
+        reason: message.payload.adxlFaultReason,
+      });
+      if (sensorStatus?.updated) {
+        realtimeGateway.broadcastDeviceSensorStatus({
+          deviceId,
+          sensor: 'adxl345',
+          ...sensorStatus.health,
+        });
+      }
+    }
     const changedAlerts = alertService.evaluate(message);
     for (const alert of changedAlerts) {
       realtimeGateway.broadcastAlert(alert);

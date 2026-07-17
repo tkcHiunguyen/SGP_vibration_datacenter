@@ -6,6 +6,7 @@ import type {
   DeviceCommand,
   DeviceHeartbeat,
   DeviceMetadata,
+  DeviceSensorStatusMessage,
   TelemetryMessage,
   TelemetrySpectrumMessage,
 } from '../../shared/types.js';
@@ -44,6 +45,10 @@ export class SocketIoGateway implements RealtimeGateway {
 
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void {
     this.io.to(DASHBOARD_ROOM).emit('device:metadata', payload);
+  }
+
+  broadcastDeviceSensorStatus(payload: DeviceSensorStatusMessage): void {
+    this.io.to(DASHBOARD_ROOM).emit('device:sensor-status', payload);
   }
 
   sendCommand(deviceId: string, command: DeviceCommand): void {

@@ -14,9 +14,110 @@ import type {
 import { DeviceService } from '../device/device.service.js';
 
 const telemetrySchema = z.object({
-  vibration: z.number().optional(),
-  temperature: z.number().optional(),
-}).passthrough();
+  messageId: z.string().trim().min(1).max(255).optional(),
+  vibration: z.number().finite().optional(),
+  temperature: z.number().finite().optional(),
+  temperatureAvailable: z.boolean().optional(),
+  vibrationAvailable: z.boolean().optional(),
+  adxlStatus: z.enum(['ok', 'fault', 'recovering']).optional(),
+  adxlFaultReason: z.enum(['not_detected', 'i2c_read_error', 'capture_timeout', 'unknown']).optional(),
+}).passthrough().superRefine((payload, context) => {
+  if (payload.adxlStatus === 'fault' && !payload.adxlFaultReason) {
+    context.addIssue({
+      code: 'custom',
+      message: 'adxlFaultReason is required while adxlStatus is fault',
+      path: ['adxlFaultReason'],
+    });
+  }
+
+  if (payload.adxlStatus !== 'fault' && payload.adxlFaultReason !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'adxlFaultReason is only valid while adxlStatus is fault',
+      path: ['adxlFaultReason'],
+    });
+  }
+});
+
+const VIBRATION_METRIC_KEYS = [
+  'vibration',
+  'ax',
+  'ay',
+  'az',
+  'vrms_x_mms',
+  'vrms_y_mms',
+  'vrms_z_mms',
+  'vx_rms_mms',
+  'vy_rms_mms',
+  'vz_rms_mms',
+  'vrms_unit',
+  'drms_x_um',
+  'drms_y_um',
+  'drms_z_um',
+  'drms_band_min_hz',
+  'drms_band_max_hz',
+  'drms_unit',
+  'sample_count',
+  'sampleCount',
+  'sample_rate_hz',
+  'sampleRateHz',
+  'lsb_per_g',
+  'lsbPerG',
+  'telemetry_uuid',
+  'telemetryUuid',
+] as const;
+
+const VIBRATION_VALUE_KEYS = [
+  'vibration',
+  'ax',
+  'ay',
+  'az',
+  'vrms_x_mms',
+  'vrms_y_mms',
+  'vrms_z_mms',
+  'vx_rms_mms',
+  'vy_rms_mms',
+  'vz_rms_mms',
+  'drms_x_um',
+  'drms_y_um',
+  'drms_z_um',
+  'drms_band_min_hz',
+  'drms_band_max_hz',
+] as const;
+
+function hasValidVibration(payload: TelemetryPayload): boolean {
+  return VIBRATION_VALUE_KEYS.some((key) => {
+    const value = payload[key];
+    return typeof value === 'number' && Number.isFinite(value);
+  });
+}
+
+function normalizePayload(payload: TelemetryPayload): TelemetryPayload {
+  const normalized: TelemetryPayload = { ...payload };
+  const vibrationAvailable =
+    typeof normalized.vibrationAvailable === 'boolean'
+      ? normalized.vibrationAvailable
+      : hasValidVibration(normalized)
+        ? true
+        : undefined;
+
+  if (vibrationAvailable !== undefined) {
+    normalized.vibrationAvailable = vibrationAvailable;
+  }
+  if (normalized.temperatureAvailable === undefined && typeof normalized.temperature === 'number') {
+    normalized.temperatureAvailable = true;
+  }
+  if (normalized.temperatureAvailable === false) {
+    delete normalized.temperature;
+  }
+  if (vibrationAvailable === false) {
+    for (const key of VIBRATION_METRIC_KEYS) {
+      delete normalized[key];
+    }
+  }
+
+  return normalized;
+}
 
 export class TelemetryService {
   constructor(
@@ -25,7 +126,7 @@ export class TelemetryService {
   ) {}
 
   ingest(deviceId: string, rawPayload: unknown): TelemetryMessage {
-    const payload: TelemetryPayload = telemetrySchema.parse(rawPayload);
+    const payload = normalizePayload(telemetrySchema.parse(rawPayload));
     const message: TelemetryMessage = {
       deviceId,
       receivedAt: new Date().toISOString(),

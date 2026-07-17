@@ -1,5 +1,13 @@
 import type { DeviceDeletionImpact, DeviceRemovalResult, DeviceRepository, DeviceStatusHistoryQuery } from './device.repository.js';
-import type { DeviceAxisLabels, DeviceHeartbeat, DeviceMetadata, DeviceSession, DeviceStatusHistoryEntry } from '../../shared/types.js';
+import type {
+  AdxlFaultReason,
+  AdxlStatus,
+  DeviceAxisLabels,
+  DeviceHeartbeat,
+  DeviceMetadata,
+  DeviceSession,
+  DeviceStatusHistoryEntry,
+} from '../../shared/types.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +23,11 @@ type DeviceMetadataRow = {
   axis_label_ay: string | null;
   axis_label_az: string | null;
   notes: string | null;
+  adxl_status: AdxlStatus | null;
+  adxl_fault_reason: AdxlFaultReason | null;
+  adxl_status_updated_at: string | Date | null;
+  adxl_capture_timeout_count: number | string | null;
+  adxl_i2c_read_error_count: number | string | null;
   created_at: string | Date;
   updated_at: string | Date;
 };
@@ -145,6 +158,22 @@ function createAxisLabels(row: DeviceMetadataRow): DeviceAxisLabels | undefined 
   }
 
   return Object.keys(axisLabels).length > 0 ? axisLabels : undefined;
+}
+
+function createAdxlHealth(row: DeviceMetadataRow): DeviceMetadata['adxlHealth'] {
+  if (!row.adxl_status || !row.adxl_status_updated_at) {
+    return undefined;
+  }
+
+  const captureTimeoutCount = Number(row.adxl_capture_timeout_count);
+  const i2cReadErrorCount = Number(row.adxl_i2c_read_error_count);
+  return {
+    status: row.adxl_status,
+    reason: row.adxl_status === 'fault' ? row.adxl_fault_reason ?? undefined : undefined,
+    updatedAt: toIsoTimestamp(row.adxl_status_updated_at),
+    captureTimeoutCount: Number.isFinite(captureTimeoutCount) ? captureTimeoutCount : undefined,
+    i2cReadErrorCount: Number.isFinite(i2cReadErrorCount) ? i2cReadErrorCount : undefined,
+  };
 }
 
 export class InMemoryDeviceRepository implements DeviceRepository {
@@ -487,9 +516,12 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         INSERT INTO devices (
           device_id, uuid, name, site, zone, firmware_version,
           axis_label_ax, axis_label_ay, axis_label_az,
-          notes, created_at, updated_at
+          notes,
+          adxl_status, adxl_fault_reason, adxl_status_updated_at,
+          adxl_capture_timeout_count, adxl_i2c_read_error_count,
+          created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           uuid = VALUES(uuid),
           name = VALUES(name),
@@ -500,6 +532,11 @@ export class InMemoryDeviceRepository implements DeviceRepository {
           axis_label_ay = VALUES(axis_label_ay),
           axis_label_az = VALUES(axis_label_az),
           notes = VALUES(notes),
+          adxl_status = VALUES(adxl_status),
+          adxl_fault_reason = VALUES(adxl_fault_reason),
+          adxl_status_updated_at = VALUES(adxl_status_updated_at),
+          adxl_capture_timeout_count = VALUES(adxl_capture_timeout_count),
+          adxl_i2c_read_error_count = VALUES(adxl_i2c_read_error_count),
           created_at = VALUES(created_at),
           updated_at = VALUES(updated_at)
       `,
@@ -514,6 +551,11 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata.axisLabels?.ay ?? null,
         metadata.axisLabels?.az ?? null,
         metadata.notes ?? null,
+        metadata.adxlHealth?.status ?? null,
+        metadata.adxlHealth?.reason ?? null,
+        metadata.adxlHealth?.updatedAt ?? null,
+        metadata.adxlHealth?.captureTimeoutCount ?? null,
+        metadata.adxlHealth?.i2cReadErrorCount ?? null,
         metadata.createdAt,
         metadata.updatedAt,
       ],
@@ -714,7 +756,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         SELECT
           device_id, uuid, name, site, zone, firmware_version,
           axis_label_ax, axis_label_ay, axis_label_az,
-          notes, created_at, updated_at
+          notes,
+          adxl_status, adxl_fault_reason, adxl_status_updated_at,
+          adxl_capture_timeout_count, adxl_i2c_read_error_count,
+          created_at, updated_at
         FROM devices
         ORDER BY device_id ASC
       `,
@@ -729,6 +774,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         firmwareVersion: row.firmware_version ?? undefined,
         axisLabels: createAxisLabels(row),
         notes: row.notes ?? undefined,
+        adxlHealth: createAdxlHealth(row),
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
       });

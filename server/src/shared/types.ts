@@ -1,6 +1,11 @@
 export type TelemetryPayload = {
+  messageId?: string;
   vibration?: number;
   temperature?: number;
+  temperatureAvailable?: boolean;
+  vibrationAvailable?: boolean;
+  adxlStatus?: AdxlStatus;
+  adxlFaultReason?: AdxlFaultReason;
   ax?: number;
   ay?: number;
   az?: number;
@@ -18,6 +23,28 @@ export type TelemetryPayload = {
   drms_band_max_hz?: number;
   drms_unit?: string;
   [key: string]: unknown;
+};
+
+export type AdxlStatus = 'ok' | 'fault' | 'recovering';
+
+export type AdxlFaultReason = 'not_detected' | 'i2c_read_error' | 'capture_timeout' | 'unknown';
+
+export type DeviceAdxlHealth = {
+  status: AdxlStatus;
+  reason?: AdxlFaultReason;
+  updatedAt: string;
+  captureTimeoutCount?: number;
+  i2cReadErrorCount?: number;
+};
+
+export type DeviceSensorStatusMessage = {
+  deviceId: string;
+  sensor: 'adxl345';
+  status: AdxlStatus;
+  reason?: AdxlFaultReason;
+  updatedAt: string;
+  captureTimeoutCount?: number;
+  i2cReadErrorCount?: number;
 };
 
 export type TelemetryMessage = {
@@ -141,6 +168,7 @@ export type DeviceMetadata = {
   firmwareVersion?: string;
   axisLabels?: DeviceAxisLabels;
   notes?: string;
+  adxlHealth?: DeviceAdxlHealth;
   createdAt: string;
   updatedAt: string;
 };

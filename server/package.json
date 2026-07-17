@@ -8,6 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "db:init": "tsx src/tools/bootstrap-db-schema.ts",
     "db:schema:export": "tsx src/tools/export-mysql-schema.ts",
+    "seed:demo-2m": "tsx src/tools/seed-demo-2m.ts",
+    "seed:demo-2m:reset": "tsx src/tools/seed-demo-2m.ts --reset",
+    "seed:demo-2m:live": "tsx src/tools/seed-demo-2m.ts --live",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test $(find src -name '*.test.ts' -print)",
     "start": "node dist/index.js"
@@ -21,6 +24,7 @@
     "dotenv": "^17.3.1",
     "fastify": "^5.8.4",
     "mysql2": "^3.20.0",
+    "socket.io-client": "^4.8.3",
     "socket.io": "^4.8.3",
     "zod": "^4.3.6"
   },

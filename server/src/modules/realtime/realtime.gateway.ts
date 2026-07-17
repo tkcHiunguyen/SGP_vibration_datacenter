@@ -3,6 +3,7 @@ import type {
   DeviceCommand,
   DeviceHeartbeat,
   DeviceMetadata,
+  DeviceSensorStatusMessage,
   TelemetryMessage,
   TelemetrySpectrumMessage,
 } from '../../shared/types.js';
@@ -21,6 +22,7 @@ export interface RealtimeGateway {
     heartbeat?: DeviceHeartbeat;
   }): void;
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void;
+  broadcastDeviceSensorStatus(payload: DeviceSensorStatusMessage): void;
   sendCommand(deviceId: string, command: DeviceCommand): void;
   disconnectDevice(deviceId: string): void;
   onConnection(handler: (socket: Socket) => void): void;

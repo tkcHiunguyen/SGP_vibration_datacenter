@@ -30,14 +30,119 @@ class FakeMySqlAccess {
     return (this.rowsByKind.raw ?? []) as T[];
   }
 
-  async execute(): Promise<number> {
-    return 0;
+  async execute(
+    sql: string,
+    params: Array<string | number | boolean | null | Date | Buffer> = [],
+  ): Promise<number> {
+    this.calls.push({ sql, params });
+    return 1;
   }
 
   async ensureReady(): Promise<void> {}
 
   async close(): Promise<void> {}
 }
+
+test('normal telemetry persists both temperature and vibration metrics', async () => {
+  const mysql = new FakeMySqlAccess({});
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+
+  await (repository as unknown as { persist(message: { deviceId: string; receivedAt: string; payload: Record<string, unknown> }): Promise<void> }).persist({
+    deviceId: 'ESP-OK',
+    receivedAt: '2026-07-17T00:00:00.000Z',
+    payload: {
+      messageId: 'message-ok',
+      temperature: 31.4,
+      temperatureAvailable: true,
+      vibrationAvailable: true,
+      adxlStatus: 'ok',
+      telemetryUuid: 'telemetry-ok',
+      ax: 0.12,
+      ay: 0.18,
+      az: 0.09,
+    },
+  });
+
+  const insert = mysql.calls.find((call) => call.sql.includes('INSERT INTO device_datas'));
+  assert.ok(insert);
+  assert.equal(insert.params[2], 31.4);
+  assert.equal(insert.params[4], 0.12);
+  assert.equal(insert.params[5], 0.18);
+  assert.equal(insert.params[6], 0.09);
+  assert.equal(insert.params[18], 'telemetry-ok');
+  assert.equal(insert.params[19], 'message-ok');
+  assert.equal(insert.params[21], 1);
+  assert.equal(insert.params[22], 'ok');
+});
+
+test('partial ADXL-fault telemetry stores temperature without vibration or spectrum linkage', async () => {
+  const mysql = new FakeMySqlAccess({});
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+
+  await (repository as unknown as { persist(message: { deviceId: string; receivedAt: string; payload: Record<string, unknown> }): Promise<void> }).persist({
+    deviceId: 'ESP-PARTIAL',
+    receivedAt: '2026-07-17T00:00:00.000Z',
+    payload: {
+      messageId: 'message-partial',
+      temperature: 31.4,
+      temperatureAvailable: true,
+      vibrationAvailable: false,
+      adxlStatus: 'fault',
+      adxlFaultReason: 'i2c_read_error',
+      telemetryUuid: 'stale-telemetry-uuid',
+      ax: 0.12,
+      ay: 0.18,
+      az: 0.09,
+    },
+  });
+
+  const insert = mysql.calls.find((call) => call.sql.includes('INSERT INTO device_datas'));
+  assert.ok(insert);
+  assert.equal(insert.params[2], 31.4);
+  assert.equal(insert.params[3], null);
+  assert.equal(insert.params[4], null);
+  assert.equal(insert.params[5], null);
+  assert.equal(insert.params[6], null);
+  assert.equal(insert.params[18], null);
+  assert.equal(insert.params[21], 0);
+  assert.equal(insert.params[22], 'fault');
+  assert.equal(insert.params[23], 'i2c_read_error');
+  assert.equal(mysql.calls.some((call) => call.sql.includes('device_spectrum_frames')), false);
+});
+
+test('partial telemetry history does not synthesize a telemetry UUID', async () => {
+  const mysql = new FakeMySqlAccess({
+    raw: [
+      {
+        id: 1,
+        device_id: 'ESP-PARTIAL',
+        received_at: '2026-07-17 00:00:00.000',
+        temperature: 31.4,
+        vibration: null,
+        ax: null,
+        ay: null,
+        az: null,
+        sample_count: null,
+        telemetry_uuid: null,
+        message_id: 'message-partial',
+        temperature_available: 1,
+        vibration_available: 0,
+        adxl_status: 'fault',
+        adxl_fault_reason: 'i2c_read_error',
+      },
+    ],
+  });
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+
+  const result = await repository.exportHistory({
+    from: '2026-07-17T00:00:00.000Z',
+    to: '2026-07-17T00:00:01.000Z',
+  });
+
+  assert.equal(result[0]?.telemetryUuid, undefined);
+  assert.equal(result[0]?.payload.telemetryUuid, undefined);
+  assert.equal(result[0]?.payload.vibrationAvailable, false);
+});
 
 test('bucketed history aggregates in SQL without the default raw limit', async () => {
   const bucketStartedMs = Date.parse('2026-04-29T17:00:00.000Z');

@@ -172,6 +172,24 @@ test('registerStrict persists metadata and returns saved device', async () => {
   assert.equal(repository.getMetadata('ESP-001')?.firmwareVersion, '1.0.6');
 });
 
+test('updateAdxlHealth persists current ADXL status separately from connection state', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository);
+  await service.registerStrict({ deviceId: 'ESP-ADXL', name: 'ADXL target' });
+
+  const result = await service.updateAdxlHealth('ESP-ADXL', {
+    status: 'fault',
+    reason: 'i2c_read_error',
+    captureTimeoutCount: 0,
+    i2cReadErrorCount: 1,
+  });
+
+  assert.equal(result?.updated, true);
+  assert.equal(repository.getMetadata('ESP-ADXL')?.adxlHealth?.status, 'fault');
+  assert.equal(repository.getMetadata('ESP-ADXL')?.adxlHealth?.reason, 'i2c_read_error');
+  assert.equal(repository.isConnected('ESP-ADXL'), false);
+});
+
 test('disconnect records reason and detected timestamp before removing session', () => {
   const repository = new FakeDeviceRepository();
   const service = new DeviceService(repository);
