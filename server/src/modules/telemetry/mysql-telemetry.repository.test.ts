@@ -73,6 +73,11 @@ test('normal telemetry persists both temperature and vibration metrics', async (
   assert.equal(insert.params[19], 'message-ok');
   assert.equal(insert.params[21], 1);
   assert.equal(insert.params[22], 'ok');
+
+  const hourlySummaryInsert = mysql.calls.find((call) => call.sql.includes('INSERT INTO device_telemetry_hour_metric_summaries'));
+  assert.ok(hourlySummaryInsert);
+  const values = hourlySummaryInsert.sql.match(/\) VALUES \(([^)]+)\)/)?.[1].split(',') ?? [];
+  assert.equal(values.length, hourlySummaryInsert.params.length + 1);
 });
 
 test('partial ADXL-fault telemetry stores temperature without vibration or spectrum linkage', async () => {

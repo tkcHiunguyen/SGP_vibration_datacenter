@@ -1089,7 +1089,7 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
          vrms_x_sample_count, vrms_y_sample_count, vrms_z_sample_count,
          drms_x_sample_count, drms_y_sample_count, drms_z_sample_count,
          drms_band_min_sample_count, drms_band_max_sample_count
-       ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          temperature = CASE WHEN VALUES(temperature_sample_count) = 0 THEN temperature WHEN temperature IS NULL THEN VALUES(temperature) ELSE (temperature * temperature_sample_count + VALUES(temperature) * VALUES(temperature_sample_count)) / (temperature_sample_count + VALUES(temperature_sample_count)) END,
          vibration = CASE WHEN VALUES(vibration_sample_count) = 0 THEN vibration WHEN vibration IS NULL THEN VALUES(vibration) ELSE (vibration * vibration_sample_count + VALUES(vibration) * VALUES(vibration_sample_count)) / (vibration_sample_count + VALUES(vibration_sample_count)) END,
