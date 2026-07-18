@@ -694,11 +694,8 @@ function DashboardShell({
 
   return (
     <div
+      className="dc-app-shell"
       style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100dvh",
-        overflow: "hidden",
         background: C.bg,
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         transition: "background 0.25s",
@@ -715,14 +712,15 @@ function DashboardShell({
         alertCount={signalAlerts.length}
       />
 
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div className="dc-app-body">
+        <button
+          type="button"
+          aria-label="Đóng menu điều hướng"
+          className={`dc-sidebar-backdrop${sidebarOpen ? " is-visible" : ""}`}
+          onClick={() => setSidebarOpen(false)}
+        />
         <div
-          style={{
-            width: sidebarOpen ? "var(--dc-sidebar-width)" : 0,
-            minWidth: sidebarOpen ? "var(--dc-sidebar-width)" : 0,
-            overflow: "hidden",
-            flexShrink: 0,
-          }}
+          className={`dc-sidebar-shell${sidebarOpen ? " is-open" : ""}`}
         >
           <LeftPanel
             activeNav={activeNav}

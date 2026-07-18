@@ -15,9 +15,12 @@ dotenv.config({ path: resolve(serverRoot, '.env') });
 
 const DEMO_PREFIX = 'DEMO-2M';
 const SEED_KEY = 'demo-2m-v1';
-const SEED_VERSION = 1;
+const SEED_VERSION = 2;
+const DEMO_ZONE_COUNT = 6;
+const DEVICES_PER_ZONE = 4;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HISTORY_DAYS = 60;
+const SECONDARY_DEVICE_HISTORY_MS = 2 * 60 * 60 * 1000;
 const BATCH_SIZE = 2_000;
 const SPECTRUM_FRAME_DAYS = [14, 42] as const;
 
@@ -43,6 +46,7 @@ type DemoProfile = {
   noDataWindows: GapWindow[];
   anomalyWindows: GapWindow[];
   currentOffline: boolean;
+  telemetryStartsAt: number;
 };
 
 type SeedRunRow = {
@@ -183,7 +187,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     reason,
   });
 
-  return [
+  const primaryProfiles = [
     {
       deviceId: `${DEMO_PREFIX}-CW-PUMP-01`,
       zoneCode: `${DEMO_PREFIX}-COOLING-WATER`,
@@ -202,7 +206,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     {
       deviceId: `${DEMO_PREFIX}-CHILLER-01`,
       zoneCode: `${DEMO_PREFIX}-CHILLER`,
-      zoneName: 'Demo - Chiller 01',
+      zoneName: 'Demo - Chiller',
       zoneDescription: 'Khu vuc chiller voi su kien rung cao da phuc hoi.',
       name: 'Chiller 01 - Da phuc hoi canh bao',
       site: 'Datacenter Demo A',
@@ -217,7 +221,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     {
       deviceId: `${DEMO_PREFIX}-UPS-01`,
       zoneCode: `${DEMO_PREFIX}-UPS`,
-      zoneName: 'Demo - UPS 01',
+      zoneName: 'Demo - UPS',
       zoneDescription: 'Khu vuc UPS co cac lan mat ket noi socket ngan han.',
       name: 'UPS 01 - Mat tin hieu gian doan',
       site: 'Datacenter Demo B',
@@ -235,7 +239,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     {
       deviceId: `${DEMO_PREFIX}-CRAC-01`,
       zoneCode: `${DEMO_PREFIX}-CRAC`,
-      zoneName: 'Demo - CRAC 01',
+      zoneName: 'Demo - CRAC',
       zoneDescription: 'Khu vuc dieu hoa chinh xac co gap no-data khi van online.',
       name: 'CRAC 01 - Khoang no-data',
       site: 'Datacenter Demo B',
@@ -253,7 +257,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     {
       deviceId: `${DEMO_PREFIX}-FAN-WALL-01`,
       zoneCode: `${DEMO_PREFIX}-FAN-WALL`,
-      zoneName: 'Demo - Fan Wall 01',
+      zoneName: 'Demo - Fan Wall',
       zoneDescription: 'Khu vuc fan wall co RSSI yeu va rung cao hien tai.',
       name: 'Fan Wall 01 - Canh bao dang hoat dong',
       site: 'Datacenter Demo C',
@@ -274,7 +278,7 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
     {
       deviceId: `${DEMO_PREFIX}-GENSET-01`,
       zoneCode: `${DEMO_PREFIX}-GENSET`,
-      zoneName: 'Demo - May phat 01',
+      zoneName: 'Demo - May phat',
       zoneDescription: 'Khu vuc may phat dang offline tai thoi diem hien tai.',
       name: 'Genset 01 - Offline hien tai',
       site: 'Datacenter Demo C',
@@ -289,7 +293,32 @@ function createProfiles(startAt: number, endAt: number): DemoProfile[] {
       anomalyWindows: [],
       currentOffline: true,
     },
-  ];
+  ] satisfies Array<Omit<DemoProfile, 'telemetryStartsAt'>>;
+
+  return primaryProfiles.flatMap((profile) =>
+    Array.from({ length: DEVICES_PER_ZONE }, (_, index): DemoProfile => {
+      const deviceNumber = index + 1;
+      if (deviceNumber === 1) {
+        return { ...profile, telemetryStartsAt: startAt };
+      }
+
+      const suffix = String(deviceNumber).padStart(2, '0');
+      const equipmentName = profile.name.split(' - ')[0].replace(/01$/, suffix);
+      return {
+        ...profile,
+        deviceId: profile.deviceId.replace(/-01$/, `-${suffix}`),
+        name: `${equipmentName} - Van hanh on dinh`,
+        baseTemperature: round(profile.baseTemperature + index * 0.35),
+        baseVibration: round(profile.baseVibration + index * 0.08),
+        currentSignal: Math.max(-84, profile.currentSignal - index * 2),
+        offlineWindows: [],
+        noDataWindows: [],
+        anomalyWindows: [],
+        currentOffline: false,
+        telemetryStartsAt: Math.max(startAt, endAt - SECONDARY_DEVICE_HISTORY_MS),
+      };
+    }),
+  );
 }
 
 function isSkipped(profile: DemoProfile, timestamp: number): boolean {
@@ -298,7 +327,7 @@ function isSkipped(profile: DemoProfile, timestamp: number): boolean {
 
 function expectedTelemetryCount(profile: DemoProfile, startAt: number, endAt: number): number {
   const random = createPrng(hashString(`${SEED_KEY}:${profile.deviceId}`));
-  let timestamp = startAt;
+  let timestamp = Math.max(startAt, profile.telemetryStartsAt);
   let count = 0;
   while (timestamp <= endAt) {
     if (!isSkipped(profile, timestamp)) {
@@ -536,7 +565,7 @@ async function seedTelemetry(
   for (const profile of profiles) {
     const intervalRandom = createPrng(hashString(`${SEED_KEY}:${profile.deviceId}`));
     const valueRandom = createPrng(hashString(`${SEED_KEY}:${profile.deviceId}:values`));
-    let timestamp = startAt;
+    let timestamp = Math.max(startAt, profile.telemetryStartsAt);
     let sequence = 0;
     while (timestamp <= endAt) {
       if (!isSkipped(profile, timestamp)) {
@@ -594,7 +623,7 @@ async function seedSparseSpectrum(mysql: MySqlAccess, profiles: DemoProfile[], s
     baseDir: process.env.SPECTRUM_STORAGE_DIR ?? 'storage/spectrum',
     frameFlushMs: 1,
   });
-  for (const profile of profiles) {
+  for (const profile of profiles.filter((item) => item.telemetryStartsAt <= startAt)) {
     for (const day of SPECTRUM_FRAME_DAYS) {
       const targetAt = toMySqlDate(startAt + day * DAY_MS);
       const rows = await mysql.query<TelemetryReferenceRow>(
@@ -853,6 +882,9 @@ async function resetDemo(mysql: MySqlAccess): Promise<void> {
   await mysql.execute(`DELETE FROM device_datas WHERE device_id IN (${devicePlaceholders})`, deviceIds);
   await mysql.execute(`DELETE FROM socket_datas WHERE device_id IN (${devicePlaceholders})`, deviceIds);
   await mysql.execute(`DELETE FROM device_status_history WHERE device_id IN (${devicePlaceholders})`, deviceIds);
+  await mysql.execute(`DELETE FROM alerts WHERE device_id IN (${devicePlaceholders})`, deviceIds);
+  await mysql.execute(`DELETE FROM audit_logs WHERE device_id IN (${devicePlaceholders})`, deviceIds);
+  await mysql.execute(`DELETE FROM device_commands WHERE device_id IN (${devicePlaceholders})`, deviceIds);
   await mysql.execute(`DELETE FROM devices WHERE device_id IN (${devicePlaceholders})`, deviceIds);
   await mysql.execute(`DELETE FROM zones WHERE code IN (${zonePlaceholders})`, zoneCodes);
   await mysql.execute('DELETE FROM demo_seed_runs WHERE seed_key = ?', [SEED_KEY]);
@@ -989,9 +1021,10 @@ async function main(): Promise<void> {
     const summary = await collectSummary(mysql, profiles, startAt, endAt, expected);
     const expectedOfflineIntervals = profiles.reduce((total, profile) => total + profile.offlineWindows.length, 0);
     const expectedCurrentOfflineIntervals = profiles.filter((profile) => profile.currentOffline).length;
+    const expectedSpectrumFrames = profiles.filter((profile) => profile.telemetryStartsAt <= startAt).length * SPECTRUM_FRAME_DAYS.length;
     if (
-      summary.demoZones !== 6 ||
-      summary.demoDevices !== 6 ||
+      summary.demoZones !== DEMO_ZONE_COUNT ||
+      summary.demoDevices !== DEMO_ZONE_COUNT * DEVICES_PER_ZONE ||
       summary.actualTelemetryRecords !== expected ||
       summary.offlineIntervals !== expectedOfflineIntervals ||
       summary.currentOfflineIntervals !== expectedCurrentOfflineIntervals ||
@@ -1003,7 +1036,7 @@ async function main(): Promise<void> {
       !summary.lastTelemetryAt ||
       Math.abs(Date.parse(summary.firstTelemetryAt) - startAt) > 10_000 ||
       endAt - Date.parse(summary.lastTelemetryAt) > 10_000 ||
-      summary.spectrumFrames !== profiles.length * SPECTRUM_FRAME_DAYS.length
+      summary.spectrumFrames !== expectedSpectrumFrames
     ) {
       throw new Error(`demo_seed_verification_failed: ${JSON.stringify(summary)}`);
     }

@@ -28,7 +28,7 @@ export function Analyze3DPanel({
 
   return (
     <ConsolePage
-      className="flex-1 overflow-auto px-6 py-5"
+      className="analyze-page-root dc-page-canvas"
       style={{
         background: C.bg,
       }}

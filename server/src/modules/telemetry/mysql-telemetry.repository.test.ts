@@ -80,6 +80,35 @@ test('normal telemetry persists both temperature and vibration metrics', async (
   assert.equal(values.length, hourlySummaryInsert.params.length + 1);
 });
 
+test('imported history updates hourly availability for newly inserted records', async () => {
+  const mysql = new FakeMySqlAccess({});
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+
+  const result = await repository.importHistory([
+    {
+      deviceId: 'ESP-IMPORT',
+      receivedAt: '2026-07-17T08:15:30.000Z',
+      telemetryUuid: 'telemetry-import',
+      payload: {
+        temperature: 30.5,
+        ax: 0.12,
+        ay: 0.18,
+        az: 0.09,
+      },
+    },
+  ]);
+
+  assert.equal(result.inserted, 1);
+  const availabilityInsert = mysql.calls.find((call) => call.sql.includes('INSERT INTO device_telemetry_hour_summaries'));
+  assert.ok(availabilityInsert);
+  assert.deepEqual(availabilityInsert.params, [
+    'ESP-IMPORT',
+    '2026-07-17T08:00:00.000Z',
+    '2026-07-17T08:15:30.000Z',
+    '2026-07-17T08:15:30.000Z',
+  ]);
+});
+
 test('partial ADXL-fault telemetry stores temperature without vibration or spectrum linkage', async () => {
   const mysql = new FakeMySqlAccess({});
   const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);

@@ -755,6 +755,29 @@ CREATE TABLE IF NOT EXISTS device_telemetry_hour_metric_summaries (
     ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS app_schema_migrations (
+  migration_key VARCHAR(191) NOT NULL,
+  applied_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (migration_key)
+);
+
+SET @hour_availability_backfill_key := '20260718_backfill_hourly_telemetry_availability_v1';
+SET @hour_availability_backfill_applied := (
+  SELECT COUNT(*)
+  FROM app_schema_migrations
+  WHERE migration_key = @hour_availability_backfill_key
+);
+SET @hour_availability_backfill_sql := IF(
+  @hour_availability_backfill_applied = 0,
+  'INSERT INTO device_telemetry_hour_summaries (device_id, hour_started_at, sample_count, first_received_at, last_received_at) SELECT device_id, DATE_FORMAT(received_at, ''%Y-%m-%d %H:00:00''), COUNT(*), MIN(received_at), MAX(received_at) FROM device_datas GROUP BY device_id, DATE_FORMAT(received_at, ''%Y-%m-%d %H:00:00'') ON DUPLICATE KEY UPDATE sample_count = VALUES(sample_count), first_received_at = VALUES(first_received_at), last_received_at = VALUES(last_received_at)',
+  'SELECT 1'
+);
+PREPARE hour_availability_backfill_stmt FROM @hour_availability_backfill_sql;
+EXECUTE hour_availability_backfill_stmt;
+DEALLOCATE PREPARE hour_availability_backfill_stmt;
+INSERT IGNORE INTO app_schema_migrations (migration_key, applied_at)
+VALUES (@hour_availability_backfill_key, UTC_TIMESTAMP(3));
+
 CREATE TABLE IF NOT EXISTS device_spectrum_frames (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   device_id VARCHAR(191) NOT NULL,

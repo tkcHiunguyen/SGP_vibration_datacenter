@@ -65,7 +65,7 @@ export function LeftPanel({
       style={{
         width: "100%",
         height: "100%",
-        background: `linear-gradient(180deg, ${C.surface} 0%, ${C.bg} 100%)`,
+        background: C.surface,
         borderRight: `1px solid ${C.border}`,
         padding: "clamp(12px, 0.9vw, 20px) clamp(9px, 0.7vw, 16px)",
         display: "flex",
@@ -73,22 +73,6 @@ export function LeftPanel({
         overflow: "hidden",
       }}
     >
-      <style>
-        {`
-          @keyframes sidebarCardIn {
-            from {
-              opacity: 0;
-              transform: translateX(-8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateX(0);
-            }
-          }
-        `}
-      </style>
-
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
         {[
           { label: "Tổng", value: totalSensors, color: C.primary, icon: <Activity size={12} strokeWidth={2.2} /> },
@@ -106,7 +90,7 @@ export function LeftPanel({
       </div>
 
       <nav style={{ display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 }}>
-        {navItems.map((label, index) => {
+        {navItems.map((label) => {
           const isActive = activeNav === label;
           const isPinned = pinnedSet.has(label);
           const isHovered = hoveredItem === label;
@@ -132,7 +116,7 @@ export function LeftPanel({
                 borderRadius: 12,
                 border: `1px solid ${isActive ? C.primary + "66" : isHovered ? C.primary + "33" : C.cardBorder}`,
                 background: isActive
-                  ? `linear-gradient(135deg, ${C.primaryBg}, ${C.card})`
+                  ? C.primaryBg
                   : isHovered
                     ? C.primary + "0f"
                     : C.card,
@@ -145,15 +129,9 @@ export function LeftPanel({
                 cursor: "pointer",
                 userSelect: "none",
                 outline: "none",
-                boxShadow:
-                  isActive || isHovered
-                    ? `0 8px 18px ${C.primaryGlow}`
-                    : "0 0 0 rgba(0,0,0,0)",
                 transform: isActive ? "translateX(2px)" : isHovered ? "translateX(2px)" : "translateX(0)",
                 transition:
-                  "background 0.22s ease, border-color 0.22s ease, color 0.2s ease, box-shadow 0.24s ease, transform 0.22s ease",
-                animation: "sidebarCardIn 280ms cubic-bezier(0.16, 1, 0.3, 1) both",
-                animationDelay: `${Math.min(index * 35, 220)}ms`,
+                  "background 180ms ease-out, border-color 180ms ease-out, color 160ms ease-out, transform 180ms ease-out",
               }}
             >
               <div
@@ -167,7 +145,6 @@ export function LeftPanel({
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  boxShadow: isActive ? `0 0 12px ${C.primaryGlow}` : "none",
                 }}
               >
                 {navIcon(label)}

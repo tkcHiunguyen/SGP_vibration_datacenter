@@ -68,21 +68,9 @@ export function MainPanel({
   );
 
   return (
-    <main style={{
-      flex: 1, display: "flex", flexDirection: "column",
-      background: C.bg, minWidth: 0, overflow: "hidden",
-    }}>
+    <main className="dc-main-panel" style={{ background: C.bg }}>
       {isDashboard ? (
-        <div style={{
-          width: "min(100%, var(--dc-content-max))",
-          margin: "0 auto",
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          padding: "0 var(--dc-page-gutter) var(--dc-page-bottom)",
-        }}>
+        <div className="dc-dashboard-canvas flex flex-col overflow-hidden">
           <DeviceManagement
             sensors={sensors}
             telemetryByDevice={telemetryByDevice}
@@ -96,27 +84,23 @@ export function MainPanel({
           />
         </div>
       ) : activeNav === "Quản lý khu vực" ? (
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "22px var(--dc-page-gutter) var(--dc-page-bottom)",
-            scrollbarWidth: "thin",
-            scrollbarColor: `${C.scrollbar} transparent`,
-          }}
-        >
+        <div className="dc-page-scroll" style={{ scrollbarColor: `${C.scrollbar} transparent` }}>
           <Suspense fallback={panelFallback}>
             <ZoneManagement onNotify={onNotify} />
           </Suspense>
         </div>
       ) : activeNav === "Update Center" ? (
-        <Suspense fallback={panelFallback}>
-          <OtaManagement />
-        </Suspense>
+        <div className="dc-page-scroll" style={{ scrollbarColor: `${C.scrollbar} transparent` }}>
+          <Suspense fallback={panelFallback}>
+            <OtaManagement />
+          </Suspense>
+        </div>
       ) : activeNav === "Cài đặt" ? (
-        <Suspense fallback={panelFallback}>
-          <SettingsPage />
-        </Suspense>
+        <div className="dc-page-scroll" style={{ scrollbarColor: `${C.scrollbar} transparent` }}>
+          <Suspense fallback={panelFallback}>
+            <SettingsPage />
+          </Suspense>
+        </div>
       ) : (
         <UnderDevelopment page={activeNav} />
       )}

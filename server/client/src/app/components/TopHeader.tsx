@@ -42,17 +42,17 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
   const isDark = theme === "dark";
 
   return (
-    <header style={{
+    <header className="dc-top-header" style={{
       background: C.headerBg,
       borderBottom: `1px solid ${C.border}`,
       boxShadow: isDark
         ? "0 1px 3px rgba(0,0,0,0.5)"
         : "0 1px 3px rgba(0,0,0,0.08)",
       flexShrink: 0,
-      zIndex: 30,
+      zIndex: 60,
       position: "relative",
     }}>
-      <div style={{ padding: "0 var(--dc-page-gutter)", height: "clamp(54px, 2.8vw, 68px)", display: "flex", alignItems: "center", gap: 0 }}>
+      <div className="dc-top-header-inner" style={{ display: "flex", alignItems: "center", gap: 0 }}>
 
         <button
           type="button"
@@ -96,31 +96,30 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
         </button>
 
         {/* Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 28, flexShrink: 0 }}>
+        <div className="dc-header-brand" style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 24, flexShrink: 0 }}>
           <div style={{
             width: 28, height: 28, borderRadius: 8,
-            background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDim} 100%)`,
+            background: C.primary,
             display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: `0 0 14px ${C.primaryGlow}`,
             flexShrink: 0,
           }}>
             <Activity size={13} color="#fff" strokeWidth={2.5} />
           </div>
-          <div>
+          <div className="dc-header-brand-copy">
             <div style={{ color: C.textBright, fontWeight: 700, fontSize: "0.83rem", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               SGP Vibration Datacenter
             </div>
-            <div style={{ color: C.textDim, fontSize: "0.53rem", letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 600 }}>
+            <div className="dc-header-subtitle" style={{ color: C.textDim, fontSize: "0.53rem", letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 600 }}>
               Hệ thống giám sát công nghiệp
             </div>
           </div>
         </div>
 
         {/* Divider */}
-        <div style={{ width: 1, height: 22, background: C.border, marginRight: 20, flexShrink: 0 }} />
+        <div className="dc-header-divider" style={{ width: 1, height: 22, background: C.border, marginRight: 20, flexShrink: 0 }} />
 
         {/* Nav */}
-        <nav style={{ flex: 1, display: "flex", alignItems: "center", gap: 2, minWidth: 0, overflowX: "auto", scrollbarWidth: "thin", scrollbarColor: `${C.scrollbar} transparent` }}>
+        <nav className="dc-header-nav" style={{ flex: 1, display: "flex", alignItems: "center", gap: 2, minWidth: 0, overflowX: "auto", scrollbarWidth: "thin", scrollbarColor: `${C.scrollbar} transparent` }}>
           {navItems.map((label) => {
             const isActive = activeNav === label;
             return (
@@ -150,9 +149,9 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
 
           {/* Search */}
-          <div style={{
+          <div className="dc-header-search" style={{
             display: "flex", alignItems: "center", gap: 7,
-            height: "clamp(30px, 1.7vw, 38px)", padding: "0 10px", borderRadius: 8, width: "clamp(148px, 10vw, 240px)",
+            height: 34, padding: "0 10px", borderRadius: 8, width: "clamp(148px, 10vw, 220px)",
             background: C.input, border: `1px solid ${C.border}`,
           }}>
             <Search size={11} color={C.textMuted} strokeWidth={2} />
@@ -176,7 +175,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           </button>
 
           {/* Alert pill */}
-          <div style={{
+          <div className="dc-header-alert-pill" style={{
             display: "flex", alignItems: "center", gap: 5,
             height: 30, padding: "0 10px", borderRadius: 8,
             background: C.dangerBg, border: `1px solid ${C.danger}22`,
@@ -211,12 +210,12 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           }}>
             <div style={{
               width: 20, height: 20, borderRadius: 6,
-              background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDim})`,
+              background: C.primary,
               display: "flex", alignItems: "center", justifyContent: "center",
               color: "#fff", fontSize: "0.53rem", fontWeight: 700,
             }}>QT</div>
-            <span style={{ color: C.textBase, fontSize: "0.73rem", fontWeight: 500 }}>Quản trị</span>
-            <ChevronDown size={10} color={C.textMuted} strokeWidth={2} />
+            <span className="dc-header-user-name" style={{ color: C.textBase, fontSize: "0.73rem", fontWeight: 500 }}>Quản trị</span>
+            <ChevronDown className="dc-header-user-chevron" size={10} color={C.textMuted} strokeWidth={2} />
           </button>
         </div>
       </div>

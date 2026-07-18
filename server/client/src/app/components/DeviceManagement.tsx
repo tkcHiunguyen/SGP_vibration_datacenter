@@ -3,6 +3,7 @@ import {
   Info, Search, AlertTriangle,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
   Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Globe, X, ExternalLink, PencilLine, Trash2,
+  PanelRightClose, PanelRightOpen,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { ConsoleStatCard, type ToastItem } from "./ui";
@@ -10,6 +11,7 @@ import { useTheme } from "../context/ThemeContext";
 import {
   buildDeviceTelemetryCardReadout,
   DEFAULT_DEVICE_SORT,
+  getDeviceAxisPeakMagnitude,
   getLatestDeviceTelemetryPoint,
   type DeviceSortKey,
 } from "./device-display";
@@ -118,8 +120,6 @@ const DeviceCard = React.memo(function DeviceCard({
   const [webHovered, setWebHovered] = useState(false);
   const isOnline   = sensor.online;
   const isAbnormal = sensor.status === "abnormal";
-  const adxlStatus = sensor.adxlHealth?.status;
-  const adxlBadgeLabel = adxlStatus === "fault" ? "ADXL fault" : adxlStatus === "recovering" ? "ADXL recovering" : "";
   const accentColor = !isOnline ? "#4b5563" : isAbnormal ? C.danger : C.success;
   const hasWebTarget = sensor.ipAddress !== "N/A" && sensor.ipAddress.trim() !== "";
   const telemetryReadout = buildDeviceTelemetryCardReadout(telemetryPoint, sensor.axisLabels);
@@ -132,6 +132,7 @@ const DeviceCard = React.memo(function DeviceCard({
 
   return (
     <div
+      className="dc-device-card"
       data-ux="device-card"
       data-device-id={sensor.id}
       data-device-name={sensor.name}
@@ -180,9 +181,10 @@ const DeviceCard = React.memo(function DeviceCard({
         }}
       />
 
-      <div style={{ padding: "5px 10px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
+      <div className="dc-device-card-body" style={{ padding: "5px 10px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 5, minWidth: 0 }}>
           <div
+            className="dc-device-card-title"
             title={sensor.name}
             style={{
               color: C.textBright,
@@ -198,26 +200,7 @@ const DeviceCard = React.memo(function DeviceCard({
           >
             {sensor.name}
           </div>
-          {adxlBadgeLabel ? (
-            <span
-              title={sensor.adxlHealth?.reason ? `${adxlBadgeLabel}: ${sensor.adxlHealth.reason}` : adxlBadgeLabel}
-              style={{
-                flexShrink: 0,
-                borderRadius: 4,
-                padding: "2px 4px",
-                color: adxlStatus === "fault" ? C.danger : C.warning,
-                background: adxlStatus === "fault" ? `${C.danger}18` : `${C.warning}18`,
-                border: `1px solid ${adxlStatus === "fault" ? C.danger : C.warning}55`,
-                fontSize: "0.4rem",
-                fontWeight: 850,
-                lineHeight: 1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {adxlBadgeLabel}
-            </span>
-          ) : null}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
+          <div className="dc-device-card-actions" style={{ display: "inline-flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
             <div style={{ position: "relative" }}>
             <button
               type="button"
@@ -334,6 +317,7 @@ const DeviceCard = React.memo(function DeviceCard({
         </div>
 
         <div
+          className="dc-device-card-telemetry"
           aria-label="Giá trị telemetry hiện tại"
           style={{
             minWidth: 0,
@@ -365,15 +349,15 @@ const DeviceCard = React.memo(function DeviceCard({
                 gap: 3,
               }}
             >
-              <span style={{ color: C.warning, fontSize: "0.4rem", fontWeight: 900, letterSpacing: "0.09em", lineHeight: 1 }}>
+              <span className="dc-device-card-temp-label" style={{ color: C.warning, fontSize: "0.4rem", fontWeight: 900, letterSpacing: "0.09em", lineHeight: 1 }}>
                 TEMP
               </span>
               <TelemetryValue
                 value={telemetryReadout.temperature.value || "--"}
                 color={telemetryReadout.temperature.value ? C.textBright : C.textDim}
                 mutedColor={C.warning}
-                fontSize="0.76rem"
-                unitSize="0.46rem"
+                fontSize="var(--dc-device-temp-value-size)"
+                unitSize="var(--dc-device-temp-unit-size)"
               />
             </div>
 
@@ -401,6 +385,7 @@ const DeviceCard = React.memo(function DeviceCard({
                     }}
                   >
                     <span
+                      className="dc-device-card-axis-label"
                       style={{
                         color: C.textMuted,
                         fontSize: "0.42rem",
@@ -419,8 +404,8 @@ const DeviceCard = React.memo(function DeviceCard({
                       value={item.value || "--"}
                       color={item.value ? C.textBright : C.textDim}
                       mutedColor={C.textMuted}
-                      fontSize="0.6rem"
-                      unitSize="0.34rem"
+                      fontSize="var(--dc-device-axis-value-size)"
+                      unitSize="var(--dc-device-axis-unit-size)"
                       justify="flex-end"
                     />
                   </div>
@@ -797,20 +782,29 @@ const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
 const STORAGE_CHART_SIDEBAR_WIDTH_KEY = "sgp_ui_chart_sidebar_width";
 const DEVICE_CARD_EXIT_MS = 260;
 const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
-const CHART_SIDEBAR_MIN_WIDTH_PX = 460;
-const CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO = 0.75;
-const CHART_SIDEBAR_MAX_WIDTH_PX = 1600;
-const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.8;
+const CHART_SIDEBAR_MIN_WIDTH_PX = 480;
+const CHART_SIDEBAR_DEFAULT_WIDTH_PX = 560;
+const CHART_SIDEBAR_MAX_WIDTH_PX = 640;
+const CHART_SIDEBAR_LARGE_BREAKPOINT_PX = 2560;
+const CHART_SIDEBAR_LARGE_MIN_WIDTH_PX = 1280;
+const CHART_SIDEBAR_LARGE_DEFAULT_WIDTH_PX = 1360;
+const CHART_SIDEBAR_LARGE_MAX_WIDTH_PX = 1600;
+const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.42;
 function getChartSidebarDefaultWidth(viewportWidth: number): number {
-  return Math.round(Math.max(CHART_SIDEBAR_MIN_WIDTH_PX, viewportWidth * CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO));
+  const defaultWidth = viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX
+    ? CHART_SIDEBAR_LARGE_DEFAULT_WIDTH_PX
+    : CHART_SIDEBAR_DEFAULT_WIDTH_PX;
+  return Math.min(defaultWidth, getChartSidebarMaxWidth(viewportWidth));
 }
-const CHART_SIDEBAR_MEDIUM_VIEWPORT_RATIO = 0.72;
-const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 260;
-const CHART_SIDEBAR_MEDIUM_MIN_MAIN_AREA_PX = 300;
-const CHART_SIDEBAR_STACKED_BREAKPOINT_PX = 900;
+const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 620;
+const CHART_SIDEBAR_STACKED_BREAKPOINT_PX = 1200;
+const CHART_SIDEBAR_MOBILE_BREAKPOINT_PX = 640;
 const CHART_SIDEBAR_CONTENT_GAP_PX = 12;
 
 function getChartSidebarMinWidth(viewportWidth: number): number {
+  if (viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX) {
+    return CHART_SIDEBAR_LARGE_MIN_WIDTH_PX;
+  }
   if (viewportWidth < 1200) {
     return 360;
   }
@@ -819,11 +813,12 @@ function getChartSidebarMinWidth(viewportWidth: number): number {
 
 function getChartSidebarMaxWidth(viewportWidth: number): number {
   const minWidth = getChartSidebarMinWidth(viewportWidth);
-  const viewportRatio = viewportWidth < 1400 ? CHART_SIDEBAR_MEDIUM_VIEWPORT_RATIO : CHART_SIDEBAR_MAX_VIEWPORT_RATIO;
-  const minMainArea = viewportWidth < 1400 ? CHART_SIDEBAR_MEDIUM_MIN_MAIN_AREA_PX : CHART_SIDEBAR_MIN_MAIN_AREA_PX;
-  const ratioMax = Math.floor(viewportWidth * viewportRatio);
-  const byMainArea = Math.floor(viewportWidth - minMainArea);
-  const bounded = Math.min(CHART_SIDEBAR_MAX_WIDTH_PX, ratioMax, byMainArea);
+  const configuredMax = viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX
+    ? CHART_SIDEBAR_LARGE_MAX_WIDTH_PX
+    : CHART_SIDEBAR_MAX_WIDTH_PX;
+  const ratioMax = Math.floor(viewportWidth * CHART_SIDEBAR_MAX_VIEWPORT_RATIO);
+  const byMainArea = Math.floor(viewportWidth - CHART_SIDEBAR_MIN_MAIN_AREA_PX);
+  const bounded = Math.min(configuredMax, ratioMax, byMainArea);
   return Math.max(minWidth, bounded);
 }
 
@@ -863,11 +858,12 @@ export function DeviceManagement({
   const layoutHostRef = useRef<HTMLDivElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [layoutHostWidth, setLayoutHostWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
-  const [layoutHostTopPx, setLayoutHostTopPx] = useState(0);
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
   const [selectedSensorMode, setSelectedSensorMode] = useState<DeviceInfoMode>("view");
   const [chartSensor, setChartSensor] = useState<Sensor | null>(null);
-  const [chartSidebarDismissed, setChartSidebarDismissed] = useState(false);
+  const [chartSidebarCollapsed, setChartSidebarCollapsed] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < CHART_SIDEBAR_STACKED_BREAKPOINT_PX,
+  );
   const [chartSidebarWidthPx, setChartSidebarWidthPx] = useState(() => {
     const initialViewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
     const storedWidth = readStoredNumber(STORAGE_CHART_SIDEBAR_WIDTH_KEY, getChartSidebarDefaultWidth(initialViewportWidth));
@@ -938,7 +934,6 @@ export function DeviceManagement({
     const handleResize = (): void => {
       const nextViewportWidth = window.innerWidth;
       setViewportWidth(nextViewportWidth);
-      setLayoutHostTopPx(Math.round(layoutHostRef.current?.getBoundingClientRect().top ?? 0));
       setChartSidebarWidthPx((prev) => clampChartSidebarWidth(prev, nextViewportWidth));
     };
 
@@ -959,7 +954,6 @@ export function DeviceManagement({
     const updateWidth = () => {
       const rect = node.getBoundingClientRect();
       setLayoutHostWidth(Math.max(0, Math.round(rect.width)));
-      setLayoutHostTopPx(Math.max(0, Math.round(rect.top)));
     };
 
     updateWidth();
@@ -1020,6 +1014,20 @@ export function DeviceManagement({
     }
     return next;
   }, [telemetryByDevice]);
+
+  const highestVibrationSensor = useMemo(() => {
+    let candidate: { sensor: Sensor; peak: number } | null = null;
+
+    for (const sensor of visibleSensors) {
+      const peak = getDeviceAxisPeakMagnitude(latestTelemetryByDevice[sensor.id]);
+      if (peak === null || (candidate !== null && peak <= candidate.peak)) {
+        continue;
+      }
+      candidate = { sensor, peak };
+    }
+
+    return candidate?.sensor ?? visibleSensors[0] ?? null;
+  }, [latestTelemetryByDevice, visibleSensors]);
 
   const total    = visibleSensors.length;
   const online   = visibleSensors.filter(s => s.online).length;
@@ -1329,15 +1337,17 @@ export function DeviceManagement({
   const openCardInfo = useCallback((sensor: Sensor) => openDeviceInfo(sensor, "view"), [openDeviceInfo]);
   const openCardChart = useCallback((sensor: Sensor) => {
     closeContextMenu();
-    setChartSidebarDismissed(false);
     setChartSensor(sensor);
+    setChartSidebarCollapsed(false);
   }, [closeContextMenu]);
   const openCardWeb = useCallback((sensor: Sensor) => {
     closeContextMenu();
     setWebSensor(sensor);
   }, [closeContextMenu]);
-  const activeChartSensor = chartSensor;
-  const chartSidebarOpen = !chartSidebarDismissed && activeChartSensor !== null;
+  const activeChartSensor = highestVibrationSensor ?? chartSensor;
+  const chartSidebarAvailable = activeChartSensor !== null;
+  const chartSidebarOpen = chartSidebarAvailable && !chartSidebarCollapsed;
+  const chartSidebarMobile = viewportWidth < CHART_SIDEBAR_MOBILE_BREAKPOINT_PX;
   const chartSidebarStacked = viewportWidth < CHART_SIDEBAR_STACKED_BREAKPOINT_PX;
   const chartSidebarWidthPxSafe = clampChartSidebarWidth(chartSidebarWidthPx, viewportWidth);
   const chartSidebarWidth = `${chartSidebarWidthPxSafe}px`;
@@ -1346,16 +1356,27 @@ export function DeviceManagement({
     : 0;
   const dashboardContentWidth = Math.max(320, layoutHostWidth - chartSidebarReservedWidthPx);
   const dashboardHeaderControlsSingleColumn = dashboardContentWidth < 840;
-  const deviceGridMinCardWidth = dashboardContentWidth < 760
-    ? "106px"
-    : dashboardContentWidth < 980 ? "118px" : "var(--dc-device-card-min)";
-  const deviceGridMaxCardWidth = dashboardContentWidth < 760
-    ? "146px"
-    : dashboardContentWidth < 980 ? "158px" : "var(--dc-device-card-max)";
-  const deviceGridTemplateColumns = `repeat(auto-fill, minmax(min(${deviceGridMinCardWidth}, 100%), ${deviceGridMaxCardWidth}))`;
-  const chartSidebarReservedWidth = chartSidebarReservedWidthPx > 0
-    ? `${chartSidebarReservedWidthPx}px`
-    : "0px";
+  const deviceGridTemplateColumns = dashboardContentWidth < 520
+    ? "minmax(0, 1fr)"
+    : dashboardContentWidth < 760
+      ? "repeat(auto-fit, minmax(min(180px, 100%), 1fr))"
+      : dashboardContentWidth < 980
+        ? "repeat(auto-fill, minmax(min(210px, 100%), 240px))"
+        : "repeat(auto-fill, minmax(min(var(--dc-device-card-min), 100%), var(--dc-device-card-max)))";
+  useEffect(() => {
+    if (!chartSidebarOpen) {
+      return;
+    }
+
+    const collapseOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setChartSidebarCollapsed(true);
+      }
+    };
+
+    window.addEventListener("keydown", collapseOnEscape);
+    return () => window.removeEventListener("keydown", collapseOnEscape);
+  }, [chartSidebarOpen]);
   const getContextItemStyle = (item: DeviceContextMenuItem, danger = false): React.CSSProperties => {
     const hovered = contextHoveredItem === item;
     return {
@@ -1421,24 +1442,20 @@ export function DeviceManagement({
             flexDirection: "column",
             order: chartSidebarStacked ? 2 : 1,
             paddingTop: chartSidebarStacked ? 12 : 22,
-            paddingRight: chartSidebarReservedWidth,
           }}
         >
       {/* Stat summary moved to sidebar */}
 
       {/* ── Controls row ── */}
       <div
+        className="dc-device-controls"
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flexWrap: "nowrap",
           marginBottom: 12,
-          minWidth: 0,
         }}
       >
         {/* Search */}
         <div
+          data-ux="device-search-shell"
           style={{
             display: "flex",
             alignItems: "center",
@@ -1539,10 +1556,37 @@ export function DeviceManagement({
         <div style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
           Hiển thị {pagedDevices.length} / {displayed.length} thiết bị
         </div>
+
+        {!chartSidebarOpen && chartSidebarAvailable ? (
+          <button
+            type="button"
+            data-ux="open-chart-panel"
+            aria-label={`Mở biểu đồ ${activeChartSensor?.name ?? "thiết bị"}`}
+            onClick={() => setChartSidebarCollapsed(false)}
+            style={{
+              minHeight: 32,
+              padding: "0 10px",
+              borderRadius: 8,
+              border: `1px solid ${C.cardBorder}`,
+              background: C.card,
+              color: C.textBase,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: "pointer",
+              flexShrink: 0,
+              fontSize: "0.7rem",
+              fontWeight: 700,
+            }}
+          >
+            <PanelRightOpen size={13} color={C.primary} strokeWidth={2.2} />
+            Mở biểu đồ
+          </button>
+        ) : null}
       </div>
 
       {/* ── Card Grid + Right Sidebar ── */}
-      <div style={{ display: "flex", alignItems: "stretch", gap: 12, minWidth: 0, flex: 1, minHeight: 0 }}>
+      <div className="dc-device-workspace">
         <div
           style={{
             flex: "1 1 auto",
@@ -1564,21 +1608,49 @@ export function DeviceManagement({
               <Layers size={28} strokeWidth={1.2} />
               <div style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
               <div style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
+              {(search || filter !== "all") ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setFilter("all");
+                  }}
+                  style={{
+                    height: 32,
+                    marginTop: 4,
+                    padding: "0 11px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.cardBorder}`,
+                    background: C.surface,
+                    color: C.textBase,
+                    cursor: "pointer",
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  Xoá bộ lọc
+                </button>
+              ) : null}
             </div>
           ) : (
             <>
               {shouldGroupByZone ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div className="dc-zone-collection">
                   {pagedZoneGroups.map((zoneGroup) => (
-                    <section key={zoneGroup.key} data-ux="device-zone-section" data-zone={zoneGroup.label}>
+                    <section
+                      key={zoneGroup.key}
+                      className="dc-zone-device-group"
+                      data-ux="device-zone-section"
+                      data-zone={zoneGroup.label}
+                      style={{ background: C.surface, borderColor: C.border }}
+                    >
                       <div
                         style={{
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
                           gap: 8,
-                          marginBottom: 8,
-                          padding: "0 2px",
+                          marginBottom: 9,
                           flexWrap: "wrap",
                         }}
                       >
@@ -1610,10 +1682,11 @@ export function DeviceManagement({
 
                       <div
                         data-ux="device-grid"
+                        className="dc-zone-device-grid"
                         style={{
-                          display: "grid",
-                          gridTemplateColumns: deviceGridTemplateColumns,
-                          gap: 6,
+                          gridTemplateColumns: zoneGroup.devices.length > 1
+                            ? "repeat(auto-fit, minmax(min(220px, 100%), 1fr))"
+                            : "minmax(0, 1fr)",
                         }}
                       >
                         {zoneGroup.devices.map((sensor, idx) => (
@@ -1795,29 +1868,55 @@ export function DeviceManagement({
         <div
           data-ux="device-chart-sidebar"
           style={{
-            position: chartSidebarStacked ? "relative" : "fixed",
-            order: chartSidebarStacked ? 1 : 2,
-            top: chartSidebarStacked ? "auto" : layoutHostTopPx,
-            right: chartSidebarStacked ? "auto" : 0,
-            bottom: chartSidebarStacked ? "auto" : 0,
+            position: chartSidebarMobile ? "fixed" : "relative",
+            inset: chartSidebarMobile && chartSidebarOpen ? 0 : undefined,
+            order: chartSidebarStacked ? -1 : 2,
             width: chartSidebarOpen ? (chartSidebarStacked ? "100%" : chartSidebarWidth) : 0,
             minWidth: 0,
             maxWidth: chartSidebarOpen ? (chartSidebarStacked ? "100%" : chartSidebarWidth) : 0,
-            height: chartSidebarStacked && chartSidebarOpen ? "min(68vh, 720px)" : undefined,
-            minHeight: chartSidebarStacked && chartSidebarOpen ? 360 : undefined,
-            marginTop: chartSidebarStacked && chartSidebarOpen ? 12 : 0,
-            marginBottom: chartSidebarStacked && chartSidebarOpen ? 12 : 0,
+            flexShrink: 0,
+            height: chartSidebarOpen
+              ? chartSidebarMobile
+                ? "100dvh"
+                : chartSidebarStacked
+                  ? "clamp(360px, 55dvh, 680px)"
+                  : "100%"
+              : 0,
+            minHeight: chartSidebarOpen && chartSidebarStacked && !chartSidebarMobile ? 360 : 0,
             opacity: chartSidebarOpen ? 1 : 0,
             transform: chartSidebarOpen ? "translateX(0)" : "translateX(12px)",
-            transition: "opacity 180ms ease, transform 220ms ease",
+            transition: "opacity 180ms ease-out, transform 180ms ease-out",
             pointerEvents: chartSidebarOpen ? "auto" : "none",
             overflow: "visible",
-            zIndex: 2,
+            background: C.bg,
+            zIndex: chartSidebarMobile ? 80 : 2,
           }}
         >
           {chartSidebarOpen && activeChartSensor ? (
             <>
-              {!chartSidebarStacked ? (
+              <button
+                type="button"
+                className="dc-chart-panel-toggle"
+                aria-label={chartSidebarMobile ? "Đóng biểu đồ" : "Thu gọn biểu đồ"}
+                title={chartSidebarMobile ? "Đóng biểu đồ" : "Thu gọn biểu đồ"}
+                onClick={() => setChartSidebarCollapsed(true)}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  border: `1px solid ${C.cardBorder}`,
+                  background: C.card,
+                  color: C.textBase,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <PanelRightClose size={14} strokeWidth={2.2} />
+              </button>
+
+              {!chartSidebarStacked && !chartSidebarMobile ? (
                 <div
                   role="separator"
                   aria-orientation="vertical"
@@ -1882,11 +1981,10 @@ export function DeviceManagement({
                   }}
                   onDeviceDataCleared={onDeviceDataCleared}
                   onClose={() => {
-                    setChartSidebarDismissed(true);
+                    setChartSidebarCollapsed(true);
                     setChartSidebarResizing(false);
-                    onChartClosed?.(activeChartSensor.id);
-                    setChartSensor(null);
                   }}
+                  pinned
                 />
               </Suspense>
             </>

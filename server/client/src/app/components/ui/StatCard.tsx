@@ -11,8 +11,7 @@ export function ConsoleStatGrid({
 }) {
   return (
     <div
-      className={cx("grid gap-2.5", className)}
-      style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
+      className={cx("dc-stat-grid grid gap-2.5", className)}
     >
       {children}
     </div>
@@ -71,6 +70,7 @@ export function ConsoleStatCard({
             {label}
           </div>
           <div
+            className="tabular-nums"
             style={{ color, fontSize: "1.2rem", fontWeight: 800, marginTop: 2, lineHeight: 1.15 }}
           >
             {value}

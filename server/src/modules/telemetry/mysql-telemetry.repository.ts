@@ -887,6 +887,7 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       );
       if (affectedRows === 1) {
         result.inserted += 1;
+        await this.upsertHourlyAvailability(point.deviceId, point.receivedAt);
       } else if (affectedRows > 1) {
         result.updated += 1;
       } else {

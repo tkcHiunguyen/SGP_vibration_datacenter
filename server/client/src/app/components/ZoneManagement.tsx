@@ -481,7 +481,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
   ];
 
   return (
-    <ConsolePage className="zone-page-root">
+    <ConsolePage className="zone-page-root dc-page-canvas">
       <style>{`
         @keyframes zoneFadeUp {
           from {
@@ -826,6 +826,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               <ConsoleButton
                 variant="neutral"
                 size="sm"
+                aria-label="Trang khu vực trước"
                 onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                 disabled={!canGoPrev}
                 className="h-[30px] w-[30px] p-0"
@@ -839,6 +840,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               <ConsoleButton
                 variant="neutral"
                 size="sm"
+                aria-label="Trang khu vực sau"
                 onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                 disabled={!canGoNext}
                 className="h-[30px] w-[30px] p-0"

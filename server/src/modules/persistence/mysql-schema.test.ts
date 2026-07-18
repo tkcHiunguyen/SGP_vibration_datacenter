@@ -58,6 +58,15 @@ test('runtime MySQL schema includes hourly telemetry availability summaries', ()
   }
 });
 
+test('runtime MySQL schema backfills hourly availability once during deployment', () => {
+  assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS app_schema_migrations/i);
+  assert.match(MYSQL_SCHEMA_SQL, /20260718_backfill_hourly_telemetry_availability_v1/i);
+  assert.match(
+    MYSQL_SCHEMA_SQL,
+    /INSERT INTO device_telemetry_hour_summaries[\s\S]*SELECT device_id, DATE_FORMAT\(received_at/i,
+  );
+});
+
 test('runtime MySQL schema includes hourly telemetry metric summaries', () => {
   assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS device_telemetry_hour_metric_summaries/i);
   for (const column of ['temperature', 'vibration', 'vrms_x_mms', 'drms_x_um']) {

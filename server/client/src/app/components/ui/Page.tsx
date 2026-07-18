@@ -12,7 +12,7 @@ export function ConsolePage({
   style?: React.CSSProperties;
 }) {
   return (
-    <div className={cx("flex min-w-0 flex-col gap-3.5", className)} style={style}>
+    <div className={cx("dc-console-page flex min-w-0 flex-col gap-3.5", className)} style={style}>
       {children}
     </div>
   );
@@ -57,17 +57,17 @@ export function ConsolePageHeader({
 }) {
   const { C } = useTheme();
   return (
-    <ConsolePanel className={cx("px-4 py-3", className)}>
+    <ConsolePanel className={cx("dc-console-page-header px-4 py-3", className)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             {icon ? <span style={{ color: C.primary }}>{icon}</span> : null}
-            <h2 style={{ color: C.textBright, margin: 0, fontSize: "1rem", fontWeight: 800 }}>
+            <h2 className="text-balance" style={{ color: C.textBright, margin: 0, fontSize: "1rem", fontWeight: 800 }}>
               {title}
             </h2>
           </div>
           {subtitle ? (
-            <p style={{ color: C.textMuted, margin: "6px 0 0", fontSize: "0.74rem" }}>{subtitle}</p>
+            <p className="text-pretty" style={{ color: C.textMuted, margin: "6px 0 0", fontSize: "0.74rem" }}>{subtitle}</p>
           ) : null}
         </div>
         {actions ? <div className="flex items-center gap-2">{actions}</div> : null}

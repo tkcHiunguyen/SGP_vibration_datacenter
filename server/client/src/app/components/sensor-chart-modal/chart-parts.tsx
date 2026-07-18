@@ -87,9 +87,9 @@ export type ChartModalLayout = {
   modalMaxHeight: string;
 };
 
-export function getChartModalLayout(): ChartModalLayout {
-  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+export function getChartModalLayout(containerWidth?: number, containerHeight?: number): ChartModalLayout {
+  const viewportWidth = containerWidth ?? (typeof window === "undefined" ? 1440 : window.innerWidth);
+  const viewportHeight = containerHeight ?? (typeof window === "undefined" ? 900 : window.innerHeight);
   const scaledDesktopHeight = viewportHeight < 1120;
   const midHeight = viewportHeight < 960;
   const compactHeight = viewportHeight < 820;
@@ -118,15 +118,16 @@ export function getChartModalLayout(): ChartModalLayout {
   const verticalFill = viewportWidth >= 900
     ? Math.max(0, Math.min(80, Math.round((viewportHeight - 760) * 0.35)))
     : 0;
-  // Use the otherwise idle vertical space of 4K dashboards for the charts themselves.
-  const largeScreenVerticalRoom = viewportWidth >= 1800
+  // The pinned panel reports its own width, so use its usable two-column width
+  // instead of the full viewport width when filling tall desktop layouts.
+  const largeScreenVerticalRoom = viewportWidth >= 760
     ? Math.max(0, viewportHeight - 1200)
     : 0;
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.4),
+    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47),
     overviewHeight: baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07),
     spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15),
     topGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
@@ -156,7 +157,7 @@ export function getChartModalLayout(): ChartModalLayout {
           ? "5px 5px 2px"
           : "6px 5px 3px",
     fftAxisFooterHeight: tightHeight ? 5 : 6,
-    topGridColumns: viewportWidth < 980 ? "1fr" : "repeat(2, minmax(0, 1fr))",
+    topGridColumns: viewportWidth < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))",
     spectrumGridColumns:
       viewportWidth < 900
         ? "1fr"
@@ -1706,6 +1707,7 @@ type TelemetryTrendChartProps = {
   gridColor: string;
   axisLabelColor: string;
   C: {
+    primary: string;
     surface: string;
     border: string;
     textBright: string;
@@ -2479,8 +2481,8 @@ export function TelemetryTrendChart({
 
               {playheadX !== null ? (
                 <g pointerEvents="none">
-                  <line x1={playheadX} x2={playheadX} y1={margin.top} y2={margin.top + innerHeight} stroke="#ef4444" strokeWidth={2.4} />
-                  <circle cx={playheadX} cy={margin.top + 7} r={4.5} fill="#ef4444" stroke={C.surface} strokeWidth={1.5} />
+                  <line x1={playheadX} x2={playheadX} y1={margin.top} y2={margin.top + innerHeight} stroke={C.primary} strokeWidth={2.4} />
+                  <circle cx={playheadX} cy={margin.top + 7} r={4.5} fill={C.primary} stroke={C.surface} strokeWidth={1.5} />
                 </g>
               ) : null}
             </g>

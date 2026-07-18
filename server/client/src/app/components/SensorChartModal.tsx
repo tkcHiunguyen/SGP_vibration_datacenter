@@ -1003,12 +1003,13 @@ interface Props {
   onSensorUpdated?: (sensor: Sensor) => void;
   onDeviceDataCleared?: (deviceId: string) => void;
   onClose: () => void;
+  pinned?: boolean;
 }
 
-const FFT_AXIS_COLORS: Record<DeviceAxisKey, string> = {
-  ax: "#f87171",
+const AXIS_SERIES_COLORS: Record<DeviceAxisKey, string> = {
+  ax: "#22d3ee",
   ay: "#60a5fa",
-  az: "#a78bfa",
+  az: "#fbbf24",
 };
 
 type FftAxisDisplayItem = (typeof FFT_AXIS_DISPLAY_ORDER)[number];
@@ -1023,6 +1024,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   onSensorUpdated,
   onDeviceDataCleared,
   onClose,
+  pinned = false,
 }: Props) {
   const { C } = useTheme();
 
@@ -1104,7 +1106,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   });
   const [detailTileVersion, setDetailTileVersion] = useState(0);
   const [selectedTelemetryStepMs, setSelectedTelemetryStepMs] = useState<TelemetryResolutionSelection>("auto");
-  const modalLayout = useChartModalLayout();
+  const modalRootRef = useRef<HTMLDivElement | null>(null);
+  const modalLayout = useChartModalLayout(modalRootRef);
   const closeTimerRef = useRef<number | null>(null);
   const onSensorUpdatedRef = useRef(onSensorUpdated);
   const spectrumHoverTimerRef = useRef<number | null>(null);
@@ -1310,7 +1313,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   }, [clearDetailTileFetchTimer]);
 
   const handleClose = useCallback(() => {
-    if (clearingDeviceData) {
+    if (pinned || clearingDeviceData) {
       return;
     }
     if (closeTimerRef.current !== null) {
@@ -1325,7 +1328,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       closeTimerRef.current = null;
       onClose();
     }, CHART_MODAL_TRANSITION_MS);
-  }, [clearPlaybackTimer, clearingDeviceData, onClose]);
+  }, [clearPlaybackTimer, clearingDeviceData, onClose, pinned]);
 
   const openAxisRenameModal = useCallback(
     (axis: DeviceAxisKey) => {
@@ -3264,7 +3267,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   } satisfies Record<SpectrumAxis, typeof fftRenderX>;
 
   const renderFftAxisLabelButton = (axis: DeviceAxisKey, spectrumAxis: SpectrumAxis) => {
-    const color = FFT_AXIS_COLORS[axis];
+    const color = AXIS_SERIES_COLORS[axis];
     const axisDisplayLabel = chartAxisLabels[axis];
     return (
       <button
@@ -3322,7 +3325,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   };
 
   const renderFftAxisCard = ({ deviceAxis, spectrumAxis }: FftAxisDisplayItem) => {
-    const color = FFT_AXIS_COLORS[deviceAxis];
+    const color = AXIS_SERIES_COLORS[deviceAxis];
     const data = fftRenderByAxis[spectrumAxis];
     const peak = spectrumPeakByAxis[spectrumAxis];
 
@@ -3416,6 +3419,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   return (
     <>
       <div
+        ref={modalRootRef}
         data-ux="chart-modal"
         data-ux-chart-ready={showInitialLoading ? "false" : "true"}
         data-ux-telemetry-points={telemetryPoints.length}
@@ -4008,7 +4012,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </button>
 
             {/* X close button – prominent */}
-            <button
+            {!pinned ? (
+              <button
               type="button"
               onClick={handleClose}
               title="Đóng"
@@ -4036,7 +4041,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               }}
             >
               <X size={16} color={C.textMuted} strokeWidth={2.5} />
-            </button>
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -4222,7 +4228,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             }}
           >
             <ChartSection
-              title="Xu hướng nhiệt độ (°C)"
+              title="Đồ thị nhiệt độ (°C)"
               icon={<Thermometer size={13} strokeWidth={2} />}
               C={C}
               titleGap={modalLayout.chartTitleGap}
@@ -4274,7 +4280,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </ChartSection>
 
             <ChartSection
-              title="Xu hướng gia tốc (m/s²)"
+              title="Đồ thị gia tốc (m/s²)"
               icon={<Activity size={13} strokeWidth={2} />}
               C={C}
               titleGap={modalLayout.chartTitleGap}
@@ -4291,9 +4297,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     data={accelDisplayData}
                     hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
                     series={[
-                      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: "#f87171", strokeWidth: 1.8 },
-                      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: "#60a5fa", strokeWidth: 1.8 },
-                      { key: "az", name: `${chartAxisLabels.az} RMS`, color: "#a78bfa", strokeWidth: 1.8 },
+                      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+                      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+                      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
                     ]}
                     statusBands={displayTrendStatusBands}
                     missingDataBands={trendMissingDataBands}
@@ -4330,7 +4336,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </ChartSection>
 
             <ChartSection
-              title="Xu hướng vận tốc RMS (mm/s)"
+              title="Đồ thị vận tốc RMS (mm/s)"
               icon={<Activity size={13} strokeWidth={2} />}
               C={C}
               titleGap={modalLayout.chartTitleGap}
@@ -4347,9 +4353,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     data={vrmsDisplayData}
                     hoverPoints={vrmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
                     series={[
-                      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: "#f97316", strokeWidth: 1.8 },
-                      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: "#22c55e", strokeWidth: 1.8 },
-                      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: "#06b6d4", strokeWidth: 1.8 },
+                      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+                      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+                      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
                     ]}
                     statusBands={displayTrendStatusBands}
                     missingDataBands={trendMissingDataBands}
@@ -4379,7 +4385,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </ChartSection>
 
             <ChartSection
-              title="Xu hướng biên độ RMS (mm)"
+              title="Đồ thị biên độ RMS (mm)"
               icon={<Activity size={13} strokeWidth={2} />}
               C={C}
               titleGap={modalLayout.chartTitleGap}
@@ -4396,9 +4402,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     data={drmsDisplayData}
                     hoverPoints={drmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
                     series={[
-                      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: "#fb7185", strokeWidth: 1.8 },
-                      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: "#38bdf8", strokeWidth: 1.8 },
-                      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: "#c084fc", strokeWidth: 1.8 },
+                      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+                      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+                      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
                     ]}
                     statusBands={displayTrendStatusBands}
                     missingDataBands={trendMissingDataBands}

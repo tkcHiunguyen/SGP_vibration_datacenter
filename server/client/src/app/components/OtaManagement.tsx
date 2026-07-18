@@ -149,7 +149,6 @@ function StepBadge({ num, label, active, done }: { num: number; label: string; a
         background: done ? C.success : active ? C.primary : C.surface,
         border: `1.5px solid ${done ? C.success : active ? C.primary : C.border}`,
         transition: "all 0.3s",
-        boxShadow: active ? `0 0 12px ${C.primary}44` : done ? `0 0 8px ${C.success}33` : "none",
       }}>
         {done
           ? <CheckCircle2 size={13} color="#fff" strokeWidth={2.5} />
@@ -360,12 +359,10 @@ export function OtaManagement() {
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div
-      className="ota-page-root"
+      className="ota-page-root dc-page-canvas"
       style={{
-      flex: 1, overflowY: "auto", padding: "24px 28px 40px",
-      scrollbarWidth: "thin", scrollbarColor: `${C.scrollbar} transparent`,
-      background: C.bg,
-    }}>
+        background: C.bg,
+      }}>
       <style>{`
         @keyframes otaFadeUp {
           from { opacity: 0; transform: translateY(10px); }
@@ -433,9 +430,28 @@ export function OtaManagement() {
           align-items: start;
         }
 
+        .ota-steps {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
         @media (max-width: 1120px) {
           .ota-main-grid {
             grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 720px) {
+          .ota-hero {
+            flex-direction: column;
+            gap: 14px;
+          }
+
+          .ota-steps {
+            width: 100%;
+            justify-content: space-between;
+            gap: 5px;
           }
         }
 
@@ -461,10 +477,9 @@ export function OtaManagement() {
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <div style={{
               width: 34, height: 34, borderRadius: 10,
-              background: `linear-gradient(135deg, ${C.primary}22 0%, ${C.primaryDim}11 100%)`,
+              background: C.primaryBg,
               border: `1px solid ${C.primary}33`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: `0 0 16px ${C.primaryGlow}`,
             }}>
               <UploadCloud size={16} color={C.primary} strokeWidth={2} />
             </div>
@@ -480,7 +495,7 @@ export function OtaManagement() {
         </div>
 
         {/* Step indicators */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="ota-steps">
           <StepBadge num={1} label="Firmware" active={!step1Done} done={step1Done} />
           <ChevronRight size={12} color={C.textDim} />
           <StepBadge num={2} label="Thiết bị" active={step1Done && !step2Done} done={step2Done} />
@@ -504,7 +519,7 @@ export function OtaManagement() {
             <div style={{
               padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
               display: "flex", alignItems: "center", gap: 8,
-              background: `linear-gradient(90deg, ${C.primary}08 0%, transparent 100%)`,
+              background: C.surface,
             }}>
               <FileCode2 size={13} color={C.primary} strokeWidth={2} />
               <span style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 700 }}>Firmware Binary</span>
@@ -596,7 +611,6 @@ export function OtaManagement() {
                     opacity: !selectedFile || uploading ? 0.5 : 1,
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                     fontFamily: "inherit", transition: "all 0.2s",
-                    boxShadow: uploadedBin ? "none" : `0 0 16px ${C.primary}33`,
                   }}
                 >
                   {uploading
@@ -655,7 +669,7 @@ export function OtaManagement() {
             <div style={{
               padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
               display: "flex", alignItems: "center", gap: 8,
-              background: `linear-gradient(90deg, ${C.primary}08 0%, transparent 100%)`,
+              background: C.surface,
             }}>
               <Send size={13} color={C.primary} strokeWidth={2} />
               <span style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 700 }}>Triển khai</span>
@@ -684,13 +698,12 @@ export function OtaManagement() {
                   width: "100%", height: 40, borderRadius: 10,
                   background: dispatching || !step1Done || !step2Done
                     ? C.surface
-                    : `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDim} 100%)`,
+                    : C.primary,
                   border: `1px solid ${dispatching || !step1Done || !step2Done ? C.border : C.primary}`,
                   color: dispatching || !step1Done || !step2Done ? C.textMuted : "#fff",
                   fontSize: "0.8rem", fontWeight: 800, cursor: dispatching || !step1Done || !step2Done ? "not-allowed" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                   fontFamily: "inherit", letterSpacing: "0.02em",
-                  boxShadow: !dispatching && step1Done && step2Done ? `0 4px 20px ${C.primary}44` : "none",
                   transition: "all 0.2s",
                 }}
               >
@@ -723,11 +736,10 @@ export function OtaManagement() {
                         height: "100%", borderRadius: 99, transition: "width 0.6s ease",
                         width: `${summary.percent}%`,
                         background: otaRunning
-                          ? `linear-gradient(90deg, ${C.primary}, ${C.primaryDim})`
+                          ? C.primary
                           : failedTotal > 0
-                            ? `linear-gradient(90deg, ${C.success}, ${C.warning})`
-                            : `linear-gradient(90deg, ${C.success}, ${C.success}88)`,
-                        boxShadow: `0 0 8px ${otaRunning ? C.primary : C.success}44`,
+                            ? C.warning
+                            : C.success,
                       }} />
                     </div>
                   </div>
@@ -769,7 +781,7 @@ export function OtaManagement() {
           {/* Header */}
           <div style={{
             padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
-            background: `linear-gradient(90deg, ${C.primary}08 0%, transparent 100%)`,
+            background: C.surface,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Wifi size={13} color={C.primary} strokeWidth={2} />
@@ -797,6 +809,8 @@ export function OtaManagement() {
                 />
               </div>
               <button
+                type="button"
+                aria-label="Tải lại danh sách thiết bị"
                 className="ota-action-btn"
                 onClick={() => void loadDevices()}
                 disabled={loadingDevices}
@@ -872,7 +886,6 @@ export function OtaManagement() {
                       background: checked ? C.primary : "transparent",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       transition: "all 0.15s",
-                      boxShadow: checked ? `0 0 6px ${C.primary}44` : "none",
                     }}>
                       {checked && <svg width="9" height="9" viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </div>
@@ -895,7 +908,7 @@ export function OtaManagement() {
                           {device.deviceId}
                         </span>
                         {/* Online dot */}
-                        <span className="ota-online-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, flexShrink: 0, boxShadow: `0 0 5px ${C.success}88` }} />
+                        <span className="ota-online-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, flexShrink: 0 }} />
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {toText(m.name) && <span style={{ color: C.textMuted, fontSize: "0.65rem" }}>{toText(m.name)}</span>}

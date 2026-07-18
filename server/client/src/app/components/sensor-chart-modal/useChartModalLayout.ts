@@ -1,21 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 import { getChartModalLayout } from "./chart-parts";
 import type { ChartModalLayout } from "./chart-parts";
 
-export function useChartModalLayout(): ChartModalLayout {
+export function useChartModalLayout(containerRef?: RefObject<HTMLElement | null>): ChartModalLayout {
   const [modalLayout, setModalLayout] = useState<ChartModalLayout>(() => getChartModalLayout());
 
   useEffect(() => {
-    const handleResize = () => {
-      setModalLayout(getChartModalLayout());
+    const updateLayout = () => {
+      const rect = containerRef?.current?.getBoundingClientRect();
+      setModalLayout(getChartModalLayout(rect?.width, rect?.height));
     };
-    handleResize();
-    window.addEventListener("resize", handleResize);
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    const node = containerRef?.current;
+    const observer = node && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updateLayout)
+      : null;
+    if (node && observer) {
+      observer.observe(node);
+    }
+
     return () => {
-      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", updateLayout);
+      observer?.disconnect();
     };
-  }, []);
+  }, [containerRef]);
 
   return modalLayout;
 }

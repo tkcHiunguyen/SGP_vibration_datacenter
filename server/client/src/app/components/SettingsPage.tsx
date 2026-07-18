@@ -38,13 +38,7 @@ export function SettingsPage() {
 
   return (
     <ConsolePage
-      className="flex-1 px-[26px] py-[22px]"
-      style={{
-        minHeight: 0,
-        overflowY: "auto",
-        scrollbarWidth: "thin",
-        scrollbarColor: `${C.scrollbar} transparent`,
-      }}
+      className="settings-page-root dc-page-canvas"
     >
       <ConsolePageHeader
         icon={<Settings size={17} strokeWidth={2.1} />}
@@ -53,10 +47,9 @@ export function SettingsPage() {
       />
 
       <div
-        className="grid grid-cols-1 xl:grid-cols-[292px_minmax(0,1fr)]"
+        className="settings-layout"
         style={{
-          gap: 14,
-          alignItems: "start",
+          minWidth: 0,
         }}
       >
         <ConsolePanel style={{ padding: 0, overflow: "hidden" }}>
