@@ -779,32 +779,21 @@ interface DeviceManagementProps {
 
 const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
 const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
-const STORAGE_CHART_SIDEBAR_WIDTH_KEY = "sgp_ui_chart_sidebar_width";
+const STORAGE_CHART_SIDEBAR_RATIO_KEY = "sgp_ui_chart_sidebar_ratio_v3";
 const DEVICE_CARD_EXIT_MS = 260;
 const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
 const CHART_SIDEBAR_MIN_WIDTH_PX = 480;
-const CHART_SIDEBAR_DEFAULT_WIDTH_PX = 560;
-const CHART_SIDEBAR_MAX_WIDTH_PX = 640;
-const CHART_SIDEBAR_LARGE_BREAKPOINT_PX = 2560;
-const CHART_SIDEBAR_LARGE_MIN_WIDTH_PX = 1280;
-const CHART_SIDEBAR_LARGE_DEFAULT_WIDTH_PX = 1360;
-const CHART_SIDEBAR_LARGE_MAX_WIDTH_PX = 1600;
-const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.42;
+const CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO = 0.7;
+const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.7;
 function getChartSidebarDefaultWidth(viewportWidth: number): number {
-  const defaultWidth = viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX
-    ? CHART_SIDEBAR_LARGE_DEFAULT_WIDTH_PX
-    : CHART_SIDEBAR_DEFAULT_WIDTH_PX;
-  return Math.min(defaultWidth, getChartSidebarMaxWidth(viewportWidth));
+  return Math.round(viewportWidth * CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO);
 }
-const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 620;
+const CHART_SIDEBAR_MIN_MAIN_AREA_PX = 320;
 const CHART_SIDEBAR_STACKED_BREAKPOINT_PX = 1200;
 const CHART_SIDEBAR_MOBILE_BREAKPOINT_PX = 640;
 const CHART_SIDEBAR_CONTENT_GAP_PX = 12;
 
 function getChartSidebarMinWidth(viewportWidth: number): number {
-  if (viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX) {
-    return CHART_SIDEBAR_LARGE_MIN_WIDTH_PX;
-  }
   if (viewportWidth < 1200) {
     return 360;
   }
@@ -813,12 +802,9 @@ function getChartSidebarMinWidth(viewportWidth: number): number {
 
 function getChartSidebarMaxWidth(viewportWidth: number): number {
   const minWidth = getChartSidebarMinWidth(viewportWidth);
-  const configuredMax = viewportWidth >= CHART_SIDEBAR_LARGE_BREAKPOINT_PX
-    ? CHART_SIDEBAR_LARGE_MAX_WIDTH_PX
-    : CHART_SIDEBAR_MAX_WIDTH_PX;
   const ratioMax = Math.floor(viewportWidth * CHART_SIDEBAR_MAX_VIEWPORT_RATIO);
   const byMainArea = Math.floor(viewportWidth - CHART_SIDEBAR_MIN_MAIN_AREA_PX);
-  const bounded = Math.min(configuredMax, ratioMax, byMainArea);
+  const bounded = Math.min(ratioMax, byMainArea);
   return Math.max(minWidth, bounded);
 }
 
@@ -866,7 +852,14 @@ export function DeviceManagement({
   );
   const [chartSidebarWidthPx, setChartSidebarWidthPx] = useState(() => {
     const initialViewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-    const storedWidth = readStoredNumber(STORAGE_CHART_SIDEBAR_WIDTH_KEY, getChartSidebarDefaultWidth(initialViewportWidth));
+    const storedRatio = readStoredNumber(
+      STORAGE_CHART_SIDEBAR_RATIO_KEY,
+      CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO,
+    );
+    const storedWidth = initialViewportWidth * Math.min(
+      CHART_SIDEBAR_MAX_VIEWPORT_RATIO,
+      Math.max(0.25, storedRatio),
+    );
     return clampChartSidebarWidth(storedWidth, initialViewportWidth);
   });
   const [chartSidebarResizing, setChartSidebarResizing] = useState(false);
@@ -891,6 +884,7 @@ export function DeviceManagement({
   });
   const [pageInput, setPageInput] = useState(() => String(readStoredNumber(STORAGE_PAGE_KEY, 1)));
   const didMountRef = useRef(false);
+  const viewportWidthRef = useRef(typeof window === "undefined" ? 1440 : window.innerWidth);
   const exitTimeoutsRef = useRef<Record<string, number>>({});
   const cardTelemetryPrefetchRef = useRef<Set<string>>(new Set());
   const cardTelemetryPrefetchTimeoutsRef = useRef<Set<number>>(new Set());
@@ -933,8 +927,13 @@ export function DeviceManagement({
   useEffect(() => {
     const handleResize = (): void => {
       const nextViewportWidth = window.innerWidth;
+      const previousViewportWidth = Math.max(1, viewportWidthRef.current);
+      viewportWidthRef.current = nextViewportWidth;
       setViewportWidth(nextViewportWidth);
-      setChartSidebarWidthPx((prev) => clampChartSidebarWidth(prev, nextViewportWidth));
+      setChartSidebarWidthPx((previousWidth) => clampChartSidebarWidth(
+        previousWidth * (nextViewportWidth / previousViewportWidth),
+        nextViewportWidth,
+      ));
     };
 
     handleResize();
@@ -1028,6 +1027,10 @@ export function DeviceManagement({
 
     return candidate?.sensor ?? visibleSensors[0] ?? null;
   }, [latestTelemetryByDevice, visibleSensors]);
+
+  useEffect(() => {
+    setChartSensor((current) => current ?? highestVibrationSensor);
+  }, [highestVibrationSensor]);
 
   const total    = visibleSensors.length;
   const online   = visibleSensors.filter(s => s.online).length;
@@ -1150,11 +1153,14 @@ export function DeviceManagement({
   }, [pageSize]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || viewportWidth < CHART_SIDEBAR_STACKED_BREAKPOINT_PX) {
       return;
     }
-    window.localStorage.setItem(STORAGE_CHART_SIDEBAR_WIDTH_KEY, String(chartSidebarWidthPx));
-  }, [chartSidebarWidthPx]);
+    window.localStorage.setItem(
+      STORAGE_CHART_SIDEBAR_RATIO_KEY,
+      String(chartSidebarWidthPx / Math.max(1, viewportWidth)),
+    );
+  }, [chartSidebarWidthPx, viewportWidth]);
 
   useEffect(() => {
     return () => {
@@ -1344,7 +1350,7 @@ export function DeviceManagement({
     closeContextMenu();
     setWebSensor(sensor);
   }, [closeContextMenu]);
-  const activeChartSensor = highestVibrationSensor ?? chartSensor;
+  const activeChartSensor = chartSensor ?? highestVibrationSensor;
   const chartSidebarAvailable = activeChartSensor !== null;
   const chartSidebarOpen = chartSidebarAvailable && !chartSidebarCollapsed;
   const chartSidebarMobile = viewportWidth < CHART_SIDEBAR_MOBILE_BREAKPOINT_PX;
@@ -1355,6 +1361,17 @@ export function DeviceManagement({
     ? chartSidebarWidthPxSafe + CHART_SIDEBAR_CONTENT_GAP_PX
     : 0;
   const dashboardContentWidth = Math.max(320, layoutHostWidth - chartSidebarReservedWidthPx);
+  const zoneCollectionColumnCount = dashboardContentWidth >= 2400
+    ? 3
+    : dashboardContentWidth >= 1440
+      ? 2
+      : 1;
+  const estimatedZoneColumnWidth = (
+    dashboardContentWidth - Math.max(0, zoneCollectionColumnCount - 1) * 16
+  ) / zoneCollectionColumnCount;
+  const zoneDeviceGridTemplateColumns = estimatedZoneColumnWidth >= 700
+    ? "repeat(2, minmax(0, 1fr))"
+    : "minmax(0, 1fr)";
   const dashboardHeaderControlsSingleColumn = dashboardContentWidth < 840;
   const deviceGridTemplateColumns = dashboardContentWidth < 520
     ? "minmax(0, 1fr)"
@@ -1635,7 +1652,10 @@ export function DeviceManagement({
           ) : (
             <>
               {shouldGroupByZone ? (
-                <div className="dc-zone-collection">
+                <div
+                  className="dc-zone-collection"
+                  style={{ gridTemplateColumns: `repeat(${zoneCollectionColumnCount}, minmax(0, 1fr))` }}
+                >
                   {pagedZoneGroups.map((zoneGroup) => (
                     <section
                       key={zoneGroup.key}
@@ -1685,7 +1705,7 @@ export function DeviceManagement({
                         className="dc-zone-device-grid"
                         style={{
                           gridTemplateColumns: zoneGroup.devices.length > 1
-                            ? "repeat(auto-fit, minmax(min(220px, 100%), 1fr))"
+                            ? zoneDeviceGridTemplateColumns
                             : "minmax(0, 1fr)",
                         }}
                       >

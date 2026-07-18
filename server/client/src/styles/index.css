@@ -18,10 +18,10 @@ body,
   --dc-device-card-min: 260px;
   --dc-device-card-max: 300px;
   --dc-chart-control-max: 620px;
-  --dc-device-temp-value-size: 0.76rem;
-  --dc-device-temp-unit-size: 0.46rem;
-  --dc-device-axis-value-size: 0.6rem;
-  --dc-device-axis-unit-size: 0.34rem;
+  --dc-device-temp-value-size: 0.84rem;
+  --dc-device-temp-unit-size: 0.5rem;
+  --dc-device-axis-value-size: 0.66rem;
+  --dc-device-axis-unit-size: 0.38rem;
 }
 
 @media (min-width: 2560px) {
@@ -30,13 +30,13 @@ body,
     --dc-page-gutter: 44px;
     --dc-content-max: 100%;
     --dc-header-content-max: 100%;
-    --dc-device-card-min: 360px;
-    --dc-device-card-max: 460px;
+    --dc-device-card-min: 420px;
+    --dc-device-card-max: 560px;
     --dc-chart-control-max: 820px;
-    --dc-device-temp-value-size: 0.92rem;
-    --dc-device-temp-unit-size: 0.54rem;
-    --dc-device-axis-value-size: 0.72rem;
-    --dc-device-axis-unit-size: 0.4rem;
+    --dc-device-temp-value-size: 1.06rem;
+    --dc-device-temp-unit-size: 0.62rem;
+    --dc-device-axis-value-size: 0.82rem;
+    --dc-device-axis-unit-size: 0.46rem;
   }
 }
 
@@ -179,6 +179,39 @@ body,
   gap: 7px;
 }
 
+.dc-device-card {
+  min-height: 82px;
+}
+
+.dc-device-card-body {
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.dc-device-card-telemetry {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+}
+
+.dc-device-card-telemetry > div {
+  width: 100%;
+}
+
+.dc-device-card-title {
+  font-size: 0.78rem !important;
+}
+
+.dc-device-card-actions button {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.dc-device-card-actions svg {
+  width: 12px;
+  height: 12px;
+}
+
 .dc-chart-panel-toggle {
   position: absolute;
   top: 10px;
@@ -314,44 +347,32 @@ body,
   }
 
   .dc-device-card {
-    min-height: 116px;
+    min-height: 136px;
     border-radius: 12px !important;
   }
 
   .dc-device-card-body {
-    display: grid !important;
-    grid-template-rows: auto minmax(0, 1fr);
-    padding: 11px 15px 12px !important;
-    gap: 8px !important;
-  }
-
-  .dc-device-card-telemetry {
-    display: flex;
-    min-height: 0;
-    align-items: center;
-  }
-
-  .dc-device-card-telemetry > div {
-    width: 100%;
+    padding: 14px 18px 15px !important;
+    gap: 10px !important;
   }
 
   .dc-device-card-title {
-    font-size: 0.84rem !important;
+    font-size: 0.94rem !important;
   }
 
   .dc-device-card-actions button {
-    width: 28px !important;
-    height: 28px !important;
+    width: 32px !important;
+    height: 32px !important;
   }
 
   .dc-device-card-actions svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
   }
 
   .dc-device-card-temp-label,
   .dc-device-card-axis-label {
-    font-size: 0.5rem !important;
+    font-size: 0.56rem !important;
   }
 }
 
