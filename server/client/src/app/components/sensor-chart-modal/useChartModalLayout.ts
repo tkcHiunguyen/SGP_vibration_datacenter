@@ -2,14 +2,16 @@ import { useEffect, useState, type RefObject } from "react";
 
 import { getChartModalLayout } from "./chart-parts";
 import type { ChartModalLayout } from "./chart-parts";
+import { useDisplayMode } from "../../context/DisplayModeContext";
 
 export function useChartModalLayout(containerRef?: RefObject<HTMLElement | null>): ChartModalLayout {
-  const [modalLayout, setModalLayout] = useState<ChartModalLayout>(() => getChartModalLayout());
+  const { wallboard } = useDisplayMode();
+  const [modalLayout, setModalLayout] = useState<ChartModalLayout>(() => getChartModalLayout(undefined, undefined, wallboard));
 
   useEffect(() => {
     const updateLayout = () => {
       const rect = containerRef?.current?.getBoundingClientRect();
-      setModalLayout(getChartModalLayout(rect?.width, rect?.height));
+      setModalLayout(getChartModalLayout(rect?.width, rect?.height, wallboard));
     };
 
     updateLayout();
@@ -26,7 +28,7 @@ export function useChartModalLayout(containerRef?: RefObject<HTMLElement | null>
       window.removeEventListener("resize", updateLayout);
       observer?.disconnect();
     };
-  }, [containerRef]);
+  }, [containerRef, wallboard]);
 
   return modalLayout;
 }

@@ -2,10 +2,11 @@ import React from "react";
 import {
   Activity, Bell, ChevronDown, LayoutDashboard,
   Cpu, BarChart2, Settings, Search, AlertCircle, UploadCloud, MapPin,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon,
+  MonitorUp, PanelLeftClose, PanelLeftOpen, Sun, Moon,
 } from "lucide-react";
 import { Sensor } from "../data/sensors";
 import { useTheme } from "../context/ThemeContext";
+import { useDisplayMode } from "../context/DisplayModeContext";
 
 function navIcon(label: string): React.ReactNode {
   switch (label) {
@@ -38,6 +39,7 @@ interface TopHeaderProps {
 
 export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onToggleSidebar, sensors, alertCount }: TopHeaderProps) {
   const { theme, toggleTheme, C } = useTheme();
+  const { wallboard, autoDetected, manualOverride, toggleWallboard } = useDisplayMode();
   const derivedAlertCount = typeof alertCount === "number" ? alertCount : sensors.filter(s => s.status === "abnormal").length;
   const isDark = theme === "dark";
 
@@ -55,6 +57,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
       <div className="dc-top-header-inner" style={{ display: "flex", alignItems: "center", gap: 0 }}>
 
         <button
+          className="dc-header-icon-button"
           type="button"
           onClick={onToggleSidebar}
           title={sidebarOpen ? "Ẩn menu" : "Hiện menu"}
@@ -97,7 +100,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
 
         {/* Brand */}
         <div className="dc-header-brand" style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 24, flexShrink: 0 }}>
-          <div style={{
+          <div className="dc-header-brand-icon" style={{
             width: 28, height: 28, borderRadius: 8,
             background: C.primary,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -106,7 +109,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
             <Activity size={13} color="#fff" strokeWidth={2.5} />
           </div>
           <div className="dc-header-brand-copy">
-            <div style={{ color: C.textBright, fontWeight: 700, fontSize: "0.83rem", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
+            <div className="dc-header-brand-title" style={{ color: C.textBright, fontWeight: 700, fontSize: "0.83rem", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               SGP Vibration Datacenter
             </div>
             <div className="dc-header-subtitle" style={{ color: C.textDim, fontSize: "0.53rem", letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 600 }}>
@@ -123,7 +126,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           {navItems.map((label) => {
             const isActive = activeNav === label;
             return (
-              <button key={label} onClick={() => onNavChange(label)}
+              <button className="dc-header-nav-button" key={label} onClick={() => onNavChange(label)}
                 type="button"
                 aria-current={isActive ? "page" : undefined}
                 style={{
@@ -146,7 +149,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
         </nav>
 
         {/* Right */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <div className="dc-header-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
 
           {/* Search */}
           <div className="dc-header-search" style={{
@@ -155,12 +158,12 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
             background: C.input, border: `1px solid ${C.border}`,
           }}>
             <Search size={11} color={C.textMuted} strokeWidth={2} />
-            <span style={{ color: C.textMuted, fontSize: "0.72rem" }}>Tìm kiếm…</span>
-            <span style={{ marginLeft: "auto", background: C.surface, border: `1px solid ${C.border}`, color: C.textDim, fontSize: "0.55rem", borderRadius: 4, padding: "1px 4px", fontWeight: 600 }}>⌘K</span>
+            <span className="dc-header-search-label" style={{ color: C.textMuted, fontSize: "0.72rem" }}>Tìm kiếm…</span>
+            <span className="dc-header-shortcut" style={{ marginLeft: "auto", background: C.surface, border: `1px solid ${C.border}`, color: C.textDim, fontSize: "0.55rem", borderRadius: 4, padding: "1px 4px", fontWeight: 600 }}>⌘K</span>
           </div>
 
           {/* Bell */}
-          <button type="button" aria-label={`Thông báo: ${derivedAlertCount} cảnh báo`} style={{
+          <button className="dc-header-icon-button" type="button" aria-label={`Thông báo: ${derivedAlertCount} cảnh báo`} style={{
             width: 34, height: 34, borderRadius: 8,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             cursor: "pointer", position: "relative",
@@ -181,15 +184,41 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
             background: C.dangerBg, border: `1px solid ${C.danger}22`,
           }}>
             <AlertCircle size={12} color={C.danger} strokeWidth={2} />
-            <span style={{ color: C.danger, fontSize: "0.7rem", fontWeight: 600 }}>
+            <span className="dc-header-alert-label" style={{ color: C.danger, fontSize: "0.7rem", fontWeight: 600 }}>
               {derivedAlertCount} cảnh báo
             </span>
           </div>
 
           <div style={{ width: 1, height: 18, background: C.border }} />
 
+          <button
+            type="button"
+            className="dc-wallboard-toggle"
+            aria-pressed={wallboard}
+            aria-label={`${wallboard ? "Tắt" : "Bật"} chế độ Wallboard 5 mét`}
+            title={`${wallboard ? "Tắt" : "Bật"} chế độ Wallboard 5m${manualOverride === null && autoDetected ? " (đang tự động)" : ""}`}
+            onClick={toggleWallboard}
+            style={{
+              minWidth: 34,
+              height: 34,
+              padding: "0 9px",
+              borderRadius: 8,
+              background: wallboard ? C.primaryBg : C.card,
+              border: `1px solid ${wallboard ? C.primary : C.cardBorder}`,
+              color: wallboard ? C.primary : C.textMuted,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+          >
+            <MonitorUp size={13} strokeWidth={2.2} />
+            <span className="dc-wallboard-toggle-label">5m</span>
+          </button>
+
           {/* Theme toggle */}
-          <button type="button" onClick={toggleTheme} title={isDark ? "Chế độ sáng" : "Chế độ tối"} aria-label={isDark ? "Chuyển sang chế độ sáng" : "Chuyển sang chế độ tối"}
+          <button className="dc-header-icon-button" type="button" onClick={toggleTheme} title={isDark ? "Chế độ sáng" : "Chế độ tối"} aria-label={isDark ? "Chuyển sang chế độ sáng" : "Chuyển sang chế độ tối"}
             style={{
               width: 34, height: 34, borderRadius: 8,
               background: C.card, border: `1px solid ${C.cardBorder}`,
@@ -202,13 +231,13 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
           </button>
 
           {/* User */}
-          <button type="button" aria-label="Mở menu tài khoản quản trị" style={{
+          <button className="dc-header-user-button" type="button" aria-label="Mở menu tài khoản quản trị" style={{
             display: "flex", alignItems: "center", gap: 6,
             height: 34, padding: "0 8px", borderRadius: 8,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             cursor: "pointer",
           }}>
-            <div style={{
+            <div className="dc-header-user-avatar" style={{
               width: 20, height: 20, borderRadius: 6,
               background: C.primary,
               display: "flex", alignItems: "center", justifyContent: "center",

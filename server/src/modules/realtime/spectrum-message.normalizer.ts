@@ -63,7 +63,7 @@ function toUint8Array(value: unknown): Uint8Array | null {
   return null;
 }
 
-export function decodeSpectrumBuffer(
+function decodeSpectrumBuffer(
   buffer: unknown,
   meta: { binCount?: number; valueScale?: number } = {},
 ): { amplitudes: number[]; peakBinIndex: number; peakAmplitude: number } {

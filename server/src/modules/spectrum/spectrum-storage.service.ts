@@ -99,13 +99,13 @@ export type SpectrumArchiveFrame = {
   contentBase64: string;
 };
 
-export type SpectrumArchiveImportResult = {
+type SpectrumArchiveImportResult = {
   inserted: number;
   updated: number;
   skipped: number;
 };
 
-export type PlacementConfigPayload = Record<string, unknown> & {
+type PlacementConfigPayload = Record<string, unknown> & {
   version?: number;
   deviceId?: string;
   updatedAt?: string;

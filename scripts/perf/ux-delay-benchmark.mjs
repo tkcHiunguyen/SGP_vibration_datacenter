@@ -17,6 +17,7 @@ const SELECTORS = {
   pageSizeSelect: '[data-ux="page-size-select"]',
   chartModal: '[data-ux="chart-modal"]',
   chartClose: '[data-ux="chart-modal"] button[title="Đóng"]',
+  chartRangePreset: (preset) => `[data-ux-range-preset="${preset}"]`,
   filterOnline: '[data-ux="filter-online"]',
   filterAll: '[data-ux="filter-all"]',
 };
@@ -188,6 +189,46 @@ async function measure(name, action) {
   return {
     name,
     ms: performance.now() - startedAt,
+  };
+}
+
+async function measureChartRangeSwitch(page, preset) {
+  const selector = SELECTORS.chartRangePreset(preset);
+  await page.waitForSelector(selector, { visible: true, timeout: 10_000 });
+  const longTaskCountBefore = await page.evaluate(() => window.__uxLongTasks?.length || 0);
+  const uiResponseMs = await page.$eval(selector, async (button) => {
+    const startedAt = performance.now();
+    button.click();
+    await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+    return performance.now() - startedAt;
+  });
+  await page.waitForFunction(
+    (modalSelector, expectedPreset) => {
+      const modal = document.querySelector(modalSelector);
+      return modal?.getAttribute('data-ux-chart-range') === expectedPreset;
+    },
+    { timeout: 10_000 },
+    SELECTORS.chartModal,
+    preset,
+  );
+  await page.waitForFunction(
+    (modalSelector) => {
+      const status = document.querySelector(modalSelector)?.getAttribute('data-ux-chart-range-status');
+      return status === 'idle' || status === 'error';
+    },
+    { timeout: 30_000 },
+    SELECTORS.chartModal,
+  );
+  await waitForPaint(page);
+  const longTasks = await page.evaluate(
+    (startIndex) => (window.__uxLongTasks || []).slice(startIndex),
+    longTaskCountBefore,
+  );
+  return {
+    preset,
+    uiResponseMs,
+    longTaskCount: longTasks.length,
+    maxLongTaskMs: longTasks.reduce((max, task) => Math.max(max, Number(task.duration) || 0), 0),
   };
 }
 
@@ -524,29 +565,40 @@ async function runSingleBenchmark(browser, url, runIndex, viewport, screenshotPa
     });
     interactions[chartReady.name] = chartReady.ms;
 
-    await page.click(SELECTORS.chartClose);
-    await page.waitForFunction(
-      (selector) => !document.querySelector(selector),
-      { timeout: 10_000 },
-      SELECTORS.chartModal,
-    );
+    const chartRangeSwitches = [];
+    for (const [index, preset] of ['1d', '1w', '1m', '1d'].entries()) {
+      const result = await measureChartRangeSwitch(page, preset);
+      chartRangeSwitches.push(result);
+      interactions[`chartRange${index + 1}${preset}Ui`] = result.uiResponseMs;
+    }
 
-    const openChartWarm = await measure('openDataModalWarm', async () => {
-      await page.hover(SELECTORS.deviceCard);
-      await waitForPaint(page);
-      await page.click(SELECTORS.deviceCard);
-      await page.waitForSelector(SELECTORS.chartModal, { visible: true, timeout: 20_000 });
+    if (await page.$(SELECTORS.chartClose)) {
+      await page.click(SELECTORS.chartClose);
       await page.waitForFunction(
-        (selector) => {
-          const modal = document.querySelector(selector);
-          return Boolean(modal) && Number(getComputedStyle(modal).opacity) > 0.9;
-        },
-        { timeout: 20_000 },
+        (selector) => !document.querySelector(selector),
+        { timeout: 10_000 },
         SELECTORS.chartModal,
       );
-      await waitForPaint(page);
-    });
-    interactions[openChartWarm.name] = openChartWarm.ms;
+
+      const openChartWarm = await measure('openDataModalWarm', async () => {
+        await page.hover(SELECTORS.deviceCard);
+        await waitForPaint(page);
+        await page.click(SELECTORS.deviceCard);
+        await page.waitForSelector(SELECTORS.chartModal, { visible: true, timeout: 20_000 });
+        await page.waitForFunction(
+          (selector) => {
+            const modal = document.querySelector(selector);
+            return Boolean(modal) && Number(getComputedStyle(modal).opacity) > 0.9;
+          },
+          { timeout: 20_000 },
+          SELECTORS.chartModal,
+        );
+        await waitForPaint(page);
+      });
+      interactions[openChartWarm.name] = openChartWarm.ms;
+    } else {
+      skipped.push('openDataModalWarm');
+    }
 
     await collectGarbage(page, collectGarbageBeforeStats);
     const statsBeforeObservation = observeMs > 0 ? await collectBrowserStats(page) : null;
@@ -576,6 +628,7 @@ async function runSingleBenchmark(browser, url, runIndex, viewport, screenshotPa
       firstDevice,
       screenshotPath: screenshotPath || null,
       interactions,
+      chartRangeSwitches,
       skipped,
       browserStats,
       streamObservation,

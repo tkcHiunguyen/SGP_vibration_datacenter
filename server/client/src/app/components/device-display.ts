@@ -10,12 +10,12 @@ export const DEVICE_AXIS_DIRECTION_LABELS: Record<DeviceAxisKey, string> = {
   az: "Vertical Direction",
 };
 
-export type DeviceTelemetrySummaryItem = {
+type DeviceTelemetrySummaryItem = {
   label: string;
   value: string;
 };
 
-export type DeviceTelemetryCardReadout = {
+type DeviceTelemetryCardReadout = {
   temperature: DeviceTelemetrySummaryItem;
   axes: DeviceTelemetrySummaryItem[];
 };

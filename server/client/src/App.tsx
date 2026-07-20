@@ -1,6 +1,7 @@
 import { lazy, Profiler, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from "react";
 import { io } from "socket.io-client";
 import { ThemeProvider, useTheme } from "./app/context/ThemeContext";
+import { DisplayModeProvider, useDisplayMode } from "./app/context/DisplayModeContext";
 import { TopHeader } from "./app/components/TopHeader";
 import { LeftPanel } from "./app/components/LeftPanel";
 import { MainPanel } from "./app/components/MainPanel";
@@ -14,6 +15,7 @@ import {
   mapDevicesToSensors,
   Sensor,
 } from "./app/data/sensors";
+import { parseTelemetryHistoryPayload } from "./app/data/telemetry-history";
 
 const ThreeDPage = lazy(() =>
   import("./app/components/ThreeDPage").then((module) => ({
@@ -369,62 +371,6 @@ function parseSpectrumEvent(payload: unknown): { deviceId: string; point: Device
   return { deviceId, point };
 }
 
-function parseTelemetryPoint(item: unknown): DeviceTelemetryPoint | null {
-  const row = asRecord(item);
-  const body = asRecord(row.payload);
-  const receivedAt = safeString(row.receivedAt || row.timestamp || body.receivedAt || body.timestamp).trim();
-  if (!receivedAt) {
-    return null;
-  }
-
-  const temperatureAvailable = asBoolean(body.temperatureAvailable ?? body.temperature_available);
-  const vibrationAvailable = asBoolean(body.vibrationAvailable ?? body.vibration_available);
-  const isVibrationUnavailable = vibrationAvailable === false;
-  const adxlHealth = parseAdxlHealth({
-    status: body.adxlStatus ?? body.adxl_status,
-    reason: body.adxlFaultReason ?? body.adxl_fault_reason,
-  });
-  return {
-    receivedAt,
-    available: typeof body.available === "boolean" ? body.available : undefined,
-    sampleCount: asNumber(body.sample_count ?? body.sampleCount),
-    sampleRateHz: asNumber(body.sample_rate_hz ?? body.sampleRateHz),
-    lsbPerG: asNumber(body.lsb_per_g ?? body.lsbPerG),
-    messageId: safeString(body.messageId || body.message_id) || undefined,
-    temperatureAvailable,
-    vibrationAvailable,
-    adxlStatus: adxlHealth?.status,
-    adxlFaultReason: adxlHealth?.reason,
-    temperature: temperatureAvailable === false ? undefined : asNumber(body.temperature),
-    ax: isVibrationUnavailable ? undefined : asNumber(body.ax),
-    ay: isVibrationUnavailable ? undefined : asNumber(body.ay),
-    az: isVibrationUnavailable ? undefined : asNumber(body.az),
-    vrmsXMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
-    vrmsYMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
-    vrmsZMms: isVibrationUnavailable ? undefined : asNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
-    vrmsUnit: isVibrationUnavailable ? undefined : safeString(row.vrmsUnit || row.vrms_unit || body.vrmsUnit || body.vrms_unit) || undefined,
-    drmsXUm: isVibrationUnavailable ? undefined : asNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
-    drmsYUm: isVibrationUnavailable ? undefined : asNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
-    drmsZUm: isVibrationUnavailable ? undefined : asNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
-    drmsBandMinHz: isVibrationUnavailable ? undefined : asNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
-    drmsBandMaxHz: isVibrationUnavailable ? undefined : asNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
-    drmsUnit: isVibrationUnavailable ? undefined : safeString(row.drmsUnit || row.drms_unit || body.drmsUnit || body.drms_unit) || undefined,
-    uuid: safeString(body.uuid) || undefined,
-    telemetryUuid: isVibrationUnavailable ? undefined : safeString(row.telemetryUuid || row.telemetry_uuid || body.telemetryUuid || body.telemetry_uuid) || undefined,
-  };
-}
-
-function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] {
-  const root = asRecord(payload);
-  const data = asRecord(root.data);
-  const source = firstArray(data.items, root.items, payload);
-
-  return source
-    .map((item) => parseTelemetryPoint(item))
-    .filter((item): item is DeviceTelemetryPoint => Boolean(item))
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
-}
-
 function telemetryKey(point: DeviceTelemetryPoint): string {
   return point.messageId || point.telemetryUuid || point.receivedAt;
 }
@@ -599,6 +545,7 @@ function DashboardShell({
   signalAlerts: SignalAlert[];
 }) {
   const { C, theme } = useTheme();
+  const { wallboard } = useDisplayMode();
   const [activeNav, setActiveNav] = useState(() => navFromPathname(window.location.pathname));
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
@@ -694,7 +641,8 @@ function DashboardShell({
 
   return (
     <div
-      className="dc-app-shell"
+      className={`dc-app-shell${wallboard ? " dc-wallboard-mode" : ""}`}
+      data-display-mode={wallboard ? "wallboard" : "standard"}
       style={{
         background: C.bg,
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
@@ -1513,8 +1461,25 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      {performanceProfileEnabled ? (
-        <Profiler id="dashboard" onRender={captureDashboardRender}>
+      <DisplayModeProvider>
+        {performanceProfileEnabled ? (
+          <Profiler id="dashboard" onRender={captureDashboardRender}>
+            <DashboardShell
+              sensors={sensors}
+              telemetryByDevice={telemetryByDevice}
+              telemetryLoadingByDevice={telemetryLoadingByDevice}
+              spectrumByDevice={spectrumByDevice}
+              onRequestTelemetryHistory={requestTelemetryHistory}
+              onNotify={showToast}
+              onDeviceDataCleared={clearDeviceChartData}
+              onChartClosed={releaseDeviceChartCache}
+              onSensorUpdated={updateInventoryDeviceFromSensor}
+              toasts={toasts}
+              onDismissToast={dismissToast}
+              signalAlerts={signalAlerts}
+            />
+          </Profiler>
+        ) : (
           <DashboardShell
             sensors={sensors}
             telemetryByDevice={telemetryByDevice}
@@ -1529,23 +1494,8 @@ export default function App() {
             onDismissToast={dismissToast}
             signalAlerts={signalAlerts}
           />
-        </Profiler>
-      ) : (
-        <DashboardShell
-          sensors={sensors}
-          telemetryByDevice={telemetryByDevice}
-          telemetryLoadingByDevice={telemetryLoadingByDevice}
-          spectrumByDevice={spectrumByDevice}
-          onRequestTelemetryHistory={requestTelemetryHistory}
-          onNotify={showToast}
-          onDeviceDataCleared={clearDeviceChartData}
-          onChartClosed={releaseDeviceChartCache}
-          onSensorUpdated={updateInventoryDeviceFromSensor}
-          toasts={toasts}
-          onDismissToast={dismissToast}
-          signalAlerts={signalAlerts}
-        />
-      )}
+        )}
+      </DisplayModeProvider>
     </ThemeProvider>
   );
 }

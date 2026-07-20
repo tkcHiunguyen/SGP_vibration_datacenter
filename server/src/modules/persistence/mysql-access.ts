@@ -136,7 +136,7 @@ const MYSQL_UNAVAILABLE_ERROR_CODES = new Set([
   'ER_BAD_DB_ERROR',
 ]);
 
-export function getMySqlErrorCode(error: unknown): string | undefined {
+function getMySqlErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object' || !('code' in error)) {
     return undefined;
   }

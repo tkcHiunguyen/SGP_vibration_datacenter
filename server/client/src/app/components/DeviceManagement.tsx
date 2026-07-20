@@ -8,6 +8,7 @@ import {
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { ConsoleStatCard, type ToastItem } from "./ui";
 import { useTheme } from "../context/ThemeContext";
+import { useDisplayMode } from "../context/DisplayModeContext";
 import {
   buildDeviceTelemetryCardReadout,
   DEFAULT_DEVICE_SORT,
@@ -64,6 +65,7 @@ function TelemetryValue({
 
   return (
     <span
+      className="dc-telemetry-value"
       style={{
         display: "inline-flex",
         alignItems: "baseline",
@@ -81,7 +83,7 @@ function TelemetryValue({
       }}
     >
       <span>{amount}</span>
-      {unit && <span style={{ color: mutedColor, fontSize: unitSize, fontWeight: 850, letterSpacing: "0" }}>{unit}</span>}
+      {unit && <span className="dc-telemetry-value-unit" style={{ color: mutedColor, fontSize: unitSize, fontWeight: 850, letterSpacing: "0" }}>{unit}</span>}
     </span>
   );
 }
@@ -182,7 +184,7 @@ const DeviceCard = React.memo(function DeviceCard({
       />
 
       <div className="dc-device-card-body" style={{ padding: "5px 10px 6px 10px", display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 5, minWidth: 0 }}>
+        <div className="dc-device-card-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 5, minWidth: 0 }}>
           <div
             className="dc-device-card-title"
             title={sensor.name}
@@ -231,6 +233,7 @@ const DeviceCard = React.memo(function DeviceCard({
               <Info size={11} color={infoHovered ? C.primary : C.textMuted} strokeWidth={2} />
             </button>
             <div
+              className="dc-device-card-action-tooltip"
               style={{
                 position: "absolute",
                 right: "calc(100% + 5px)",
@@ -290,6 +293,7 @@ const DeviceCard = React.memo(function DeviceCard({
                 <Globe size={11} strokeWidth={2} />
               </button>
               <div
+                className="dc-device-card-action-tooltip"
                 style={{
                   position: "absolute",
                   right: 0,
@@ -330,6 +334,7 @@ const DeviceCard = React.memo(function DeviceCard({
             </div>
           ) : (
           <div
+            className="dc-device-card-telemetry-grid"
             style={{
               display: "grid",
               gridTemplateColumns: showAxisReadout
@@ -341,6 +346,7 @@ const DeviceCard = React.memo(function DeviceCard({
             }}
           >
             <div
+              className="dc-device-card-temp"
               title={`Temperature ${telemetryReadout.temperature.value || "--"}`}
               style={{
                 minWidth: 0,
@@ -363,6 +369,7 @@ const DeviceCard = React.memo(function DeviceCard({
 
             {showAxisReadout ? (
               <div
+                className="dc-device-card-axis-values"
                 style={{
                   display: "grid",
                   gridTemplateColumns: "minmax(0, 1fr)",
@@ -372,14 +379,14 @@ const DeviceCard = React.memo(function DeviceCard({
               >
                 {telemetryReadout.axes.map((item, itemIndex) => (
                   <div
+                    className="dc-device-card-axis-row"
                     key={`${item.label}-${itemIndex}`}
                     title={`${item.label} ${item.value || "--"}`.trim()}
                     style={{
                       minWidth: 0,
                       display: "grid",
-                      gridTemplateColumns: "max-content max-content",
+                      gridTemplateColumns: "minmax(0, 1fr) max-content",
                       alignItems: "baseline",
-                      justifyContent: "end",
                       columnGap: 2,
                       lineHeight: 1,
                     }}
@@ -438,6 +445,7 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
   return (
     <div style={{ position: "relative" }}>
       <button
+        className="dc-device-sort-button"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -463,7 +471,7 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setOpen(false)} />
-          <div style={{
+          <div className="dc-device-sort-menu" style={{
             position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 20,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             borderRadius: 10, overflow: "hidden", minWidth: 175,
@@ -779,12 +787,12 @@ interface DeviceManagementProps {
 
 const STORAGE_PAGE_KEY = "sgp_ui_devices_page";
 const STORAGE_PAGE_SIZE_KEY = "sgp_ui_devices_page_size";
-const STORAGE_CHART_SIDEBAR_RATIO_KEY = "sgp_ui_chart_sidebar_ratio_v3";
+const STORAGE_CHART_SIDEBAR_RATIO_KEY = "sgp_ui_chart_sidebar_ratio_v5";
 const DEVICE_CARD_EXIT_MS = 260;
 const DATA_VIEW_PREFETCH_TIMEOUT_MS = 2500;
 const CHART_SIDEBAR_MIN_WIDTH_PX = 480;
-const CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO = 0.7;
-const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.7;
+const CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO = 0.8;
+const CHART_SIDEBAR_MAX_VIEWPORT_RATIO = 0.8;
 function getChartSidebarDefaultWidth(viewportWidth: number): number {
   return Math.round(viewportWidth * CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO);
 }
@@ -829,6 +837,16 @@ function readStoredNumber(key: string, fallback: number): number {
   return Math.floor(parsed);
 }
 
+function readStoredRatio(key: string, fallback: number): number {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const raw = window.localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function DeviceManagement({
   sensors,
   telemetryByDevice,
@@ -841,6 +859,7 @@ export function DeviceManagement({
   onSensorUpdated,
 }: DeviceManagementProps) {
   const { C } = useTheme();
+  const { wallboard } = useDisplayMode();
   const layoutHostRef = useRef<HTMLDivElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [layoutHostWidth, setLayoutHostWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
@@ -852,7 +871,7 @@ export function DeviceManagement({
   );
   const [chartSidebarWidthPx, setChartSidebarWidthPx] = useState(() => {
     const initialViewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-    const storedRatio = readStoredNumber(
+    const storedRatio = readStoredRatio(
       STORAGE_CHART_SIDEBAR_RATIO_KEY,
       CHART_SIDEBAR_DEFAULT_VIEWPORT_RATIO,
     );
@@ -1369,7 +1388,7 @@ export function DeviceManagement({
   const estimatedZoneColumnWidth = (
     dashboardContentWidth - Math.max(0, zoneCollectionColumnCount - 1) * 16
   ) / zoneCollectionColumnCount;
-  const zoneDeviceGridTemplateColumns = estimatedZoneColumnWidth >= 700
+  const zoneDeviceGridTemplateColumns = estimatedZoneColumnWidth >= (wallboard ? 960 : 700)
     ? "repeat(2, minmax(0, 1fr))"
     : "minmax(0, 1fr)";
   const dashboardHeaderControlsSingleColumn = dashboardContentWidth < 840;
@@ -1451,6 +1470,7 @@ export function DeviceManagement({
         }}
       >
         <div
+          className="dc-device-content-column"
           style={{
             flex: 1,
             minHeight: 0,
@@ -1499,6 +1519,7 @@ export function DeviceManagement({
         </div>
 
         <div
+          className="dc-device-sort-shell"
           style={{
             display: "flex",
             alignItems: "center",
@@ -1539,6 +1560,7 @@ export function DeviceManagement({
               <Filter size={12} strokeWidth={2} />
             </span>
             <div
+              className="dc-device-sort-tooltip"
               style={{
                 position: "absolute",
                 bottom: "calc(100% + 6px)",
@@ -1570,12 +1592,13 @@ export function DeviceManagement({
           </div>
         </div>
 
-        <div style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
+        <div className="dc-device-result-count" style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
           Hiển thị {pagedDevices.length} / {displayed.length} thiết bị
         </div>
 
         {!chartSidebarOpen && chartSidebarAvailable ? (
           <button
+            className="dc-open-chart-panel-button"
             type="button"
             data-ux="open-chart-panel"
             aria-label={`Mở biểu đồ ${activeChartSensor?.name ?? "thiết bị"}`}
@@ -1616,17 +1639,18 @@ export function DeviceManagement({
           }}
         >
           {displayed.length === 0 ? (
-            <div style={{
+            <div className="dc-device-empty-state" style={{
               display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
               height: 200, borderRadius: 12,
               background: C.card, border: `1px solid ${C.cardBorder}`,
               color: C.textMuted, gap: 8,
             }}>
               <Layers size={28} strokeWidth={1.2} />
-              <div style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
-              <div style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
+              <div className="dc-device-empty-state-title" style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
+              <div className="dc-device-empty-state-copy" style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
               {(search || filter !== "all") ? (
                 <button
+                  className="dc-device-empty-state-action"
                   type="button"
                   onClick={() => {
                     setSearch("");
@@ -1665,6 +1689,7 @@ export function DeviceManagement({
                       style={{ background: C.surface, borderColor: C.border }}
                     >
                       <div
+                        className="dc-zone-heading-row"
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -1690,11 +1715,11 @@ export function DeviceManagement({
                           >
                             {zoneGroup.label}
                           </h3>
-                          <span style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650, whiteSpace: "nowrap" }}>
+                          <span className="dc-zone-device-count" style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650, whiteSpace: "nowrap" }}>
                             {zoneGroup.total} thiết bị
                           </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650, flexWrap: "wrap" }}>
+                        <div className="dc-zone-status" style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650, flexWrap: "wrap" }}>
                           <span style={{ color: C.success, whiteSpace: "nowrap" }}>{zoneGroup.online} online</span>
                           {zoneGroup.abnormal > 0 && <span style={{ color: C.danger, whiteSpace: "nowrap" }}>{zoneGroup.abnormal} cảnh báo</span>}
                         </div>
@@ -1760,6 +1785,7 @@ export function DeviceManagement({
               )}
 
               <div
+                className="dc-device-pagination"
                 style={{
                   marginTop: 12,
                   display: "flex",
@@ -1986,7 +2012,7 @@ export function DeviceManagement({
                 </div>
               ) : null}
 
-              <Suspense fallback={<div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.76rem" }}><span style={{ width: 18, height: 18, marginRight: 8, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "webSpin 0.8s linear infinite" }} />Đang mở biểu đồ...</div>}>
+              <Suspense fallback={<div className="dc-chart-panel-loading" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.76rem" }}><span style={{ width: 18, height: 18, marginRight: 8, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "webSpin 0.8s linear infinite" }} />Đang mở biểu đồ...</div>}>
                 <SensorChartModal
                   sensor={activeChartSensor}
                   telemetryPoints={telemetryByDevice[activeChartSensor.id] || []}

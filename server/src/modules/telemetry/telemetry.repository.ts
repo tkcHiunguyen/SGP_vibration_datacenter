@@ -19,6 +19,10 @@ export type TelemetryHistoryResult = {
   totalMatched: number;
   truncated: boolean;
   bucketMs?: number;
+  from?: string | null;
+  to?: string | null;
+  sampleCount?: number;
+  complete?: boolean;
 };
 
 export type TelemetryAvailabilityQuery = {

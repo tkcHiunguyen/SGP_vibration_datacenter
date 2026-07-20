@@ -1,6 +1,6 @@
 export type DataExportJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 
-export type DataExportJobRange = {
+type DataExportJobRange = {
   from: string;
   to: string;
 };

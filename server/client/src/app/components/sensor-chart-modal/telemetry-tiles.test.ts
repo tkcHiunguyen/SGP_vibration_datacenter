@@ -78,3 +78,22 @@ test("uses a finer bucket for medium zoom windows", () => {
   assert.ok(tiles.every((tile) => tile.bucketMs === 10_000));
   assert.ok(tiles.every((tile) => tile.limit === undefined));
 });
+
+test("partitions detail tiles by range and limits each pass to eight", () => {
+  const loadedStartMs = Date.parse("2026-04-30T00:00:00.000Z");
+  const options = {
+    deviceId: "ESP-1",
+    visibleStartMs: loadedStartMs,
+    visibleEndMs: loadedStartMs + 6 * HOUR_MS,
+    loadedStartMs,
+    loadedEndMs: loadedStartMs + DAY_MS,
+    cachedKeys: new Set<string>(),
+  };
+  const firstRange = buildTelemetryDetailTileRequests({ ...options, rangeKey: "range-a" });
+  const secondRange = buildTelemetryDetailTileRequests({ ...options, rangeKey: "range-b" });
+
+  assert.ok(firstRange.length <= 8);
+  assert.ok(secondRange.length <= 8);
+  assert.notEqual(firstRange[0]?.cacheKey, secondRange[0]?.cacheKey);
+  assert.equal(new Set(firstRange.map((tile) => tile.cacheKey)).size, firstRange.length);
+});

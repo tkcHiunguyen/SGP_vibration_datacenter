@@ -320,6 +320,26 @@ function toBucketHistoryPoint(row: TelemetryBucketRow): TelemetryHistoryPoint {
   };
 }
 
+function buildTelemetryHistoryResult(
+  items: TelemetryHistoryPoint[],
+  totalMatched: number,
+  truncated: boolean,
+  bucketMs: number | undefined,
+  fromTimestamp: number | null,
+  toTimestamp: number | null,
+): TelemetryHistoryResult {
+  return {
+    items,
+    totalMatched,
+    truncated,
+    bucketMs,
+    from: fromTimestamp === null ? null : new Date(fromTimestamp).toISOString(),
+    to: toTimestamp === null ? null : new Date(toTimestamp).toISOString(),
+    sampleCount: items.length,
+    complete: !truncated,
+  };
+}
+
 export class MySqlTelemetryRepository implements TelemetryRepository {
   private lastMessage: TelemetryMessage | null = null;
 
@@ -344,12 +364,12 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
   }
 
   async listHistory(query: TelemetryHistoryQuery): Promise<TelemetryHistoryResult> {
-    if (!this.mysql) {
-      return { items: [], totalMatched: 0, truncated: false, bucketMs: query.bucketMs };
-    }
-
     const fromTimestamp = parseIsoTimestamp(query.from);
     const toTimestamp = parseIsoTimestamp(query.to);
+    if (!this.mysql) {
+      return buildTelemetryHistoryResult([], 0, false, query.bucketMs, fromTimestamp, toTimestamp);
+    }
+
     const limit = normalizeHistoryLimit(query.limit);
     const explicitBucketLimit = normalizeExplicitHistoryLimit(query.limit);
     const bucketMs = query.bucketMs && query.bucketMs > 0 ? Math.floor(query.bucketMs) : undefined;
@@ -448,12 +468,14 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
         .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
       const returnedRawSamples = items.reduce((total, item) => total + (item.sampleCount ?? 0), 0);
 
-      return {
+      return buildTelemetryHistoryResult(
         items,
         totalMatched,
-        truncated: explicitBucketLimit !== undefined && totalMatched > returnedRawSamples,
+        explicitBucketLimit !== undefined && totalMatched > returnedRawSamples,
         bucketMs,
-      };
+        fromTimestamp,
+        toTimestamp,
+      );
     }
 
     const rows = await this.mysql.query<TelemetryRow>(
@@ -473,12 +495,14 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       .map((row) => toHistoryPoint(row))
       .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
 
-    return {
+    return buildTelemetryHistoryResult(
       items,
       totalMatched,
-      truncated: totalMatched > items.length,
+      totalMatched > items.length,
       bucketMs,
-    };
+      fromTimestamp,
+      toTimestamp,
+    );
   }
 
   private async listHourlyMetricHistory(
@@ -574,12 +598,14 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
       .map((row) => toBucketHistoryPoint(row))
       .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
     const totalMatched = items.reduce((total, item) => total + (item.sampleCount ?? 0), 0);
-    return {
+    return buildTelemetryHistoryResult(
       items,
       totalMatched,
-      truncated: explicitBucketLimit !== undefined && bucketRows.length >= explicitBucketLimit,
+      explicitBucketLimit !== undefined && bucketRows.length >= explicitBucketLimit,
       bucketMs,
-    };
+      fromTimestamp,
+      toTimestamp,
+    );
   }
 
   async listAvailableDays(query: TelemetryAvailabilityQuery): Promise<DeviceTelemetryAvailabilityDay[]> {

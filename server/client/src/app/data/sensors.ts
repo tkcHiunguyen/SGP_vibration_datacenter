@@ -2,8 +2,8 @@ type SensorStatus = "normal" | "abnormal";
 
 export type DeviceAxisKey = "ax" | "ay" | "az";
 export type DeviceAxisLabels = Partial<Record<DeviceAxisKey, string>>;
-export type AdxlStatus = "ok" | "fault" | "recovering";
-export type AdxlFaultReason = "not_detected" | "i2c_read_error" | "capture_timeout" | "unknown";
+type AdxlStatus = "ok" | "fault" | "recovering";
+type AdxlFaultReason = "not_detected" | "i2c_read_error" | "capture_timeout" | "unknown";
 
 export interface DeviceAdxlHealth {
   status: AdxlStatus;
@@ -74,6 +74,8 @@ export interface DeviceListItem {
 
 export interface DeviceTelemetryPoint {
   receivedAt: string;
+  bucketStartedAt?: string;
+  bucketEndedAt?: string;
   available?: boolean;
   sampleCount?: number;
   sampleRateHz?: number;

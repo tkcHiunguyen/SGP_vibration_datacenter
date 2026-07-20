@@ -145,7 +145,7 @@ export type DeviceHeartbeat = {
   uptimeSec?: number;
 };
 
-export type DeviceConnectionStatus = 'online' | 'offline';
+type DeviceConnectionStatus = 'online' | 'offline';
 
 export type DeviceStatusHistoryEntry = {
   deviceId: string;

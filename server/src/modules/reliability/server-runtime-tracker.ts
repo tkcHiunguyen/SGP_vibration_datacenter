@@ -9,7 +9,7 @@ type ServerRuntimeRow = {
   stopped_at: string | Date | null;
 };
 
-export type ServerRuntimeSnapshot = {
+type ServerRuntimeSnapshot = {
   runId: string;
   startedAt: string;
   previousShutdownAt?: string;

@@ -43,7 +43,7 @@ export function ConsoleStatCard({
   return (
     <article
       className={cx(
-        "rounded-xl border px-3 py-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-[0_10px_22px_rgba(2,6,23,0.16)]",
+        "dc-stat-card rounded-xl border px-3 py-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-[0_10px_22px_rgba(2,6,23,0.16)]",
         className,
       )}
       style={{ background: bg, borderColor: border, ...style }}
@@ -51,7 +51,7 @@ export function ConsoleStatCard({
       <div className="flex items-start gap-2.5">
         {icon ? (
           <div
-            className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]"
+            className="dc-stat-card-icon inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]"
             style={{ background: `${color}1A`, color }}
           >
             {icon}
@@ -59,6 +59,7 @@ export function ConsoleStatCard({
         ) : null}
         <div className="min-w-0">
           <div
+            className="dc-stat-card-label"
             style={{
               color: C.textMuted,
               fontSize: "0.65rem",
@@ -70,13 +71,13 @@ export function ConsoleStatCard({
             {label}
           </div>
           <div
-            className="tabular-nums"
+            className="dc-stat-card-value tabular-nums"
             style={{ color, fontSize: "1.2rem", fontWeight: 800, marginTop: 2, lineHeight: 1.15 }}
           >
             {value}
           </div>
           {caption ? (
-            <div style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 4 }}>
+            <div className="dc-stat-card-caption" style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 4 }}>
               {caption}
             </div>
           ) : null}

@@ -186,6 +186,8 @@ body,
 .dc-device-card-body {
   display: grid !important;
   grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
 }
 
 .dc-device-card-telemetry {
@@ -196,6 +198,16 @@ body,
 
 .dc-device-card-telemetry > div {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dc-device-card-telemetry-grid,
+.dc-device-card-temp,
+.dc-device-card-axis-values,
+.dc-device-card-axis-row {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dc-device-card-title {
@@ -378,7 +390,730 @@ body,
 
 @media (min-width: 3200px) {
   .dc-zone-device-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+:root[data-display-mode='wallboard'] {
+  --font-size: 24px;
+  --dc-page-gutter: 48px;
+  --dc-page-top: 28px;
+  --dc-page-bottom: 48px;
+  --dc-header-height: 108px;
+  --dc-sidebar-width: 420px;
+  --dc-device-card-min: 480px;
+  --dc-device-card-max: 680px;
+  --dc-chart-control-max: 1120px;
+  --dc-device-temp-value-size: 46px;
+  --dc-device-temp-unit-size: 26px;
+  --dc-device-axis-value-size: 34px;
+  --dc-device-axis-unit-size: 22px;
+}
+
+.dc-wallboard-mode {
+  font-size: 24px;
+}
+
+.dc-wallboard-mode .dc-top-header-inner {
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-header-brand {
+  gap: 16px !important;
+  margin-right: 32px !important;
+}
+
+.dc-wallboard-mode .dc-header-brand-icon {
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 14px !important;
+}
+
+.dc-wallboard-mode .dc-header-brand-icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.dc-wallboard-mode .dc-header-brand-title {
+  font-size: 40px !important;
+  font-weight: 800 !important;
+  line-height: 1.08 !important;
+}
+
+.dc-wallboard-mode .dc-header-subtitle {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-header-nav {
+  gap: 8px !important;
+}
+
+.dc-wallboard-mode .dc-header-nav-button {
+  height: 56px !important;
+  padding-inline: 20px !important;
+  border-radius: 12px !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-header-nav-button svg {
+  width: 26px;
+  height: 26px;
+}
+
+.dc-wallboard-mode .dc-header-actions {
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-header-icon-button {
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 12px !important;
+}
+
+.dc-wallboard-mode .dc-header-icon-button svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-header-shortcut {
+  display: none !important;
+}
+
+.dc-wallboard-mode .dc-header-user-button {
+  min-width: 168px !important;
+  height: 56px !important;
+  padding-inline: 12px !important;
+  border-radius: 12px !important;
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-header-user-avatar {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 10px !important;
+  font-size: 22px !important;
+}
+
+.dc-wallboard-mode .dc-header-user-name {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+
+.dc-wallboard-mode .dc-header-user-chevron {
+  width: 22px;
+  height: 22px;
+}
+
+.dc-wallboard-mode .dc-header-search {
+  width: clamp(280px, 12vw, 420px) !important;
+  height: 56px !important;
+  padding-inline: 16px !important;
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-header-search svg {
+  width: 24px;
+  height: 24px;
+}
+
+.dc-wallboard-mode .dc-header-search-label,
+.dc-wallboard-mode .dc-header-alert-label {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-header-alert-pill {
+  height: 52px !important;
+  padding-inline: 16px !important;
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-header-alert-pill svg {
+  width: 26px;
+  height: 26px;
+}
+
+.dc-wallboard-mode .dc-wallboard-toggle {
+  min-width: 94px !important;
+  height: 56px !important;
+  padding-inline: 16px !important;
+  border-radius: 12px !important;
+  font-size: 24px !important;
+}
+
+.dc-wallboard-mode .dc-wallboard-toggle svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-wallboard-toggle-label {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.dc-wallboard-mode .dc-console-page-header h2 {
+  font-size: 40px !important;
+  font-weight: 800 !important;
+}
+
+.dc-wallboard-mode .dc-console-page-header p {
+  color: #c5d5e8 !important;
+  font-size: 24px !important;
+  font-weight: 600 !important;
+}
+
+.dc-wallboard-mode .dc-stat-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 460px));
+  gap: 18px !important;
+}
+
+.dc-wallboard-mode .dc-stat-card {
+  min-height: 150px;
+  padding: 22px 24px !important;
+}
+
+.dc-wallboard-mode .dc-stat-card-icon {
+  width: 52px !important;
+  height: 52px !important;
+}
+
+.dc-wallboard-mode .dc-stat-card-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-stat-card-label,
+.dc-wallboard-mode .dc-stat-card-caption {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-stat-card-value {
+  font-size: 42px !important;
+}
+
+.dc-wallboard-mode .dc-device-content-column {
+  padding-top: 28px !important;
+}
+
+.dc-wallboard-mode .dc-device-controls {
+  gap: 16px;
+  margin-bottom: 20px !important;
+}
+
+.dc-wallboard-mode .dc-device-controls > [data-ux='device-search-shell'] {
+  height: 58px !important;
+  padding-inline: 18px !important;
+  border-radius: 14px !important;
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-device-controls > [data-ux='device-search-shell'] svg {
+  width: 26px;
+  height: 26px;
+}
+
+.dc-wallboard-mode [data-ux='device-search'] {
+  font-size: 26px !important;
+  font-weight: 650 !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-shell {
+  height: 58px !important;
+  padding-inline: 14px !important;
+  border-radius: 14px !important;
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-shell > div:first-child > span {
+  width: 46px !important;
+  height: 46px !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-shell svg {
+  width: 24px;
+  height: 24px;
+}
+
+.dc-wallboard-mode .dc-device-sort-button {
+  height: 52px !important;
+  padding-inline: 16px !important;
+  font-size: 24px !important;
+  font-weight: 750 !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-tooltip {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  padding: 8px 12px !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-menu {
+  min-width: 260px !important;
+}
+
+.dc-wallboard-mode .dc-device-sort-menu button {
+  min-height: 48px !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-open-chart-panel-button,
+.dc-wallboard-mode .dc-device-empty-state-title,
+.dc-wallboard-mode .dc-device-empty-state-copy,
+.dc-wallboard-mode .dc-device-empty-state-action,
+.dc-wallboard-mode .dc-chart-panel-loading {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-device-result-count {
+  color: #c5d5e8 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-zone-collection {
+  gap: 24px !important;
+}
+
+.dc-wallboard-mode .dc-zone-device-group {
+  padding: 24px !important;
+  border-radius: 18px !important;
+}
+
+.dc-wallboard-mode .dc-zone-heading-row {
+  gap: 16px !important;
+  margin-bottom: 20px !important;
+}
+
+.dc-wallboard-mode .dc-zone-heading-row > div:first-child {
+  gap: 14px !important;
+}
+
+.dc-wallboard-mode .dc-zone-heading-row svg {
+  width: 30px;
+  height: 30px;
+}
+
+.dc-wallboard-mode .dc-zone-device-group h3 {
+  font-size: 34px !important;
+  font-weight: 850 !important;
+  line-height: 1.12 !important;
+}
+
+.dc-wallboard-mode .dc-zone-device-count,
+.dc-wallboard-mode .dc-zone-status {
+  color: #c5d5e8 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-zone-device-grid {
+  gap: 18px !important;
+}
+
+.dc-wallboard-mode .dc-device-card {
+  min-height: 210px;
+  border-radius: 18px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-body {
+  padding: 26px 28px 28px !important;
+  gap: 20px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-header {
+  align-items: flex-start !important;
+  gap: 16px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f8fbff !important;
+  font-size: 30px !important;
+  font-weight: 820 !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+  text-overflow: clip !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.dc-wallboard-mode .dc-device-card-actions {
+  gap: 8px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-actions button {
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 12px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-actions svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-device-card-action-tooltip {
+  font-size: 22px !important;
+  padding: 8px 12px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-telemetry-grid {
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1fr) !important;
+  gap: 22px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-temp {
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-temp-label,
+.dc-wallboard-mode .dc-device-card-axis-label {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 850 !important;
+}
+
+.dc-wallboard-mode .dc-device-card-temp-label {
+  color: #fbbf24 !important;
+}
+
+.dc-wallboard-mode .dc-device-card-temp .dc-telemetry-value {
+  font-size: 46px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-temp .dc-telemetry-value-unit {
+  font-size: 26px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-axis-values {
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-axis-row {
+  column-gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-axis-values .dc-telemetry-value {
+  font-size: 34px !important;
+}
+
+.dc-wallboard-mode .dc-device-card-axis-values .dc-telemetry-value-unit {
+  font-size: 22px !important;
+}
+
+.dc-wallboard-mode .dc-device-card .device-card-shimmer {
+  min-height: 64px !important;
+}
+
+.dc-wallboard-mode .dc-device-pagination {
+  margin-top: 20px !important;
+  gap: 16px !important;
+}
+
+.dc-wallboard-mode .dc-device-pagination span,
+.dc-wallboard-mode .dc-device-pagination input,
+.dc-wallboard-mode .dc-device-pagination select {
+  color: #c5d5e8 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-device-pagination button,
+.dc-wallboard-mode .dc-device-pagination input,
+.dc-wallboard-mode .dc-device-pagination select {
+  min-width: 52px !important;
+  height: 52px !important;
+}
+
+.dc-wallboard-mode .dc-chart-panel-toggle {
+  top: 16px;
+  right: 16px;
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 12px !important;
+}
+
+.dc-wallboard-mode .dc-chart-panel-toggle svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-chart-modal-device-title {
+  color: #f8fbff !important;
+  font-size: 36px !important;
+  font-weight: 850 !important;
+  line-height: 1.12 !important;
+}
+
+.dc-wallboard-mode .dc-chart-icon-button {
+  width: 52px !important;
+  height: 52px !important;
+  border-radius: 12px !important;
+}
+
+.dc-wallboard-mode .dc-chart-icon-button svg {
+  width: 28px;
+  height: 28px;
+}
+
+.dc-wallboard-mode .dc-chart-control-button {
+  min-height: 52px !important;
+  height: 52px !important;
+  padding-inline: 16px !important;
+  border-radius: 14px !important;
+  font-size: 24px !important;
+  font-weight: 750 !important;
+  gap: 10px !important;
+}
+
+.dc-wallboard-mode .dc-chart-control-button svg {
+  width: 26px;
+  height: 26px;
+}
+
+.dc-wallboard-mode .dc-chart-section-header {
+  min-height: 46px !important;
+}
+
+.dc-wallboard-mode .dc-chart-section-header svg {
+  width: 30px;
+  height: 30px;
+}
+
+.dc-wallboard-mode .dc-chart-section-title,
+.dc-wallboard-mode .dc-fft-section-title {
+  color: #f8fbff !important;
+  font-size: 30px !important;
+  font-weight: 800 !important;
+}
+
+.dc-wallboard-mode .dc-chart-section-card,
+.dc-wallboard-mode .dc-fft-card {
+  border-radius: 16px !important;
+}
+
+.dc-wallboard-mode .dc-fft-axis-label-button {
+  max-width: 60% !important;
+  min-height: 48px !important;
+  padding: 8px 40px 8px 14px !important;
+  border-radius: 12px !important;
+  font-size: 22px !important;
+}
+
+.dc-wallboard-mode .dc-fft-axis-label-button svg {
+  width: 22px;
+  height: 22px;
+  right: 10px !important;
+}
+
+.dc-wallboard-mode .dc-fft-peak-summary,
+.dc-wallboard-mode .dc-fft-axis-footer {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-loaded-data-title {
+  color: #f8fbff !important;
+  font-size: 28px !important;
+  font-weight: 800 !important;
+}
+
+.dc-wallboard-mode .dc-chart-calendar-popover {
+  min-width: 460px !important;
+  padding: 20px !important;
+  gap: 14px !important;
+}
+
+.dc-wallboard-mode .dc-chart-calendar-popover button {
+  min-width: 46px !important;
+  min-height: 46px !important;
+  font-size: 22px !important;
+  font-weight: 750 !important;
+}
+
+.dc-wallboard-mode .dc-chart-calendar-month {
+  color: #f8fbff !important;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+}
+
+.dc-wallboard-mode .dc-chart-calendar-summary {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-chart-calendar-popover > div,
+.dc-wallboard-mode .dc-chart-calendar-popover > div > div {
+  font-size: 22px !important;
+}
+
+.dc-wallboard-mode .dc-time-preset-menu {
+  min-width: 260px !important;
+  padding: 10px !important;
+}
+
+.dc-wallboard-mode .dc-time-preset-menu button {
+  min-height: 48px !important;
+  font-size: 22px !important;
+}
+
+.dc-wallboard-mode .dc-chart-tooltip {
+  color: #f8fbff !important;
+  font-size: 24px !important;
+  font-weight: 650 !important;
+}
+
+.dc-wallboard-mode .dc-chart-icon-tooltip,
+.dc-wallboard-mode .dc-chart-loading-state,
+.dc-wallboard-mode .dc-chart-empty-state,
+.dc-wallboard-mode .dc-spectrum-loading-state-label,
+.dc-wallboard-mode .dc-spectrum-no-data-state-label,
+.dc-wallboard-mode .dc-fft-hover-summary {
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.dc-wallboard-mode .dc-chart-resolution-control {
+  min-height: 48px !important;
+  height: 48px !important;
+  max-width: min(100%, 430px) !important;
+  padding-inline: 12px !important;
+  gap: 10px !important;
+  border-radius: 12px !important;
+  color: #c5d5e8 !important;
+  font-size: 22px !important;
+  font-weight: 750 !important;
+}
+
+.dc-wallboard-mode .dc-chart-resolution-control select {
+  height: 44px !important;
+  max-width: 260px !important;
+  font-size: 22px !important;
+  font-weight: 800 !important;
+}
+
+.dc-wallboard-mode .dc-toast-stack {
+  gap: 14px;
+  right: 32px;
+  bottom: 32px;
+}
+
+.dc-wallboard-mode.sgp-chart-modal-open .dc-toast-stack,
+.sgp-chart-modal-open .dc-wallboard-mode .dc-toast-stack {
+  left: 32px;
+}
+
+.dc-wallboard-mode .dc-toast {
+  width: min(560px, calc(100vw - 64px));
+  min-height: 96px;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 16px;
+}
+
+.dc-wallboard-mode .dc-toast__icon {
+  width: 44px;
+  height: 44px;
+  font-size: 24px;
+}
+
+.dc-wallboard-mode .dc-toast__title,
+.dc-wallboard-mode .dc-toast__content {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.dc-wallboard-mode .dc-toast__close {
+  width: 48px;
+  height: 48px;
+  font-size: 26px;
+}
+
+.dc-wallboard-mode .dc-left-panel {
+  padding: 24px 18px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-stats {
+  gap: 12px !important;
+  margin-bottom: 20px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-stat-card {
+  min-height: 112px;
+  padding: 14px 16px !important;
+  border-radius: 14px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-stat-label {
+  font-size: 22px !important;
+  gap: 8px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-stat-label svg {
+  width: 22px;
+  height: 22px;
+}
+
+.dc-wallboard-mode .dc-sidebar-stat-value {
+  font-size: 36px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-nav {
+  gap: 12px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-nav-item {
+  min-height: 72px !important;
+  grid-template-columns: 48px minmax(0, 1fr) 52px !important;
+  gap: 12px !important;
+  padding: 10px 12px !important;
+  border-radius: 14px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-nav-item > div:first-of-type {
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 12px !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-nav-item svg {
+  width: 26px;
+  height: 26px;
+}
+
+.dc-wallboard-mode .dc-sidebar-nav-label {
+  font-size: 24px !important;
+  font-weight: 750 !important;
+}
+
+.dc-wallboard-mode .dc-sidebar-pin-button {
+  width: 52px !important;
+  height: 52px !important;
+  border-radius: 12px !important;
+}
+
+@media (max-width: 1199px) {
+  :root[data-display-mode='wallboard'] {
+    --font-size: 16px;
+    --dc-header-height: 58px;
+  }
+
+  .dc-wallboard-mode {
+    font-size: 16px;
   }
 }
 

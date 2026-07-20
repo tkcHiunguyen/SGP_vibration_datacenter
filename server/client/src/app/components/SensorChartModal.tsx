@@ -1,7 +1,9 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
 import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
+import { parseTelemetryHistoryPayload } from "../data/telemetry-history";
 import { useTheme } from "../context/ThemeContext";
+import { useDisplayMode } from "../context/DisplayModeContext";
 import {
   DETAIL_TILE_FETCH_DEBOUNCE_MS,
   buildTelemetryDetailTileRequests,
@@ -67,7 +69,6 @@ import {
   formatAbsoluteAxisTime,
   formatByteSize,
   formatChartTime,
-  formatDateInputLabel,
   formatDateInputValue,
   formatFrequencyHz,
   formatMonthKey,
@@ -76,8 +77,6 @@ import {
   formatPeakSummary,
   formatTooltipDateTime,
   formatTrendAxisTime,
-  getDefaultTrendViewWindowMs,
-  getTelemetryHistoryBucketMs,
   parseAmplitudeArray,
   parseDateInputValue,
   parseDeviceDataSummaryPayload,
@@ -94,6 +93,28 @@ import {
   useNonPassiveWheelBlock,
 } from "./sensor-chart-modal/chart-parts";
 import { useChartModalLayout } from "./sensor-chart-modal/useChartModalLayout";
+import {
+  CHART_RANGE_PRESET_LABELS,
+  EXTRA_CHART_RANGE_PRESETS,
+  QUICK_CHART_RANGE_PRESETS,
+  createCalendarDayChartRange,
+  createCustomChartRange,
+  createRelativeChartRange,
+  formatChartRangeLabel,
+  formatChartRangeLoadingLabel,
+  type ChartRange,
+  type ChartRangePreset,
+} from "./sensor-chart-modal/chart-range-controller";
+import {
+  useChartRangeController,
+  type ChartRangeResponse,
+} from "./sensor-chart-modal/useChartRangeController";
+import {
+  buildAdaptiveMissingDataBands,
+  getAdaptiveMissingDataThresholdMs,
+  getStatusBandMinimumDurationMs,
+  normalizeOfflineStatusBands,
+} from "./sensor-chart-modal/telemetry-continuity";
 import type {
   CalendarDayCell,
   DenseTelemetryRow,
@@ -103,7 +124,6 @@ import type {
   SpectrumChartDataPoint,
   SpectrumHoverTarget,
   TelemetryAvailabilityDay,
-  TrendGapSegment,
   TrendRow,
   TrendSeriesConfig,
   TrendStatusBand,
@@ -315,7 +335,6 @@ const easePlacementInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * 
 const PLAYBACK_BASE_STEP_MS = 500;
 const PLAYBACK_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8] as const;
 const DEFAULT_PLAYBACK_SPEED_INDEX = 2;
-const MISSING_DATA_THRESHOLD_MS = 5 * 60 * 1000;
 const TEMP_Y_DOMAIN_FIXED: [number, number] = [20, 120];
 const ACCEL_TREND_DEFAULT_Y_MAX = 16 * GRAVITY_MS2;
 const VRMS_TREND_DEFAULT_Y_MAX = 20;
@@ -397,50 +416,50 @@ function firstArray(...values: unknown[]): unknown[] {
   return [];
 }
 
-function parseTelemetryHistoryPoint(item: unknown): DeviceTelemetryPoint | null {
-  const row = asRecord(item);
-  const body = asRecord(row.payload);
-  const receivedAt = asNonEmptyString(
-    row.receivedAt ?? row.timestamp ?? body.receivedAt ?? body.timestamp,
-  );
-  if (!receivedAt) {
-    return null;
+async function fetchChartRange(
+  deviceId: string,
+  range: ChartRange,
+  bucketMs: number,
+  signal: AbortSignal,
+): Promise<ChartRangeResponse> {
+  const query = new URLSearchParams({
+    from: new Date(range.fromMs).toISOString(),
+    to: new Date(Math.max(range.fromMs, range.toMs - 1)).toISOString(),
+    bucketMs: String(bucketMs),
+  });
+  const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/telemetry?${query.toString()}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload) {
+    throw new Error(safeString(asRecord(payload).error || "telemetry_range_failed"));
   }
-
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const points = parseTelemetryHistoryPayload(payload);
+  const returnedBucketMs = asFiniteNumber(data.bucketMs) ?? bucketMs;
+  const totalMatched = asFiniteNumber(data.totalMatched) ?? points.length;
+  const complete = typeof data.complete === "boolean"
+    ? data.complete
+    : data.truncated !== true;
   return {
-    receivedAt,
-    available: typeof body.available === "boolean" ? body.available : undefined,
-    sampleCount: asFiniteNumber(row.sampleCount ?? row.sample_count ?? body.sampleCount ?? body.sample_count),
-    sampleRateHz: asFiniteNumber(body.sampleRateHz ?? body.sample_rate_hz),
-    lsbPerG: asFiniteNumber(body.lsbPerG ?? body.lsb_per_g),
-    temperature: asFiniteNumber(row.temperature ?? body.temperature),
-    ax: asFiniteNumber(row.ax ?? body.ax),
-    ay: asFiniteNumber(row.ay ?? body.ay),
-    az: asFiniteNumber(row.az ?? body.az),
-    vrmsXMms: asFiniteNumber(row.vrmsXMms ?? row.vrms_x_mms ?? body.vrmsXMms ?? body.vrms_x_mms ?? body.vx_rms_mms),
-    vrmsYMms: asFiniteNumber(row.vrmsYMms ?? row.vrms_y_mms ?? body.vrmsYMms ?? body.vrms_y_mms ?? body.vy_rms_mms),
-    vrmsZMms: asFiniteNumber(row.vrmsZMms ?? row.vrms_z_mms ?? body.vrmsZMms ?? body.vrms_z_mms ?? body.vz_rms_mms),
-    vrmsUnit: asNonEmptyString(row.vrmsUnit ?? row.vrms_unit ?? body.vrmsUnit ?? body.vrms_unit),
-    drmsXUm: asFiniteNumber(row.drmsXUm ?? row.drms_x_um ?? body.drmsXUm ?? body.drms_x_um),
-    drmsYUm: asFiniteNumber(row.drmsYUm ?? row.drms_y_um ?? body.drmsYUm ?? body.drms_y_um),
-    drmsZUm: asFiniteNumber(row.drmsZUm ?? row.drms_z_um ?? body.drmsZUm ?? body.drms_z_um),
-    drmsBandMinHz: asFiniteNumber(row.drmsBandMinHz ?? row.drms_band_min_hz ?? body.drmsBandMinHz ?? body.drms_band_min_hz),
-    drmsBandMaxHz: asFiniteNumber(row.drmsBandMaxHz ?? row.drms_band_max_hz ?? body.drmsBandMaxHz ?? body.drms_band_max_hz),
-    drmsUnit: asNonEmptyString(row.drmsUnit ?? row.drms_unit ?? body.drmsUnit ?? body.drms_unit),
-    uuid: asNonEmptyString(row.uuid ?? body.uuid),
-    telemetryUuid: asNonEmptyString(row.telemetryUuid ?? row.telemetry_uuid ?? body.telemetryUuid ?? body.telemetry_uuid),
+    points,
+    metadata: {
+      from: asNonEmptyString(data.from) ?? new Date(range.fromMs).toISOString(),
+      to: asNonEmptyString(data.to) ?? new Date(range.toMs).toISOString(),
+      bucketMs: returnedBucketMs,
+      sampleCount: asFiniteNumber(data.sampleCount) ?? points.length,
+      totalMatched,
+      complete,
+    },
   };
 }
 
-function parseTelemetryHistoryPayload(payload: unknown): DeviceTelemetryPoint[] {
-  const root = asRecord(payload);
-  const data = asRecord(root.data);
-  const source = firstArray(data.items, root.items, payload);
-
-  return source
-    .map((item) => parseTelemetryHistoryPoint(item))
-    .filter((item): item is DeviceTelemetryPoint => Boolean(item))
-    .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
+function formatDateTimeLocalValue(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(timestampMs - offsetMs).toISOString().slice(0, 16);
 }
 
 function parseDeviceStatusHistoryPayload(payload: unknown): DeviceStatusHistoryItem[] {
@@ -471,14 +490,8 @@ function hasDenseTelemetryValue(row: DenseTelemetryRow): boolean {
   return row.temp !== null || row.ax !== null || row.ay !== null || row.az !== null || row.vrmsX !== null || row.vrmsY !== null || row.vrmsZ !== null || row.drmsX !== null || row.drmsY !== null || row.drmsZ !== null;
 }
 
-function buildDenseTelemetryRowsFromPoints(
-  points: DeviceTelemetryPoint[],
-  startMs: number,
-  endMs: number,
-): DenseTelemetryRow[] {
-  const safeStartMs = Math.min(startMs, endMs);
-  const safeEndMs = Math.max(startMs, endMs);
-  const makeNullRow = (ts: number): DenseTelemetryRow => ({
+function makeNullDenseTelemetryRow(ts: number): DenseTelemetryRow {
+  return {
     ts,
     temp: null,
     ax: null,
@@ -490,18 +503,100 @@ function buildDenseTelemetryRowsFromPoints(
     drmsX: null,
     drmsY: null,
     drmsZ: null,
-  });
+  };
+}
+
+function stitchDenseRowsWithGaps(
+  rows: DenseTelemetryRow[],
+  startMs: number,
+  endMs: number,
+  stepMs: number,
+  gapThresholdMs: number,
+): DenseTelemetryRow[] {
+  const safeStartMs = Math.min(startMs, endMs);
+  const safeEndMs = Math.max(startMs, endMs);
+  if (rows.length === 0) {
+    return [
+      makeNullDenseTelemetryRow(safeStartMs),
+      makeNullDenseTelemetryRow(safeEndMs > safeStartMs ? safeEndMs : safeStartMs + 1),
+    ];
+  }
+
+  const safeStepMs = Math.max(1, stepMs);
+  const stagedRows: DenseTelemetryRow[] = [makeNullDenseTelemetryRow(safeStartMs)];
+  let previousTs = safeStartMs;
+  for (const row of rows) {
+    const clampedTs = Math.max(safeStartMs, Math.min(safeEndMs, row.ts));
+    if (clampedTs - previousTs > gapThresholdMs) {
+      const gapStart = Math.min(safeEndMs, previousTs + safeStepMs);
+      if (gapStart > previousTs && gapStart < clampedTs) {
+        stagedRows.push(makeNullDenseTelemetryRow(gapStart));
+      }
+
+      const gapEnd = Math.max(safeStartMs, clampedTs - safeStepMs);
+      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+      if (gapEnd > lastTs && gapEnd < clampedTs) {
+        stagedRows.push(makeNullDenseTelemetryRow(gapEnd));
+      }
+    }
+
+    stagedRows.push({ ...row, ts: clampedTs });
+    previousTs = clampedTs;
+  }
+
+  if (safeEndMs - previousTs > gapThresholdMs) {
+    const tailGapStart = Math.min(safeEndMs, previousTs + safeStepMs);
+    const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
+    if (tailGapStart > lastTs && tailGapStart < safeEndMs) {
+      stagedRows.push(makeNullDenseTelemetryRow(tailGapStart));
+    }
+  }
+  stagedRows.push(makeNullDenseTelemetryRow(safeEndMs));
+
+  const deduped = new Map<number, DenseTelemetryRow>();
+  for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
+    const existing = deduped.get(row.ts);
+    if (!existing || (!hasDenseTelemetryValue(existing) && hasDenseTelemetryValue(row))) {
+      deduped.set(row.ts, row);
+    }
+  }
+  return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
+}
+
+function buildDenseTelemetryRowsFromPoints(
+  points: DeviceTelemetryPoint[],
+  startMs: number,
+  endMs: number,
+): DenseTelemetryRow[] {
+  const safeStartMs = Math.min(startMs, endMs);
+  const safeEndMs = Math.max(startMs, endMs);
 
   const rawRows = points
     .flatMap((point): DenseTelemetryRow[] => {
-      const sourceTs = Date.parse(point.receivedAt);
-      if (!Number.isFinite(sourceTs) || sourceTs < safeStartMs || sourceTs > safeEndMs) {
+      const bucketStartMs = point.bucketStartedAt ? Date.parse(point.bucketStartedAt) : Number.NaN;
+      const bucketEndMs = point.bucketEndedAt ? Date.parse(point.bucketEndedAt) : Number.NaN;
+      const hasBucketCoverage = Number.isFinite(bucketStartMs)
+        && Number.isFinite(bucketEndMs)
+        && bucketEndMs >= bucketStartMs;
+      const coverageOverlapsWindow = hasBucketCoverage
+        && bucketEndMs >= safeStartMs
+        && bucketStartMs <= safeEndMs;
+      const rawSourceTs = hasBucketCoverage
+        ? bucketStartMs + (bucketEndMs - bucketStartMs) / 2
+        : Date.parse(point.receivedAt);
+      const sourceOutsideWindow = hasBucketCoverage
+        ? !coverageOverlapsWindow
+        : rawSourceTs < safeStartMs || rawSourceTs > safeEndMs;
+      if (!Number.isFinite(rawSourceTs) || sourceOutsideWindow) {
         return [];
       }
+      const sourceTs = Math.max(safeStartMs, Math.min(safeEndMs, rawSourceTs));
 
       return [{
         ts: sourceTs,
         telemetryUuid: point.telemetryUuid,
+        coverageStartMs: hasBucketCoverage ? bucketStartMs : undefined,
+        coverageEndMs: hasBucketCoverage ? bucketEndMs : undefined,
         temp:
           typeof point.temperature === "number" && Number.isFinite(point.temperature)
             ? Number(point.temperature.toFixed(2))
@@ -546,11 +641,6 @@ function buildDenseTelemetryRowsFromPoints(
     })
     .sort((left, right) => left.ts - right.ts);
 
-  if (rawRows.length === 0) {
-    const safeEnd = safeEndMs > safeStartMs ? safeEndMs : safeStartMs + 1;
-    return [makeNullRow(safeStartMs), makeNullRow(safeEnd)];
-  }
-
   const byTs = new Map<number, DenseTelemetryRow>();
   for (const row of rawRows) {
     byTs.set(row.ts, row);
@@ -573,46 +663,7 @@ function buildDenseTelemetryRowsFromPoints(
     : fallbackStepMs;
   const gapThresholdMs = Math.max(2000, Math.round(typicalStepMs * 2));
 
-  const stagedRows: DenseTelemetryRow[] = [makeNullRow(safeStartMs)];
-  let previousTs = safeStartMs;
-
-  for (const row of uniqueRows) {
-    const clampedTs = Math.max(safeStartMs, Math.min(safeEndMs, row.ts));
-    if (clampedTs - previousTs > gapThresholdMs) {
-      const gapStart = Math.min(safeEndMs, previousTs + typicalStepMs);
-      if (gapStart > previousTs && gapStart < clampedTs) {
-        stagedRows.push(makeNullRow(gapStart));
-      }
-
-      const gapEnd = Math.max(safeStartMs, clampedTs - typicalStepMs);
-      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-      if (gapEnd > lastTs && gapEnd < clampedTs) {
-        stagedRows.push(makeNullRow(gapEnd));
-      }
-    }
-
-    stagedRows.push({ ...row, ts: clampedTs });
-    previousTs = clampedTs;
-  }
-
-  if (safeEndMs - previousTs > gapThresholdMs) {
-    const tailGapStart = Math.min(safeEndMs, previousTs + typicalStepMs);
-    const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-    if (tailGapStart > lastTs && tailGapStart < safeEndMs) {
-      stagedRows.push(makeNullRow(tailGapStart));
-    }
-  }
-  stagedRows.push(makeNullRow(safeEndMs));
-
-  const deduped = new Map<number, DenseTelemetryRow>();
-  for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
-    const existing = deduped.get(row.ts);
-    if (!existing || (!hasDenseTelemetryValue(existing) && hasDenseTelemetryValue(row))) {
-      deduped.set(row.ts, row);
-    }
-  }
-
-  return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
+  return stitchDenseRowsWithGaps(uniqueRows, safeStartMs, safeEndMs, typicalStepMs, gapThresholdMs);
 }
 
 function estimateTelemetryGapStepMs(rows: DenseTelemetryRow[], windowMs: number): number {
@@ -636,69 +687,6 @@ function estimateTelemetryGapStepMs(rows: DenseTelemetryRow[], windowMs: number)
   const sortedDiffs = [...diffs].sort((left, right) => left - right);
   const median = sortedDiffs[Math.floor(sortedDiffs.length / 2)];
   return Math.max(1000, Math.min(maxAllowedStepMs, Math.round(median)));
-}
-
-function buildOnlineMissingDataBands(
-  rows: DenseTelemetryRow[],
-  statusBands: TrendStatusBand[],
-  thresholdMs: number,
-  windowStartMs: number,
-  windowEndMs: number,
-): TrendGapSegment[] {
-  const safeStartMs = Math.min(windowStartMs, windowEndMs);
-  const safeEndMs = Math.max(windowStartMs, windowEndMs);
-  if (thresholdMs <= 0 || safeEndMs <= safeStartMs) {
-    return [];
-  }
-
-  const dataTimestamps = Array.from(new Set(
-    rows
-      .filter(hasDenseTelemetryValue)
-      .map((row) => row.ts)
-      .filter((ts) => Number.isFinite(ts) && ts >= safeStartMs && ts <= safeEndMs),
-  )).sort((left, right) => left - right);
-
-  const missingBands: TrendGapSegment[] = [];
-  for (const band of statusBands) {
-    if (band.status !== "online") {
-      continue;
-    }
-    const from = asFiniteNumber(band.from);
-    const to = asFiniteNumber(band.to);
-    if (typeof from !== "number" || typeof to !== "number") {
-      continue;
-    }
-
-    const bandStart = Math.max(safeStartMs, Math.min(from, to));
-    const bandEnd = Math.min(safeEndMs, Math.max(from, to));
-    if (bandEnd - bandStart <= thresholdMs) {
-      continue;
-    }
-
-    const bandPoints = dataTimestamps.filter((ts) => ts >= bandStart && ts <= bandEnd);
-    let previousTs = bandStart;
-    for (const ts of bandPoints) {
-      if (ts - previousTs > thresholdMs) {
-        missingBands.push({ from: previousTs, to: ts });
-      }
-      previousTs = ts;
-    }
-    if (bandEnd - previousTs > thresholdMs) {
-      missingBands.push({ from: previousTs, to: bandEnd });
-    }
-  }
-
-  return missingBands
-    .sort((left, right) => left.from - right.from)
-    .reduce<TrendGapSegment[]>((merged, band) => {
-      const previous = merged[merged.length - 1];
-      if (previous && band.from <= previous.to + 1) {
-        previous.to = Math.max(previous.to, band.to);
-      } else {
-        merged.push({ ...band });
-      }
-      return merged;
-    }, []);
 }
 
 type DenseTelemetryBucketAccumulator = {
@@ -736,19 +724,6 @@ function bucketDenseTelemetryRows(
   const safeStartMs = Math.min(startMs, endMs);
   const safeEndMs = Math.max(startMs, endMs);
   const safeStepMs = Math.max(1, Math.floor(Number.isFinite(stepMs) ? stepMs : 1));
-  const makeNullRow = (ts: number): DenseTelemetryRow => ({
-    ts,
-    temp: null,
-    ax: null,
-    ay: null,
-    az: null,
-    vrmsX: null,
-    vrmsY: null,
-    vrmsZ: null,
-    drmsX: null,
-    drmsY: null,
-    drmsZ: null,
-  });
 
   const buckets = new Map<number, DenseTelemetryBucketAccumulator>();
   for (const row of rows) {
@@ -831,50 +806,7 @@ function bucketDenseTelemetryRows(
     }))
     .sort((left, right) => left.ts - right.ts);
 
-  if (valueRows.length === 0) {
-    return [makeNullRow(safeStartMs), makeNullRow(safeEndMs > safeStartMs ? safeEndMs : safeStartMs + 1)];
-  }
-
-  const stagedRows: DenseTelemetryRow[] = [makeNullRow(safeStartMs)];
-  let previousTs = safeStartMs;
-  const gapThresholdMs = safeStepMs * 2;
-
-  for (const row of valueRows) {
-    if (row.ts - previousTs > gapThresholdMs) {
-      const gapStart = Math.min(safeEndMs, previousTs + safeStepMs);
-      if (gapStart > previousTs && gapStart < row.ts) {
-        stagedRows.push(makeNullRow(gapStart));
-      }
-
-      const gapEnd = Math.max(safeStartMs, row.ts - safeStepMs);
-      const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-      if (gapEnd > lastTs && gapEnd < row.ts) {
-        stagedRows.push(makeNullRow(gapEnd));
-      }
-    }
-
-    stagedRows.push(row);
-    previousTs = row.ts;
-  }
-
-  if (safeEndMs - previousTs > gapThresholdMs) {
-    const tailGapStart = Math.min(safeEndMs, previousTs + safeStepMs);
-    const lastTs = stagedRows[stagedRows.length - 1]?.ts ?? Number.NEGATIVE_INFINITY;
-    if (tailGapStart > lastTs && tailGapStart < safeEndMs) {
-      stagedRows.push(makeNullRow(tailGapStart));
-    }
-  }
-  stagedRows.push(makeNullRow(safeEndMs));
-
-  const deduped = new Map<number, DenseTelemetryRow>();
-  for (const row of stagedRows.sort((left, right) => left.ts - right.ts)) {
-    const existing = deduped.get(row.ts);
-    if (!existing || (!hasDenseTelemetryValue(existing) && hasDenseTelemetryValue(row))) {
-      deduped.set(row.ts, row);
-    }
-  }
-
-  return Array.from(deduped.values()).sort((left, right) => left.ts - right.ts);
+  return stitchDenseRowsWithGaps(valueRows, safeStartMs, safeEndMs, safeStepMs, safeStepMs * 2);
 }
 
 function toHoverTelemetrySnapshot(point: DeviceTelemetryPoint): HoverTelemetrySnapshot | null {
@@ -1016,10 +948,8 @@ type FftAxisDisplayItem = (typeof FFT_AXIS_DISPLAY_ORDER)[number];
 
 export const SensorChartModal = React.memo(function SensorChartModal({
   sensor,
-  telemetryPoints = [],
-  telemetryLoading = false,
+  telemetryPoints: realtimeTelemetryPoints = [],
   spectrumPoints = [],
-  onRequestTelemetryHistory,
   onNotify,
   onSensorUpdated,
   onDeviceDataCleared,
@@ -1027,6 +957,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   pinned = false,
 }: Props) {
   const { C } = useTheme();
+  const { wallboard } = useDisplayMode();
+  const initialHistoryPreset = useMemo<ChartRangePreset>(() => readStoredHistoryPreset(), [sensor?.id]);
 
   useEffect(() => {
     document.body.classList.add("sgp-chart-modal-open");
@@ -1042,8 +974,6 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   const [spectrumYAxisMax, setSpectrumYAxisMax] = useState<number | null>(() => readStoredChartYAxisZoom().spectrum);
   const [trendViewWindow, setTrendViewWindow] = useState<TrendViewport | null>(null);
   const [trendPanning, setTrendPanning] = useState(false);
-  const [activeHistoryPreset, setActiveHistoryPreset] = useState<HistoryPresetKey | null>(() => readStoredHistoryPreset());
-  const [selectedCalendarDate, setSelectedCalendarDate] = useState("");
   const [calendarPopoverOpen, setCalendarPopoverOpen] = useState(false);
   const [calendarHoverDate, setCalendarHoverDate] = useState<string | null>(null);
   const [calendarMonthCursor, setCalendarMonthCursor] = useState<Date>(() => startOfMonthLocal(new Date()));
@@ -1051,9 +981,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   const [calendarAvailabilityLoadingKey, setCalendarAvailabilityLoadingKey] = useState<string | null>(null);
   const [calendarAvailabilityError, setCalendarAvailabilityError] = useState("");
   const [timePresetMenuOpen, setTimePresetMenuOpen] = useState(false);
-  const [telemetryWindowAnchorMs, setTelemetryWindowAnchorMs] = useState<number>(() => Date.now());
-  const [historyPresetLoading, setHistoryPresetLoading] = useState<HistoryPresetKey | null>(null);
-  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [customRangeOpen, setCustomRangeOpen] = useState(false);
+  const [customRangeFrom, setCustomRangeFrom] = useState(() => formatDateTimeLocalValue(Date.now() - DAY_IN_MS));
+  const [customRangeTo, setCustomRangeTo] = useState(() => formatDateTimeLocalValue(Date.now()));
+  const [customRangeError, setCustomRangeError] = useState("");
+  const [advancedRangeOpen, setAdvancedRangeOpen] = useState(false);
   const [statusHistoryItems, setStatusHistoryItems] = useState<DeviceStatusHistoryItem[]>([]);
   const [hoverSpectrumPoints, setHoverSpectrumPoints] = useState<DeviceSpectrumPoint[] | null>(null);
   const [hoverSpectrumLoading, setHoverSpectrumLoading] = useState(false);
@@ -1127,10 +1059,27 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   const detailTileRequestSeqRef = useRef(0);
   const statusHistoryRequestSeqRef = useRef(0);
   const dataClearNotifiedJobIdRef = useRef<string | null>(null);
-  const autoPresetLoadedSensorIdRef = useRef<string | null>(null);
   const timePresetMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarPopoverRef = useRef<HTMLDivElement | null>(null);
-  const controlsBusy = Boolean(historyPresetLoading) || calendarLoading;
+  const rangeController = useChartRangeController({
+    deviceId: sensor?.id,
+    initialPreset: initialHistoryPreset,
+    realtimePoints: realtimeTelemetryPoints,
+    fetchRange: fetchChartRange,
+  });
+  const telemetryPoints = rangeController.data;
+  const activeRange = rangeController.state.activeRange;
+  const selectedRange = rangeController.selectedRange;
+  const telemetryWindowStartMs = activeRange.fromMs;
+  const telemetryWindowAnchorMs = activeRange.toMs;
+  const activeHistoryPreset = selectedRange.kind === "relative" ? selectedRange.preset : null;
+  const selectedCalendarDate = selectedRange.kind === "calendar-day" ? selectedRange.date : "";
+  const historyPresetLoading = rangeController.state.pendingRange?.kind === "relative"
+    ? rangeController.state.pendingRange.preset
+    : null;
+  const calendarLoading = rangeController.state.status === "loading"
+    && rangeController.state.pendingRange?.kind === "calendar-day";
+  const rangeBusy = rangeController.state.status === "loading" || rangeController.state.status === "refreshing";
 
   useEffect(() => {
     writeStoredChartYAxisZoom({
@@ -1145,10 +1094,6 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     onSensorUpdatedRef.current = onSensorUpdated;
   }, [onSensorUpdated]);
 
-  const selectedCalendarDateLabel = useMemo(
-    () => formatDateInputLabel(selectedCalendarDate),
-    [selectedCalendarDate],
-  );
   const calendarMonthKey = useMemo(() => formatMonthKey(calendarMonthCursor), [calendarMonthCursor]);
   const calendarMonthLabel = useMemo(() => formatMonthLabel(calendarMonthCursor), [calendarMonthCursor]);
   const calendarMonthAvailability = calendarAvailabilityByMonth[calendarMonthKey] ?? {};
@@ -1910,6 +1855,12 @@ export const SensorChartModal = React.memo(function SensorChartModal({
           setTimePresetMenuOpen(false);
         }
       }
+      if (customRangeOpen) {
+        const menuNode = timePresetMenuRef.current;
+        if (menuNode && !menuNode.contains(targetNode)) {
+          setCustomRangeOpen(false);
+        }
+      }
 
       if (calendarPopoverOpen) {
         const calendarNode = calendarPopoverRef.current;
@@ -1923,7 +1874,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [calendarPopoverOpen, timePresetMenuOpen]);
+  }, [calendarPopoverOpen, customRangeOpen, timePresetMenuOpen]);
 
   const telemetryTimeline = useMemo<HoverTelemetrySnapshot[]>(() => {
     const byTs = new Map<number, HoverTelemetrySnapshot>();
@@ -2211,44 +2162,14 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   }, [spectrumPinnedTarget]);
 
   const handleHistoryPresetSelect = useCallback(
-    async (preset: HistoryPresetKey) => {
-      if (!sensor || !onRequestTelemetryHistory) {
-        return;
-      }
-
-      const matchedPreset = TELEMETRY_HISTORY_PRESETS.find((item) => item.key === preset);
-      if (!matchedPreset) {
-        return;
-      }
-
-      resetDetailTileCache();
-      const now = Date.now();
-      setTelemetryWindowAnchorMs(now);
-      const options: TelemetryHistoryRequestOptions = {
-        from: new Date(now - matchedPreset.windowMs).toISOString(),
-        to: new Date(now).toISOString(),
-        bucketMs: getTelemetryHistoryBucketMs(matchedPreset.windowMs),
-        force: true,
-        replace: true,
-      };
-
-      setHistoryPresetLoading(preset);
-      try {
-        await onRequestTelemetryHistory(sensor.id, options);
-        writeStoredHistoryPreset(preset);
-        setActiveHistoryPreset(preset);
-        setSelectedCalendarDate("");
-        setCalendarPopoverOpen(false);
-        const initialViewWindowMs = getDefaultTrendViewWindowMs(preset, matchedPreset.windowMs);
-        setTrendViewWindow({
-          startMs: now - initialViewWindowMs,
-          endMs: now,
-        });
-      } finally {
-        setHistoryPresetLoading((current) => (current === preset ? null : current));
-      }
+    (preset: HistoryPresetKey) => {
+      writeStoredHistoryPreset(preset);
+      setCalendarPopoverOpen(false);
+      setCustomRangeOpen(false);
+      setTrendViewWindow(null);
+      void rangeController.selectRange(createRelativeChartRange(preset));
     },
-    [onRequestTelemetryHistory, resetDetailTileCache, sensor],
+    [rangeController.selectRange],
   );
 
   const loadCalendarMonthAvailability = useCallback(
@@ -2305,50 +2226,22 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   );
 
   const handleCalendarDaySelect = useCallback(
-    async (dateValue: string) => {
-      if (!dateValue || !sensor || !onRequestTelemetryHistory || controlsBusy) {
-        return;
-      }
-      const localDay = parseDateInputValue(dateValue);
-      if (!localDay) {
-        return;
-      }
-
-      resetDetailTileCache();
-      const dayStartMs = localDay.getTime();
-      const dayEndExclusiveMs = dayStartMs + DAY_IN_MS;
-      const dayEndRequestMs = dayEndExclusiveMs - 1;
+    (dateValue: string) => {
+      const range = createCalendarDayChartRange(dateValue);
+      if (!range) return;
       setTimePresetMenuOpen(false);
-      setCalendarLoading(true);
-      try {
-        await onRequestTelemetryHistory(sensor.id, {
-          from: new Date(dayStartMs).toISOString(),
-          to: new Date(dayEndRequestMs).toISOString(),
-          bucketMs: getTelemetryHistoryBucketMs(DAY_IN_MS),
-          force: true,
-          replace: true,
-        });
-        setActiveHistoryPreset("1d");
-        setSelectedCalendarDate(dateValue);
-        setCalendarMonthCursor(startOfMonthLocal(localDay));
-        setCalendarPopoverOpen(false);
-        setTelemetryWindowAnchorMs(dayEndExclusiveMs);
-        setTrendViewWindow({
-          startMs: dayStartMs,
-          endMs: dayEndExclusiveMs,
-        });
-      } finally {
-        setCalendarLoading(false);
-      }
+      setCustomRangeOpen(false);
+      setCalendarMonthCursor(startOfMonthLocal(new Date(range.fromMs)));
+      setCalendarPopoverOpen(false);
+      setTrendViewWindow(null);
+      void rangeController.selectRange(range);
     },
-    [controlsBusy, onRequestTelemetryHistory, resetDetailTileCache, sensor],
+    [rangeController.selectRange],
   );
 
   const handleToggleCalendarPopover = useCallback(() => {
-    if (!onRequestTelemetryHistory || controlsBusy) {
-      return;
-    }
     setTimePresetMenuOpen(false);
+    setCustomRangeOpen(false);
     setCalendarAvailabilityError("");
     setCalendarPopoverOpen((open) => {
       const next = !open;
@@ -2358,7 +2251,26 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       }
       return next;
     });
-  }, [controlsBusy, onRequestTelemetryHistory, selectedCalendarDate, telemetryWindowAnchorMs]);
+  }, [selectedCalendarDate, telemetryWindowAnchorMs]);
+
+  const handleCustomRangeApply = useCallback(() => {
+    const fromMs = Date.parse(customRangeFrom);
+    const toMs = Date.parse(customRangeTo);
+    const range = createCustomChartRange(fromMs, toMs);
+    if (!range) {
+      setCustomRangeError("Thời gian kết thúc phải lớn hơn thời gian bắt đầu.");
+      return;
+    }
+    if (range.toMs > Date.now() + 60_000) {
+      setCustomRangeError("Khoảng tùy chỉnh không được kết thúc trong tương lai.");
+      return;
+    }
+    setCustomRangeError("");
+    setCustomRangeOpen(false);
+    setTimePresetMenuOpen(false);
+    setTrendViewWindow(null);
+    void rangeController.selectRange(range);
+  }, [customRangeFrom, customRangeTo, rangeController.selectRange]);
 
   const handleCalendarMonthShift = useCallback((delta: -1 | 1) => {
     setCalendarMonthCursor((current) => addMonthsLocal(current, delta));
@@ -2378,34 +2290,16 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     }
   }, [calendarPopoverOpen]);
 
-  const activePresetConfig = useMemo(
-    () =>
-      TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === activeHistoryPreset)
-      ?? TELEMETRY_HISTORY_PRESETS.find((preset) => preset.key === DEFAULT_HISTORY_PRESET_KEY)
-      ?? TELEMETRY_HISTORY_PRESETS[0],
-    [activeHistoryPreset],
-  );
-
-  const telemetryWindowStartMs = useMemo(() => {
-    if (!activePresetConfig) {
-      return telemetryWindowAnchorMs - 60 * 60 * 1000;
-    }
-    return telemetryWindowAnchorMs - activePresetConfig.windowMs;
-  }, [activePresetConfig, telemetryWindowAnchorMs]);
-
-  const latestTelemetryPointMs = useMemo(() => {
-    return telemetryPoints.reduce((latest, point) => {
-      const parsed = Date.parse(point.receivedAt);
-      return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
-    }, Number.NEGATIVE_INFINITY);
-  }, [telemetryPoints]);
-
   const timelineTelemetryData = useMemo<DenseTelemetryRow[]>(() => {
-    if (!sensor || !activePresetConfig) {
+    if (!sensor) {
       return [];
     }
     return buildDenseTelemetryRowsFromPoints(telemetryPoints, telemetryWindowStartMs, telemetryWindowAnchorMs);
-  }, [activePresetConfig, sensor, telemetryPoints, telemetryWindowAnchorMs, telemetryWindowStartMs]);
+  }, [sensor, telemetryPoints, telemetryWindowAnchorMs, telemetryWindowStartMs]);
+  const overviewTelemetryData = useMemo(
+    () => buildOverviewTelemetryRows(timelineTelemetryData),
+    [timelineTelemetryData],
+  );
 
   const telemetryGapStepMs = useMemo(
     () => estimateTelemetryGapStepMs(timelineTelemetryData, telemetryWindowAnchorMs - telemetryWindowStartMs),
@@ -2533,12 +2427,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     [loadedTrendWindowMs, telemetryGapStepMs],
   );
   const trendVisibleWindow = useMemo(() => {
-    const fallbackViewWindowMs = getDefaultTrendViewWindowMs(
-      activePresetConfig?.key ?? DEFAULT_HISTORY_PRESET_KEY,
-      loadedTrendWindowMs,
-    );
     const requestedWindow = trendViewWindow ?? {
-      startMs: telemetryWindowAnchorMs - fallbackViewWindowMs,
+      startMs: telemetryWindowStartMs,
       endMs: telemetryWindowAnchorMs,
     };
     return clampTrendViewport(
@@ -2548,7 +2438,6 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       trendMinViewWindowMs,
     );
   }, [
-    activePresetConfig?.key,
     loadedTrendWindowMs,
     telemetryWindowAnchorMs,
     telemetryWindowStartMs,
@@ -2614,38 +2503,6 @@ export const SensorChartModal = React.memo(function SensorChartModal({
         return bands;
       }, []);
   }, [statusHistoryItems, telemetryWindowAnchorMs]);
-
-  useEffect(() => {
-    if (!sensor || selectedCalendarDate || !Number.isFinite(latestTelemetryPointMs)) {
-      return;
-    }
-    if (latestTelemetryPointMs <= telemetryWindowAnchorMs) {
-      return;
-    }
-
-    const nextAnchorMs = Math.round(latestTelemetryPointMs);
-    if (trendAtLatest) {
-      const currentDurationMs = Math.max(
-        trendMinViewWindowMs,
-        Math.min(loadedTrendWindowMs, trendVisibleWindow.endMs - trendVisibleWindow.startMs),
-      );
-      setTrendViewWindow({
-        startMs: nextAnchorMs - currentDurationMs,
-        endMs: nextAnchorMs,
-      });
-    }
-    setTelemetryWindowAnchorMs(nextAnchorMs);
-  }, [
-    latestTelemetryPointMs,
-    loadedTrendWindowMs,
-    selectedCalendarDate,
-    sensor,
-    telemetryWindowAnchorMs,
-    trendAtLatest,
-    trendMinViewWindowMs,
-    trendVisibleWindow.endMs,
-    trendVisibleWindow.startMs,
-  ]);
 
   const handleResetTrendViewToLatest = useCallback(() => {
     const nextDurationMs = Math.max(
@@ -2804,6 +2661,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
     const pointsByKey = new Map<string, DeviceTelemetryPoint>();
     detailTileEntriesRef.current.forEach((entry) => {
+      if (rangeController.activeQueryKey && entry.tile.rangeKey !== rangeController.activeQueryKey) {
+        return;
+      }
       if (entry.tile.mode !== trendDetailMode) {
         return;
       }
@@ -2830,7 +2690,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       trendVisibleWindow.startMs,
       trendVisibleWindow.endMs,
     );
-  }, [detailTileVersion, trendDetailMode, trendVisibleWindow.endMs, trendVisibleWindow.startMs]);
+  }, [detailTileVersion, rangeController.activeQueryKey, trendDetailMode, trendVisibleWindow.endMs, trendVisibleWindow.startMs]);
 
   const hasDetailTelemetryData = useMemo(
     () => detailTelemetryData.some(hasDenseTelemetryValue),
@@ -2875,122 +2735,115 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     ],
   );
   const displayTrendStatusBands = useMemo(
-    () => trendStatusBands.filter((band) => {
-      const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
-      if (!isServerOffline) {
-        return true;
-      }
-      return !displayTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
-    }),
-    [displayTelemetryData, trendStatusBands],
+    () => {
+      const visibleWindowMs = trendVisibleWindow.endMs - trendVisibleWindow.startMs;
+      const conflictCheckedBands = trendStatusBands.filter((band) => {
+        const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
+        if (!isServerOffline) {
+          return true;
+        }
+        return !displayTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
+      });
+      return normalizeOfflineStatusBands(conflictCheckedBands, {
+        minimumDurationMs: getStatusBandMinimumDurationMs(visibleWindowMs, activeTelemetryGapStepMs),
+        mergeToleranceMs: activeTelemetryGapStepMs,
+        windowStartMs: trendVisibleWindow.startMs,
+        windowEndMs: trendVisibleWindow.endMs,
+      });
+    },
+    [
+      activeTelemetryGapStepMs,
+      displayTelemetryData,
+      trendStatusBands,
+      trendVisibleWindow.endMs,
+      trendVisibleWindow.startMs,
+    ],
   );
   const overviewTrendStatusBands = useMemo(
-    () => trendStatusBands.filter((band) => {
-      const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
-      if (!isServerOffline) {
-        return true;
-      }
-      return !timelineTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
-    }),
-    [timelineTelemetryData, trendStatusBands],
-  );
-  const trendMissingDataBands = useMemo(
-    () => buildOnlineMissingDataBands(
-      activeTelemetryData,
-      trendStatusBands,
-      MISSING_DATA_THRESHOLD_MS,
-      trendVisibleWindow.startMs,
-      trendVisibleWindow.endMs,
-    ),
-    [activeTelemetryData, trendStatusBands, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const overviewMissingDataBands = useMemo(
-    () => buildOnlineMissingDataBands(
+    () => {
+      const conflictCheckedBands = trendStatusBands.filter((band) => {
+        const isServerOffline = band.reason === "server_offline" || band.reason === "unclean_shutdown";
+        if (!isServerOffline) {
+          return true;
+        }
+        return !timelineTelemetryData.some((row) => row.ts >= band.from && row.ts <= band.to && hasDenseTelemetryValue(row));
+      });
+      return normalizeOfflineStatusBands(conflictCheckedBands, {
+        minimumDurationMs: getStatusBandMinimumDurationMs(loadedTrendWindowMs, telemetryGapStepMs),
+        mergeToleranceMs: telemetryGapStepMs,
+        windowStartMs: telemetryWindowStartMs,
+        windowEndMs: telemetryWindowAnchorMs,
+      });
+    },
+    [
+      loadedTrendWindowMs,
+      telemetryGapStepMs,
+      telemetryWindowAnchorMs,
+      telemetryWindowStartMs,
       timelineTelemetryData,
       trendStatusBands,
-      MISSING_DATA_THRESHOLD_MS,
-      telemetryWindowStartMs,
-      telemetryWindowAnchorMs,
+    ],
+  );
+  const trendMissingDataBands = useMemo(
+    () => buildAdaptiveMissingDataBands(
+      activeTelemetryData,
+      trendStatusBands,
+      {
+        thresholdMs: getAdaptiveMissingDataThresholdMs(
+          trendVisibleWindow.endMs - trendVisibleWindow.startMs,
+          activeTelemetryGapStepMs,
+        ),
+        expectedStepMs: activeTelemetryGapStepMs,
+        windowStartMs: trendVisibleWindow.startMs,
+        windowEndMs: trendVisibleWindow.endMs,
+        hasValue: hasDenseTelemetryValue,
+      },
     ),
-    [telemetryWindowAnchorMs, telemetryWindowStartMs, timelineTelemetryData, trendStatusBands],
+    [
+      activeTelemetryData,
+      activeTelemetryGapStepMs,
+      trendStatusBands,
+      trendVisibleWindow.endMs,
+      trendVisibleWindow.startMs,
+    ],
   );
-  const activeTempData = useMemo(
-    () =>
-      displayTelemetryData.map((row) => ({
-        ts: row.ts,
-        temp: row.temp,
-        telemetryUuid: row.telemetryUuid,
-      })),
-    [displayTelemetryData],
+  const overviewMissingDataBands = useMemo(
+    () => buildAdaptiveMissingDataBands(
+      timelineTelemetryData,
+      trendStatusBands,
+      {
+        thresholdMs: getAdaptiveMissingDataThresholdMs(loadedTrendWindowMs, telemetryGapStepMs),
+        expectedStepMs: telemetryGapStepMs,
+        windowStartMs: telemetryWindowStartMs,
+        windowEndMs: telemetryWindowAnchorMs,
+        hasValue: hasDenseTelemetryValue,
+      },
+    ),
+    [
+      loadedTrendWindowMs,
+      telemetryGapStepMs,
+      telemetryWindowAnchorMs,
+      telemetryWindowStartMs,
+      timelineTelemetryData,
+      trendStatusBands,
+    ],
   );
-  const activeAccelData = useMemo(
-    () => displayTelemetryData.map((row) => ({
-      ts: row.ts,
-      ax: row.ax,
-      ay: row.ay,
-      az: row.az,
-      telemetryUuid: row.telemetryUuid,
-    })),
-    [displayTelemetryData],
+  const visibleTelemetryData = useMemo(
+    () => displayTelemetryData.filter(
+      (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
+    ),
+    [displayTelemetryData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
-
-
-  const activeVrmsData = useMemo(
-    () => displayTelemetryData.map((row) => ({
-      ts: row.ts,
-      vrmsX: row.vrmsX,
-      vrmsY: row.vrmsY,
-      vrmsZ: row.vrmsZ,
-      telemetryUuid: row.telemetryUuid,
-    })),
-    [displayTelemetryData],
+  const visibleTelemetryHoverPoints = useMemo(
+    () => visibleTelemetryData.map((row) => ({ ts: row.ts, telemetryUuid: row.telemetryUuid })),
+    [visibleTelemetryData],
   );
-  const activeDrmsData = useMemo(
-    () => displayTelemetryData.map((row) => ({
-      ts: row.ts,
-      drmsX: row.drmsX,
-      drmsY: row.drmsY,
-      drmsZ: row.drmsZ,
-      telemetryUuid: row.telemetryUuid,
-    })),
-    [displayTelemetryData],
-  );
-
-  const tempVisible = useMemo(
-    () =>
-      activeTempData.filter(
-        (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
-      ),
-    [activeTempData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const tempDisplayData = tempVisible;
-  const accelVisible = useMemo(
-    () =>
-      activeAccelData.filter(
-        (row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs,
-      ),
-    [activeAccelData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const accelDisplayData = accelVisible;
-
-  const vrmsVisible = useMemo(
-    () => activeVrmsData.filter((row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs),
-    [activeVrmsData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const vrmsDisplayData = vrmsVisible;
-  const drmsVisible = useMemo(
-    () => activeDrmsData.filter((row) => row.ts >= trendVisibleWindow.startMs && row.ts <= trendVisibleWindow.endMs),
-    [activeDrmsData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
-  );
-  const drmsDisplayData = drmsVisible;
 
   const playbackRows = useMemo(
     () =>
-      displayTelemetryData.filter(
+      visibleTelemetryData.filter(
         (row) =>
-          row.ts >= trendVisibleWindow.startMs
-          && row.ts <= trendVisibleWindow.endMs
-          && (
+          (
             (typeof row.temp === "number" && Number.isFinite(row.temp))
             || (typeof row.ax === "number" && Number.isFinite(row.ax))
             || (typeof row.ay === "number" && Number.isFinite(row.ay))
@@ -3003,7 +2856,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             || (typeof row.drmsZ === "number" && Number.isFinite(row.drmsZ))
           ),
       ),
-    [displayTelemetryData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+    [visibleTelemetryData],
   );
   const playbackSpeedMultiplier = PLAYBACK_SPEED_OPTIONS[playbackSpeedIndex] ?? 1;
   const playbackStepDelayMs = Math.max(80, Math.round(PLAYBACK_BASE_STEP_MS / playbackSpeedMultiplier));
@@ -3043,12 +2896,50 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     () => [0, drmsAmplitudeLimit],
     [drmsAmplitudeLimit],
   );
-  const showInitialLoading = telemetryLoading && telemetryPoints.length === 0;
+  const trendTimeDomain = useMemo<[number, number]>(
+    () => [trendVisibleWindow.startMs, trendVisibleWindow.endMs],
+    [trendVisibleWindow.endMs, trendVisibleWindow.startMs],
+  );
+  const tempTrendSeries = useMemo<TrendSeriesConfig[]>(
+    () => [{
+      key: "temp",
+      name: "Nhiệt độ",
+      color: C.primary,
+      strokeWidth: 2,
+      latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
+    }],
+    [C.primary],
+  );
+  const accelTrendSeries = useMemo<TrendSeriesConfig[]>(
+    () => [
+      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+    ],
+    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+  );
+  const vrmsTrendSeries = useMemo<TrendSeriesConfig[]>(
+    () => [
+      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+    ],
+    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+  );
+  const drmsTrendSeries = useMemo<TrendSeriesConfig[]>(
+    () => [
+      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
+      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
+      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+    ],
+    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+  );
+  const showInitialLoading = rangeBusy && telemetryPoints.length === 0;
   const chartHasTelemetry = telemetryPoints.length > 0;
   const trendOverviewResetKey = useMemo(
-    () =>
-      `${sensor?.id ?? "no-sensor"}:${activeHistoryPreset ?? "none"}:${Math.round(telemetryWindowStartMs / 1000)}:${Math.round(telemetryWindowAnchorMs / 1000)}`,
-    [activeHistoryPreset, sensor?.id, telemetryWindowAnchorMs, telemetryWindowStartMs],
+    () => rangeController.activeQueryKey
+      || `${sensor?.id ?? "no-sensor"}:${Math.round(telemetryWindowStartMs / 1000)}:${Math.round(telemetryWindowAnchorMs / 1000)}`,
+    [rangeController.activeQueryKey, sensor?.id, telemetryWindowAnchorMs, telemetryWindowStartMs],
   );
   const trendOverviewDisplayWindow = useMemo(() => {
     return clampTrendViewport(
@@ -3072,7 +2963,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
   useEffect(() => {
     const targetSensorId = sensor?.id;
-    if (!targetSensorId || telemetryLoading || trendPanning || controlsBusy) {
+    if (!targetSensorId || (rangeController.state.status === "loading" && telemetryPoints.length === 0) || trendPanning) {
       clearDetailTileFetchTimer();
       return;
     }
@@ -3086,6 +2977,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
     const candidateTiles = buildTelemetryDetailTileRequests({
       deviceId: targetSensorId,
+      rangeKey: rangeController.activeQueryKey,
       visibleStartMs: trendVisibleWindow.startMs,
       visibleEndMs: trendVisibleWindow.endMs,
       loadedStartMs: telemetryWindowStartMs,
@@ -3171,10 +3063,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     };
   }, [
     clearDetailTileFetchTimer,
-    controlsBusy,
     requestTelemetryDetailTile,
     sensor?.id,
-    telemetryLoading,
+    rangeController.state.status,
+    rangeController.activeQueryKey,
+    telemetryPoints.length,
     telemetryWindowAnchorMs,
     telemetryWindowStartMs,
     trendDetailMode,
@@ -3182,8 +3075,6 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     trendVisibleWindow.endMs,
     trendVisibleWindow.startMs,
   ]);
-  const activePresetLabel = activePresetConfig?.label ?? DEFAULT_HISTORY_PRESET_KEY;
-
   useEffect(() => {
     clearPlaybackTimer();
     if (!playbackRunning) {
@@ -3220,16 +3111,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
   useEffect(() => {
     if (!sensor) {
-      autoPresetLoadedSensorIdRef.current = null;
       return;
     }
     resetDetailTileCache();
-    setTelemetryWindowAnchorMs(Date.now());
-    const storedHistoryPreset = readStoredHistoryPreset();
     setTrendViewWindow(null);
     setTrendPanning(false);
-    setActiveHistoryPreset(storedHistoryPreset);
-    setSelectedCalendarDate("");
     setCalendarPopoverOpen(false);
     setCalendarHoverDate(null);
     setCalendarMonthCursor(startOfMonthLocal(new Date()));
@@ -3238,27 +3124,14 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     setCalendarAvailabilityError("");
     setStatusHistoryItems([]);
     statusHistoryRequestSeqRef.current += 1;
-    setHistoryPresetLoading(null);
-    setCalendarLoading(false);
     setPlaybackRunning(false);
     setPlaybackCursorTs(null);
     setPlaybackSpeedIndex(DEFAULT_PLAYBACK_SPEED_INDEX);
   }, [resetDetailTileCache, sensor?.id]);
 
-  useEffect(() => {
-    if (!sensor || !onRequestTelemetryHistory) {
-      return;
-    }
-    if (autoPresetLoadedSensorIdRef.current === sensor.id) {
-      return;
-    }
-    autoPresetLoadedSensorIdRef.current = sensor.id;
-    void handleHistoryPresetSelect(readStoredHistoryPreset());
-  }, [handleHistoryPresetSelect, onRequestTelemetryHistory, sensor]);
-
   if (!sensor) return null;
 
-  const chartTextStyle = { fill: C.textMuted, fontSize: 10 };
+  const chartTextStyle = { fill: wallboard ? "#c5d5e8" : C.textMuted, fontSize: wallboard ? 22 : 10 };
   const gridColor = C.border + "44";
   const fftRenderByAxis = {
     x: fftRenderX,
@@ -3271,6 +3144,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     const axisDisplayLabel = chartAxisLabels[axis];
     return (
       <button
+        className="dc-fft-axis-label-button"
         type="button"
         onClick={(event) => {
           event.preventDefault();
@@ -3331,6 +3205,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
     return (
       <div
+        className="dc-fft-card"
         key={deviceAxis}
         style={{
           position: "relative",
@@ -3344,6 +3219,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 1, padding: 0, minHeight: 22, minWidth: 0, overflow: "hidden" }}>
           {renderFftAxisLabelButton(deviceAxis, spectrumAxis)}
           <div
+            className="dc-fft-peak-summary"
             style={{
               color: C.textMuted,
               fontSize: "0.56rem",
@@ -3399,6 +3275,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
           ) : null}
         </div>
         <div
+          className="dc-fft-axis-footer"
           style={{
             textAlign: "right",
             color: C.textMuted,
@@ -3416,13 +3293,59 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     );
   };
 
+  const trendCharts = [
+    {
+      key: "temperature",
+      title: "Đồ thị nhiệt độ (°C)",
+      icon: <Thermometer size={13} strokeWidth={2} />,
+      series: tempTrendSeries,
+      yDomain: tempDomain,
+    },
+    {
+      key: "acceleration",
+      title: "Đồ thị gia tốc (m/s²)",
+      icon: <Activity size={13} strokeWidth={2} />,
+      series: accelTrendSeries,
+      yDomain: accelTrendYDomain,
+      onYAxisZoom: handleAccelYAxisZoom,
+      showTelemetryStatus: true,
+    },
+    {
+      key: "velocity",
+      title: "Đồ thị vận tốc RMS (mm/s)",
+      icon: <Activity size={13} strokeWidth={2} />,
+      series: vrmsTrendSeries,
+      yDomain: vrmsTrendYDomain,
+      onYAxisZoom: handleVrmsYAxisZoom,
+    },
+    {
+      key: "displacement",
+      title: "Đồ thị biên độ RMS (mm)",
+      icon: <Activity size={13} strokeWidth={2} />,
+      series: drmsTrendSeries,
+      yDomain: drmsTrendYDomain,
+      onYAxisZoom: handleDrmsYAxisZoom,
+    },
+  ] satisfies Array<{
+    key: string;
+    title: string;
+    icon: React.ReactNode;
+    series: TrendSeriesConfig[];
+    yDomain: [number, number];
+    onYAxisZoom?: (next: { deltaY: number }) => void;
+    showTelemetryStatus?: boolean;
+  }>;
+
   return (
     <>
       <div
         ref={modalRootRef}
+        className="dc-chart-modal-root"
         data-ux="chart-modal"
         data-ux-chart-ready={showInitialLoading ? "false" : "true"}
         data-ux-telemetry-points={telemetryPoints.length}
+        data-ux-chart-range={selectedRange.kind === "relative" ? selectedRange.preset : selectedRange.kind}
+        data-ux-chart-range-status={rangeController.state.status}
         style={{
         position: "relative",
         zIndex: 1,
@@ -3454,8 +3377,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
 	          <div style={{ minWidth: 0, display: "grid", gap: 1 }}>
 	            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, minWidth: 0, minHeight: 32 }}>
-	              <span
-	                title={sensor.name}
+              <span
+                className="dc-chart-modal-device-title"
+                title={sensor.name}
 	                style={{
 	                  color: C.textBright,
 	                  fontSize: "0.84rem",
@@ -3471,6 +3395,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	              </span>
 	              <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
                 <button
+                  className="dc-chart-icon-button"
                   type="button"
                   aria-label="Tùy chọn"
                   onClick={openDataSettings}
@@ -3514,6 +3439,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   <Settings size={14} strokeWidth={2.1} />
                 </button>
                 <div
+                  className="dc-chart-icon-tooltip"
                   style={{
                     position: "absolute",
                     left: 0,
@@ -3552,10 +3478,52 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               minWidth: 0,
             }}
           >
+            <div
+              className="dc-chart-range-quick"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}
+              aria-label="Khoảng thời gian nhanh"
+            >
+              {QUICK_CHART_RANGE_PRESETS.map((preset) => {
+                const active = selectedRange.kind === "relative" && selectedRange.preset === preset;
+                const loading = historyPresetLoading === preset;
+                return (
+                  <button
+                    key={preset}
+                    data-ux-range-preset={preset}
+                    className="dc-chart-control-button"
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => handleHistoryPresetSelect(preset)}
+                    style={{
+                      height: 34,
+                      minWidth: 48,
+                      borderRadius: 999,
+                      border: `1px solid ${active ? C.primary : C.border}`,
+                      padding: "0 10px",
+                      background: active ? C.primaryBg : C.surface,
+                      color: active ? C.primary : C.textBase,
+                      fontSize: "0.66rem",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 5,
+                      transition: "background 150ms ease, border-color 150ms ease, color 150ms ease",
+                    }}
+                  >
+                    <span>{CHART_RANGE_PRESET_LABELS[preset]}</span>
+                    {loading ? (
+                      <span style={{ width: 9, height: 9, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
             <div ref={calendarPopoverRef} style={{ position: "relative" }}>
               <button
+                className="dc-chart-control-button"
                 type="button"
-                disabled={!onRequestTelemetryHistory || controlsBusy}
                 onClick={handleToggleCalendarPopover}
                 style={{
                   height: 34,
@@ -3566,13 +3534,13 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   color: calendarPopoverOpen ? C.primary : C.textBase,
                   fontSize: "0.66rem",
                   fontWeight: 700,
-                  cursor: !onRequestTelemetryHistory || controlsBusy ? "not-allowed" : "pointer",
+                  cursor: "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
                   minWidth: 116,
                   justifyContent: "space-between",
-                  opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
+                  opacity: 1,
                   transition: "all 0.14s ease",
                 }}
                 title="Chọn ngày dữ liệu"
@@ -3580,7 +3548,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <CalendarDays size={13} strokeWidth={2.1} />
-                  <span>{selectedCalendarDateLabel}</span>
+                  <span>{selectedRange.kind === "calendar-day" ? formatChartRangeLabel(selectedRange) : "Lịch"}</span>
                 </span>
                 <ChevronDown
                   size={13}
@@ -3594,7 +3562,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
               {calendarPopoverOpen ? (
                 <div
-                  className="calendar-popover-anim"
+                  className="calendar-popover-anim dc-chart-calendar-popover"
                   style={{
                     position: "absolute",
                     top: "calc(100% + 8px)",
@@ -3634,10 +3602,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       <ArrowLeft size={13} strokeWidth={2.4} />
                     </button>
                     <div style={{ minWidth: 0, textAlign: "center" }}>
-                      <div style={{ color: C.textBright, fontSize: "0.73rem", fontWeight: 800, letterSpacing: "0.01em" }}>
+                      <div className="dc-chart-calendar-month" style={{ color: C.textBright, fontSize: "0.73rem", fontWeight: 800, letterSpacing: "0.01em" }}>
                         {calendarMonthLabel}
                       </div>
-                      <div style={{ color: C.textMuted, fontSize: "0.62rem" }}>
+                      <div className="dc-chart-calendar-summary" style={{ color: C.textMuted, fontSize: "0.62rem" }}>
                         {calendarDaysWithDataCount > 0
                           ? `${calendarDaysWithDataCount} ngày có dữ liệu`
                           : "Chưa có dữ liệu trong tháng"}
@@ -3704,7 +3672,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       const hasData = Number(calendarMonthAvailability[cell.dateValue] ?? 0) > 0;
                       const selected = selectedCalendarDate === cell.dateValue;
                       const inCurrentMonth = cell.monthOffset === 0;
-                      const disabled = cell.isFuture || controlsBusy;
+                      const disabled = cell.isFuture;
                       const hovered = calendarHoverDate === cell.dateValue && !disabled;
                       return (
                         <button
@@ -3827,32 +3795,33 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </div>
             <div ref={timePresetMenuRef} style={{ position: "relative" }}>
               <button
+                className="dc-chart-control-button"
                 type="button"
-                disabled={!onRequestTelemetryHistory || controlsBusy}
                 onClick={() => {
+                  setCalendarPopoverOpen(false);
+                  setCustomRangeOpen(false);
                   setTimePresetMenuOpen((open) => !open);
                 }}
                 style={{
                   height: 34,
                   borderRadius: 999,
-                  border: `1px solid ${C.border}`,
+                  border: `1px solid ${EXTRA_CHART_RANGE_PRESETS.includes(activeHistoryPreset as ChartRangePreset) || selectedRange.kind === "custom" ? C.primary : C.border}`,
                   padding: "0 9px",
-                  background: C.surface,
-                  color: C.textBase,
+                  background: EXTRA_CHART_RANGE_PRESETS.includes(activeHistoryPreset as ChartRangePreset) || selectedRange.kind === "custom" ? C.primaryBg : C.surface,
+                  color: EXTRA_CHART_RANGE_PRESETS.includes(activeHistoryPreset as ChartRangePreset) || selectedRange.kind === "custom" ? C.primary : C.textBase,
                   fontSize: "0.66rem",
                   fontWeight: 700,
-                  cursor: !onRequestTelemetryHistory || controlsBusy ? "not-allowed" : "pointer",
+                  cursor: "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 7,
-                  minWidth: 108,
+                  minWidth: 82,
                   justifyContent: "space-between",
-                  opacity: !onRequestTelemetryHistory || controlsBusy ? 0.68 : 1,
                 }}
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <Clock3 size={13} strokeWidth={2.1} />
-                  {activePresetLabel}
+                  Thêm
                 </span>
                 <ChevronDown
                   size={13}
@@ -3866,6 +3835,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
               {timePresetMenuOpen ? (
                 <div
+                  className="dc-time-preset-menu"
                   style={{
                     position: "absolute",
                     top: "calc(100% + 8px)",
@@ -3879,17 +3849,16 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     zIndex: 40,
                   }}
                 >
-                  {TELEMETRY_HISTORY_PRESETS.map((preset) => {
-                    const active = activeHistoryPreset === preset.key;
-                    const loading = historyPresetLoading === preset.key;
+                  {EXTRA_CHART_RANGE_PRESETS.map((preset) => {
+                    const active = activeHistoryPreset === preset;
+                    const loading = historyPresetLoading === preset;
                     return (
                       <button
-                        key={preset.key}
+                        key={preset}
                         type="button"
-                        disabled={controlsBusy}
                         onClick={() => {
                           setTimePresetMenuOpen(false);
-                          void handleHistoryPresetSelect(preset.key);
+                          handleHistoryPresetSelect(preset);
                         }}
                         style={{
                           width: "100%",
@@ -3900,14 +3869,14 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                           color: active ? C.primary : C.textBase,
                           fontSize: "0.67rem",
                           fontWeight: 700,
-                          cursor: controlsBusy ? "not-allowed" : "pointer",
+                          cursor: "pointer",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
                           padding: "0 9px",
                         }}
                       >
-                        <span>{preset.label}</span>
+                        <span>{CHART_RANGE_PRESET_LABELS[preset]}</span>
                         {loading ? (
                           <span
                             style={{
@@ -3932,12 +3901,118 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       </button>
                     );
                   })}
+                  <div style={{ height: 1, background: C.border, margin: "5px 3px" }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentRange = selectedRange;
+                      setCustomRangeFrom(formatDateTimeLocalValue(currentRange.fromMs));
+                      setCustomRangeTo(formatDateTimeLocalValue(Math.min(Date.now(), currentRange.toMs)));
+                      setCustomRangeError("");
+                      setTimePresetMenuOpen(false);
+                      setCustomRangeOpen(true);
+                    }}
+                    style={{
+                      width: "100%",
+                      height: 32,
+                      border: "none",
+                      borderRadius: 8,
+                      background: selectedRange.kind === "custom" ? C.primaryBg : "transparent",
+                      color: selectedRange.kind === "custom" ? C.primary : C.textBase,
+                      fontSize: "0.67rem",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "0 9px",
+                    }}
+                  >
+                    Khoảng tùy chỉnh
+                  </button>
+                </div>
+              ) : null}
+              {customRangeOpen ? (
+                <div
+                  className="dc-time-preset-menu"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    width: 284,
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    boxShadow: "0 14px 28px rgba(0, 0, 0, 0.32)",
+                    padding: 10,
+                    zIndex: 40,
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  <strong style={{ color: C.textBright, fontSize: "0.7rem" }}>Khoảng thời gian tùy chỉnh</strong>
+                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.6rem", fontWeight: 700 }}>
+                    Bắt đầu
+                    <input
+                      type="datetime-local"
+                      value={customRangeFrom}
+                      max={customRangeTo}
+                      onChange={(event) => setCustomRangeFrom(event.currentTarget.value)}
+                      style={{ height: 34, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textBase, padding: "0 8px", colorScheme: "dark" }}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.6rem", fontWeight: 700 }}>
+                    Kết thúc
+                    <input
+                      type="datetime-local"
+                      value={customRangeTo}
+                      min={customRangeFrom}
+                      max={formatDateTimeLocalValue(Date.now())}
+                      onChange={(event) => setCustomRangeTo(event.currentTarget.value)}
+                      style={{ height: 34, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textBase, padding: "0 8px", colorScheme: "dark" }}
+                    />
+                  </label>
+                  {customRangeError ? <span style={{ color: C.danger, fontSize: "0.6rem" }}>{customRangeError}</span> : null}
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                    <button type="button" onClick={() => setCustomRangeOpen(false)} style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textMuted, padding: "0 10px", cursor: "pointer", fontWeight: 700 }}>Hủy</button>
+                    <button type="button" onClick={handleCustomRangeApply} style={{ height: 30, borderRadius: 8, border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary, padding: "0 11px", cursor: "pointer", fontWeight: 800 }}>Áp dụng</button>
+                  </div>
                 </div>
               ) : null}
             </div>
 
+            {rangeBusy && rangeController.state.pendingRange ? (
+              <span
+                role="status"
+                style={{
+                  height: 30,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  borderRadius: 999,
+                  border: `1px solid ${C.primary}55`,
+                  background: C.primaryBg,
+                  color: C.primary,
+                  padding: "0 9px",
+                  fontSize: "0.62rem",
+                  fontWeight: 800,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ width: 9, height: 9, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                {formatChartRangeLoadingLabel(
+                  rangeController.state.pendingRange,
+                  rangeController.state.status === "refreshing",
+                )}
+              </span>
+            ) : rangeController.state.status === "error" ? (
+              <span role="alert" title={rangeController.state.error ?? undefined} style={{ color: C.danger, fontSize: "0.62rem", fontWeight: 700 }}>
+                Không tải được khoảng mới; đang giữ dữ liệu hiện tại.
+              </span>
+            ) : null}
+
             {hasYAxisZoom ? (
               <button
+                className="dc-chart-control-button"
                 type="button"
                 onClick={handleResetYAxisZoom}
                 title="Reset zoom trục Y"
@@ -3964,6 +4039,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             ) : null}
 
             <button
+              className="dc-chart-control-button"
               type="button"
               onClick={toggleVisualizeSidebar}
               aria-pressed={visualizeOpen ? "true" : "false"}
@@ -3992,6 +4068,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             </button>
 
             <button
+              className="dc-chart-control-button"
               type="button"
               disabled={trendAtLatest}
               onClick={handleResetTrendViewToLatest}
@@ -4004,6 +4081,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 color: trendAtLatest ? C.textMuted : C.primary,
                 fontSize: "0.66rem",
                 fontWeight: 700,
+                display: selectedRange.kind === "relative" ? "inline-flex" : "none",
                 cursor: trendAtLatest ? "default" : "pointer",
                 opacity: trendAtLatest ? 0.7 : 1,
               }}
@@ -4225,213 +4303,64 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               gap: modalLayout.topGridGap,
               marginBottom: modalLayout.sectionGap,
               alignItems: "stretch",
+              opacity: rangeBusy && telemetryPoints.length > 0 ? 0.78 : 1,
+              transition: "opacity 150ms ease",
             }}
           >
-            <ChartSection
-              title="Đồ thị nhiệt độ (°C)"
-              icon={<Thermometer size={13} strokeWidth={2} />}
-              C={C}
-              titleGap={modalLayout.chartTitleGap}
-              cardPadding={modalLayout.chartCardPadding}
-            >
-              {showInitialLoading ? (
-                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : (
-                <div onContextMenu={handleTelemetryChartUnpin}>
-                  <TelemetryTrendChart
-                    data={tempDisplayData}
-                    hoverPoints={tempDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                    series={[
-                      {
-                        key: "temp",
-                        name: "Nhiệt độ",
-                        color: C.primary,
-                        strokeWidth: 2,
-                        latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
-                      },
-                    ]}
-                    statusBands={displayTrendStatusBands}
-                    missingDataBands={trendMissingDataBands}
-                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
-                    yDomain={tempDomain}
-                    hoverTarget={trendHoverTarget}
-                    pinnedTarget={spectrumPinnedTarget}
-                    playheadTimestampMs={playbackCursorTs}
-                    gridColor={gridColor}
-                    axisLabelColor={chartTextStyle.fill}
-                    C={C}
-                    height={modalLayout.chartHeight}
-                    showLegend
-                    panActive={trendPanning}
-                    canPanOlder={trendCanPanOlder}
-                    canPanNewer={trendCanPanNewer}
-                    onHoverTarget={handleTelemetryChartHover}
-                    onPinTarget={handleTelemetryChartPin}
-                    onViewportZoom={handleTrendViewportZoom}
-                    onViewportPanChange={handleTrendViewportPanChange}
-                    onViewportPanStateChange={handleTrendPanStateChange}
-                    onLeave={handleTelemetryChartLeave}
-                  />
-                </div>
-              )}
-            </ChartSection>
-
-            <ChartSection
-              title="Đồ thị gia tốc (m/s²)"
-              icon={<Activity size={13} strokeWidth={2} />}
-              C={C}
-              titleGap={modalLayout.chartTitleGap}
-              cardPadding={modalLayout.chartCardPadding}
-            >
-              {showInitialLoading ? (
-                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : (
-                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
-                  <TelemetryTrendChart
-                    data={accelDisplayData}
-                    hoverPoints={accelDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                    series={[
-                      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-                      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-                      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
-                    ]}
-                    statusBands={displayTrendStatusBands}
-                    missingDataBands={trendMissingDataBands}
-                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
-                    yDomain={accelTrendYDomain}
-                    hoverTarget={trendHoverTarget}
-                    pinnedTarget={spectrumPinnedTarget}
-                    playheadTimestampMs={playbackCursorTs}
-                    gridColor={gridColor}
-                    axisLabelColor={chartTextStyle.fill}
-                    C={C}
-                    height={modalLayout.chartHeight}
-                    showLegend
-                    panActive={trendPanning}
-                    canPanOlder={trendCanPanOlder}
-                    canPanNewer={trendCanPanNewer}
-                    onHoverTarget={handleTelemetryChartHover}
-                    onPinTarget={handleTelemetryChartPin}
-                    onViewportZoom={handleTrendViewportZoom}
-                    onYAxisZoom={handleAccelYAxisZoom}
-                    onViewportPanChange={handleTrendViewportPanChange}
-                    onViewportPanStateChange={handleTrendPanStateChange}
-                    onLeave={handleTelemetryChartLeave}
-                  />
-                  {!chartHasTelemetry ? (
-                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.74rem", pointerEvents: "none", padding: "0 12px", boxSizing: "border-box", maxWidth: "100%", textAlign: "center", overflow: "hidden" }}>
-                      <span style={{ display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Chưa có dữ liệu</span>
-                    </div>
-                  ) : telemetryLoading ? (
-                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.10)", backdropFilter: "blur(1px)", color: C.textMuted, fontSize: "0.72rem", pointerEvents: "none" }}>Đang cập nhật...</div>
-                  ) : null}
-                </div>
-              )}
-            </ChartSection>
-
-            <ChartSection
-              title="Đồ thị vận tốc RMS (mm/s)"
-              icon={<Activity size={13} strokeWidth={2} />}
-              C={C}
-              titleGap={modalLayout.chartTitleGap}
-              cardPadding={modalLayout.chartCardPadding}
-            >
-              {showInitialLoading ? (
-                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : (
-                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
-                  <TelemetryTrendChart
-                    data={vrmsDisplayData}
-                    hoverPoints={vrmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                    series={[
-                      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-                      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-                      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
-                    ]}
-                    statusBands={displayTrendStatusBands}
-                    missingDataBands={trendMissingDataBands}
-                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
-                    yDomain={vrmsTrendYDomain}
-                    hoverTarget={trendHoverTarget}
-                    pinnedTarget={spectrumPinnedTarget}
-                    playheadTimestampMs={playbackCursorTs}
-                    gridColor={gridColor}
-                    axisLabelColor={chartTextStyle.fill}
-                    C={C}
-                    height={modalLayout.chartHeight}
-                    showLegend
-                    panActive={trendPanning}
-                    canPanOlder={trendCanPanOlder}
-                    canPanNewer={trendCanPanNewer}
-                    onHoverTarget={handleTelemetryChartHover}
-                    onPinTarget={handleTelemetryChartPin}
-                    onViewportZoom={handleTrendViewportZoom}
-                    onYAxisZoom={handleVrmsYAxisZoom}
-                    onViewportPanChange={handleTrendViewportPanChange}
-                    onViewportPanStateChange={handleTrendPanStateChange}
-                    onLeave={handleTelemetryChartLeave}
-                  />
-                </div>
-              )}
-            </ChartSection>
-
-            <ChartSection
-              title="Đồ thị biên độ RMS (mm)"
-              icon={<Activity size={13} strokeWidth={2} />}
-              C={C}
-              titleGap={modalLayout.chartTitleGap}
-              cardPadding={modalLayout.chartCardPadding}
-            >
-              {showInitialLoading ? (
-                <div style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
-                  <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
-                  <div>Đang tải dữ liệu lịch sử...</div>
-                </div>
-              ) : (
-                <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
-                  <TelemetryTrendChart
-                    data={drmsDisplayData}
-                    hoverPoints={drmsDisplayData.map((point) => ({ ts: point.ts, telemetryUuid: point.telemetryUuid }))}
-                    series={[
-                      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-                      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-                      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
-                    ]}
-                    statusBands={displayTrendStatusBands}
-                    missingDataBands={trendMissingDataBands}
-                    timeDomain={[trendVisibleWindow.startMs, trendVisibleWindow.endMs]}
-                    yDomain={drmsTrendYDomain}
-                    hoverTarget={trendHoverTarget}
-                    pinnedTarget={spectrumPinnedTarget}
-                    playheadTimestampMs={playbackCursorTs}
-                    gridColor={gridColor}
-                    axisLabelColor={chartTextStyle.fill}
-                    C={C}
-                    height={modalLayout.chartHeight}
-                    showLegend
-                    panActive={trendPanning}
-                    canPanOlder={trendCanPanOlder}
-                    canPanNewer={trendCanPanNewer}
-                    onHoverTarget={handleTelemetryChartHover}
-                    onPinTarget={handleTelemetryChartPin}
-                    onViewportZoom={handleTrendViewportZoom}
-                    onYAxisZoom={handleDrmsYAxisZoom}
-                    onViewportPanChange={handleTrendViewportPanChange}
-                    onViewportPanStateChange={handleTrendPanStateChange}
-                    onLeave={handleTelemetryChartLeave}
-                  />
-                </div>
-              )}
-            </ChartSection>
+            {trendCharts.map((chart) => (
+              <ChartSection
+                key={chart.key}
+                title={chart.title}
+                icon={chart.icon}
+                C={C}
+                titleGap={modalLayout.chartTitleGap}
+                cardPadding={modalLayout.chartCardPadding}
+              >
+                {showInitialLoading ? (
+                  <div className="dc-chart-loading-state" style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                    <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
+                    <div>Đang tải dữ liệu lịch sử...</div>
+                  </div>
+                ) : (
+                  <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
+                    <TelemetryTrendChart
+                      data={visibleTelemetryData}
+                      hoverPoints={visibleTelemetryHoverPoints}
+                      series={chart.series}
+                      statusBands={displayTrendStatusBands}
+                      missingDataBands={trendMissingDataBands}
+                      timeDomain={trendTimeDomain}
+                      yDomain={chart.yDomain}
+                      hoverTarget={trendHoverTarget}
+                      pinnedTarget={spectrumPinnedTarget}
+                      playheadTimestampMs={playbackCursorTs}
+                      gridColor={gridColor}
+                      axisLabelColor={chartTextStyle.fill}
+                      C={C}
+                      height={modalLayout.chartHeight}
+                      showLegend
+                      panActive={trendPanning}
+                      canPanOlder={trendCanPanOlder}
+                      canPanNewer={trendCanPanNewer}
+                      onHoverTarget={handleTelemetryChartHover}
+                      onPinTarget={handleTelemetryChartPin}
+                      onViewportZoom={handleTrendViewportZoom}
+                      onYAxisZoom={chart.onYAxisZoom}
+                      onViewportPanChange={handleTrendViewportPanChange}
+                      onViewportPanStateChange={handleTrendPanStateChange}
+                      onLeave={handleTelemetryChartLeave}
+                    />
+                    {chart.showTelemetryStatus && !chartHasTelemetry ? (
+                      <div className="dc-chart-empty-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.74rem", pointerEvents: "none", padding: "0 12px", boxSizing: "border-box", maxWidth: "100%", textAlign: "center", overflow: "hidden" }}>
+                        <span style={{ display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Chưa có dữ liệu</span>
+                      </div>
+                    ) : chart.showTelemetryStatus && rangeBusy ? (
+                      <div className="dc-chart-loading-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.10)", backdropFilter: "blur(1px)", color: C.textMuted, fontSize: "0.72rem", pointerEvents: "none" }}>Đang cập nhật...</div>
+                    ) : null}
+                  </div>
+                )}
+              </ChartSection>
+            ))}
           </div>
 
           {/* Bottom row: FFT axes in one row */}
@@ -4448,8 +4377,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             >
               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", minWidth: 0 }}>
                 <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
-                <span style={{ color: C.textBright, fontSize: "0.74rem", fontWeight: 700 }}>Phổ tần số FFT</span>
+                <span className="dc-fft-section-title" style={{ color: C.textBright, fontSize: "0.74rem", fontWeight: 700 }}>Phổ tần số FFT</span>
                 <button
+                  className="dc-chart-control-button"
                   type="button"
                   onClick={() => {
                     setPositionAxisRenameDrafts(motorAxisLabels);
@@ -4491,6 +4421,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               </div>
               {hoverTelemetrySnapshot ? (
                 <span
+                  className="dc-fft-hover-summary"
                   style={{
                     maxWidth: "48%",
                     color: C.textMuted,
@@ -4553,11 +4484,31 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   }}
                 >
                   <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
-                  <span style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Toàn cảnh dữ liệu đã tải</span>
-                  <label
-                    title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
+                  <span className="dc-loaded-data-title" style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Toàn cảnh dữ liệu đã tải</span>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedRangeOpen((open) => !open)}
+                    aria-expanded={advancedRangeOpen}
                     style={{
                       marginLeft: "auto",
+                      height: 22,
+                      borderRadius: 6,
+                      border: `1px solid ${advancedRangeOpen ? C.primary : C.border}`,
+                      background: advancedRangeOpen ? C.primaryBg : C.surface,
+                      color: advancedRangeOpen ? C.primary : C.textMuted,
+                      padding: "0 7px",
+                      cursor: "pointer",
+                      fontSize: "0.56rem",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Nâng cao
+                  </button>
+                  {advancedRangeOpen ? (
+                  <label
+                    className="dc-chart-resolution-control"
+                    title={`Khoảng thời gian mà mỗi điểm trên chart đại diện. Hiện tại: ${telemetryStepLabel}`}
+                    style={{
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 4,
@@ -4612,6 +4563,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       ))}
                     </select>
                   </label>
+                  ) : null}
                 </div>
                 <div
                   style={{
@@ -4625,7 +4577,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   }}
                 >
                   <TrendOverviewBrush
-                    rows={timelineTelemetryData}
+                    rows={overviewTelemetryData}
                     statusBands={overviewTrendStatusBands}
                     missingDataBands={overviewMissingDataBands}
                     selectedStartTs={trendOverviewDisplayWindow.startMs}

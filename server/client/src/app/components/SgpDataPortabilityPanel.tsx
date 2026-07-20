@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 
-export type SgpPortabilityMode = "export" | "import";
+type SgpPortabilityMode = "export" | "import";
 type Status = "idle" | "loading" | "success" | "error";
 type Preview = {
   manifest?: Record<string, unknown>;

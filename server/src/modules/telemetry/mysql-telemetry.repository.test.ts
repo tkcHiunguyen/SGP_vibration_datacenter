@@ -225,6 +225,10 @@ test('bucketed history aggregates in SQL without the default raw limit', async (
   assert.equal(result.totalMatched, 8619);
   assert.equal(result.bucketMs, 60_000);
   assert.equal(result.truncated, false);
+  assert.equal(result.complete, true);
+  assert.equal(result.sampleCount, 2);
+  assert.equal(result.from, '2026-04-29T17:00:00.000Z');
+  assert.equal(result.to, '2026-04-30T16:59:59.999Z');
   assert.equal(result.items.length, 2);
   assert.equal(result.items[0]?.receivedAt, '2026-04-29T17:00:05.000Z');
   assert.equal(result.items[0]?.bucketStartedAt, '2026-04-29T17:00:00.000Z');
@@ -262,6 +266,8 @@ test('raw history keeps the default latest-point limit', async () => {
 
   assert.equal(result.items.length, 1);
   assert.equal(result.truncated, true);
+  assert.equal(result.complete, false);
+  assert.equal(result.sampleCount, 1);
   const rawCall = mysql.calls.find((call) => call.sql.includes('ORDER BY received_at DESC'));
   assert.ok(rawCall);
   assert.match(rawCall.sql, /LIMIT \?/);

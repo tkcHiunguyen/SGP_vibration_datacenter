@@ -18,6 +18,7 @@ type DetailTileResolution = {
 
 export type TelemetryDetailTileRequest = {
   cacheKey: string;
+  rangeKey: string;
   mode: TelemetryDetailMode;
   fromMs: number;
   toExclusiveMs: number;
@@ -26,8 +27,9 @@ export type TelemetryDetailTileRequest = {
   limit?: number;
 };
 
-export type BuildTelemetryDetailTileRequestsOptions = {
+type BuildTelemetryDetailTileRequestsOptions = {
   deviceId: string;
+  rangeKey?: string;
   visibleStartMs: number;
   visibleEndMs: number;
   loadedStartMs: number;
@@ -75,10 +77,11 @@ export function getTelemetryDetailMode(visibleWindowMs: number, loadedWindowMs: 
   return getDetailTileResolution(visibleWindowMs, loadedWindowMs)?.mode ?? null;
 }
 
-function createTileCacheKey(deviceId: string, resolution: DetailTileResolution, fromMs: number, toExclusiveMs: number): string {
+function createTileCacheKey(deviceId: string, resolution: DetailTileResolution, fromMs: number, toExclusiveMs: number, rangeKey?: string): string {
   return [
     "telemetry-detail-tile-v1",
     deviceId,
+    rangeKey?.trim() || "unscoped",
     resolution.bucketMs ? `bucket-${resolution.bucketMs}` : "raw",
     Math.floor(fromMs),
     Math.floor(toExclusiveMs),
@@ -87,6 +90,7 @@ function createTileCacheKey(deviceId: string, resolution: DetailTileResolution, 
 
 export function buildTelemetryDetailTileRequests({
   deviceId,
+  rangeKey,
   visibleStartMs,
   visibleEndMs,
   loadedStartMs,
@@ -134,13 +138,14 @@ export function buildTelemetryDetailTileRequests({
       continue;
     }
 
-    const cacheKey = createTileCacheKey(safeDeviceId, resolution, fromMs, toExclusiveMs);
+    const cacheKey = createTileCacheKey(safeDeviceId, resolution, fromMs, toExclusiveMs, rangeKey);
     if (cachedKeys.has(cacheKey)) {
       continue;
     }
 
     tiles.push({
       cacheKey,
+      rangeKey: rangeKey?.trim() || "unscoped",
       mode: resolution.mode,
       fromMs,
       toExclusiveMs,

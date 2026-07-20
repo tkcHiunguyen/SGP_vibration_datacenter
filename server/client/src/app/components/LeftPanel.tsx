@@ -61,6 +61,7 @@ export function LeftPanel({
 
   return (
     <aside
+      className="dc-left-panel"
       aria-label="Điều hướng chính"
       style={{
         width: "100%",
@@ -73,29 +74,30 @@ export function LeftPanel({
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+      <div className="dc-sidebar-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
         {[
           { label: "Tổng", value: totalSensors, color: C.primary, icon: <Activity size={12} strokeWidth={2.2} /> },
           { label: "Online", value: onlineSensors, color: C.success, icon: <Wifi size={12} strokeWidth={2.2} /> },
           { label: "Offline", value: offlineSensors, color: C.textMuted, icon: <WifiOff size={12} strokeWidth={2.2} /> },
           { label: "Cảnh báo", value: alertCount, color: C.danger, icon: <AlertTriangle size={12} strokeWidth={2.2} /> },
         ].map((stat) => (
-          <div key={stat.label} style={{ border: `1px solid ${C.cardBorder}`, background: C.card, borderRadius: 10, padding: "7px 8px", minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, color: stat.color, fontSize: "0.62rem", fontWeight: 760, textTransform: "uppercase" }}>
+          <div className="dc-sidebar-stat-card" key={stat.label} style={{ border: `1px solid ${C.cardBorder}`, background: C.card, borderRadius: 10, padding: "7px 8px", minWidth: 0 }}>
+            <div className="dc-sidebar-stat-label" style={{ display: "flex", alignItems: "center", gap: 5, color: stat.color, fontSize: "0.62rem", fontWeight: 760, textTransform: "uppercase" }}>
               {stat.icon}<span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stat.label}</span>
             </div>
-            <div style={{ marginTop: 4, color: C.textBright, fontSize: "1.05rem", fontWeight: 820, lineHeight: 1 }}>{stat.value}</div>
+            <div className="dc-sidebar-stat-value" style={{ marginTop: 4, color: C.textBright, fontSize: "1.05rem", fontWeight: 820, lineHeight: 1 }}>{stat.value}</div>
           </div>
         ))}
       </div>
 
-      <nav style={{ display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 }}>
+      <nav className="dc-sidebar-nav" style={{ display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 }}>
         {navItems.map((label) => {
           const isActive = activeNav === label;
           const isPinned = pinnedSet.has(label);
           const isHovered = hoveredItem === label;
           return (
             <div
+              className="dc-sidebar-nav-item"
               key={label}
               role="button"
               aria-current={isActive ? "page" : undefined}
@@ -151,12 +153,13 @@ export function LeftPanel({
               </div>
 
               <div style={{ minWidth: 0, display: "flex", alignItems: "center" }}>
-                <span style={{ minWidth: 0, color: isActive ? C.textBright : "inherit", fontSize: "0.74rem", fontWeight: isActive ? 760 : 620, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span className="dc-sidebar-nav-label" style={{ minWidth: 0, color: isActive ? C.textBright : "inherit", fontSize: "0.74rem", fontWeight: isActive ? 760 : 620, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {label}
                 </span>
               </div>
 
               <button
+                className="dc-sidebar-pin-button"
                 type="button"
                 title={isPinned ? "Bỏ ghim" : "Ghim mục này"}
                 aria-label={`${isPinned ? "Bỏ ghim" : "Ghim"} ${label}`}

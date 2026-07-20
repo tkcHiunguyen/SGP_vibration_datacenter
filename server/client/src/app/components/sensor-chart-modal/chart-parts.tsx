@@ -7,36 +7,31 @@ import { scaleLinear, scaleTime } from "@visx/scale";
 import { LinePath } from "@visx/shape";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, SpectrumAxis } from "../../data/sensors";
+import { useDisplayMode } from "../../context/DisplayModeContext";
 
 export const GRAVITY_MS2 = 9.80665;
-export const ACCEL_LIMIT_MS2 = 160;
-export const ACCEL_LIMIT_MIN_MS2 = 0.1 * GRAVITY_MS2;
-export const ACCEL_LIMIT_MAX_MS2 = 160;
-export const TEMP_HALF_SPAN_MIN = 0.25;
-export const TEMP_HALF_SPAN_MAX = 80;
+const ACCEL_LIMIT_MS2 = 160;
+const ACCEL_LIMIT_MIN_MS2 = 0.1 * GRAVITY_MS2;
+const ACCEL_LIMIT_MAX_MS2 = 160;
 export const TREND_MIN_RENDER_POINTS = 240;
-export const TREND_MAX_RENDER_POINTS = 2200;
+export const TREND_MAX_RENDER_POINTS = 2000;
 export const TREND_TILE_PIXEL_WIDTH = 12;
 export const TREND_ZOOM_STEP = 1.18;
 export const TREND_MIN_VIEW_WINDOW_MS = 60 * 1000;
-export const TREND_PAN_CLICK_SUPPRESS_MS = 120;
+const TREND_PAN_CLICK_SUPPRESS_MS = 120;
 export const TREND_LATEST_EPSILON_MS = 5_000;
 export const TREND_OVERVIEW_MAX_POINTS = 260;
 export const TREND_MAX_GAP_STEP_RATIO = 1 / 120;
-export const TREND_BUTTON_PAN_CLICK_RATIO = 0.12;
-export const TREND_BUTTON_PAN_FRAME_MS = 34;
-export const TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND = 0.16;
-export const TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND = 1.05;
-export const TREND_BUTTON_PAN_ACCELERATION_MS = 2_400;
-export const ACCEL_RMS_MIN_WINDOW_MS = 10 * 1000;
-export const ACCEL_RMS_TARGET_SAMPLES = 12;
-export const ACCEL_RMS_MAX_WINDOW_MS = 5 * 60 * 1000;
+const TREND_BUTTON_PAN_CLICK_RATIO = 0.12;
+const TREND_BUTTON_PAN_FRAME_MS = 34;
+const TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND = 0.16;
+const TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND = 1.05;
+const TREND_BUTTON_PAN_ACCELERATION_MS = 2_400;
 export const DEFAULT_SPECTRUM_SAMPLE_RATE_HZ = 1000;
 export const DEFAULT_SPECTRUM_SOURCE_SAMPLES = 1024;
 export const SPECTRUM_RENDER_BARS = 512;
-export const SPECTRUM_HOVER_FETCH_DEBOUNCE_MS = 500;
 export const SPECTRUM_HOVER_FETCH_MIN_DELTA_MS = 80;
-export const SPECTRUM_RMS_Y_MAX_MS2 = 160;
+const SPECTRUM_RMS_Y_MAX_MS2 = 160;
 export const SPECTRUM_RMS_Y_MIN_MS2 = 0.6;
 export const SPECTRUM_LOADING_LABEL = "Đang tải dữ liệu";
 export const SPECTRUM_NO_DATA_LABEL = "Không có dữ liệu";
@@ -87,7 +82,7 @@ export type ChartModalLayout = {
   modalMaxHeight: string;
 };
 
-export function getChartModalLayout(containerWidth?: number, containerHeight?: number): ChartModalLayout {
+export function getChartModalLayout(containerWidth?: number, containerHeight?: number, wallboard = false): ChartModalLayout {
   const viewportWidth = containerWidth ?? (typeof window === "undefined" ? 1440 : window.innerWidth);
   const viewportHeight = containerHeight ?? (typeof window === "undefined" ? 900 : window.innerHeight);
   const scaledDesktopHeight = viewportHeight < 1120;
@@ -127,36 +122,42 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47),
-    overviewHeight: baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07),
-    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15),
-    topGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
-    sectionGap: tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
-    chartTitleGap: tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,
-    chartCardPadding: tightHeight
+    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47) + (wallboard ? 72 : 0),
+    overviewHeight: baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07) + (wallboard ? 24 : 0),
+    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15) + (wallboard ? 56 : 0),
+    topGridGap: wallboard ? 18 : tightHeight ? 4 : compactHeight ? 5 : 5,
+    sectionGap: wallboard ? 20 : tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
+    chartTitleGap: wallboard ? 10 : tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,
+    chartCardPadding: wallboard
+      ? "18px 20px 14px"
+      : tightHeight
       ? "3px 5px 2px"
       : compactHeight
         ? "4px 5px 2px"
         : scaledDesktopHeight
           ? "4px 6px 2px"
           : "6px 7px 3px",
-    overviewCardPadding: tightHeight
+    overviewCardPadding: wallboard
+      ? "18px 22px 16px"
+      : tightHeight
       ? "3px 6px 5px"
       : compactHeight
         ? "4px 7px 5px"
         : scaledDesktopHeight
           ? "4px 8px 5px"
           : "6px 9px 5px",
-    fftHeaderGap: tightHeight ? 2 : compactHeight ? 3 : 3,
-    fftGridGap: tightHeight ? 4 : compactHeight ? 5 : 5,
-    fftCardPadding: tightHeight
+    fftHeaderGap: wallboard ? 12 : tightHeight ? 2 : compactHeight ? 3 : 3,
+    fftGridGap: wallboard ? 18 : tightHeight ? 4 : compactHeight ? 5 : 5,
+    fftCardPadding: wallboard
+      ? "18px 18px 14px"
+      : tightHeight
       ? "4px 4px 2px"
       : compactHeight
         ? "5px 4px 2px"
         : scaledDesktopHeight
           ? "5px 5px 2px"
           : "6px 5px 3px",
-    fftAxisFooterHeight: tightHeight ? 5 : 6,
+    fftAxisFooterHeight: wallboard ? 24 : tightHeight ? 5 : 6,
     topGridColumns: viewportWidth < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))",
     spectrumGridColumns:
       viewportWidth < 900
@@ -164,14 +165,18 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
         : compactWidth
           ? "repeat(2, minmax(0, 1fr))"
           : "repeat(3, minmax(0, 1fr))",
-    headerPadding: tightHeight
+    headerPadding: wallboard
+      ? "18px 24px 16px"
+      : tightHeight
       ? "4px 9px 3px"
       : compactHeight
         ? "5px 9px 4px"
         : scaledDesktopHeight
           ? "5px 10px 4px"
           : "7px 11px 5px",
-    contentPadding: tightHeight
+    contentPadding: wallboard
+      ? "20px 24px 12px"
+      : tightHeight
       ? "4px 8px 1px"
       : compactHeight
         ? "5px 9px 1px"
@@ -187,7 +192,7 @@ export function stopWheelScroll(event: React.WheelEvent<HTMLElement | SVGElement
   event.stopPropagation();
 }
 
-export function getPrimaryWheelDelta(event: React.WheelEvent<HTMLElement | SVGElement>): number {
+function getPrimaryWheelDelta(event: React.WheelEvent<HTMLElement | SVGElement>): number {
   const { deltaX, deltaY } = event;
   return Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
 }
@@ -229,7 +234,6 @@ export const TELEMETRY_HISTORY_PRESETS: Array<{
   { key: "1m", label: "1 tháng", windowMs: 30 * 24 * 60 * 60 * 1000 },
 ];
 
-const TELEMETRY_HISTORY_BUCKET_TARGET_POINTS = 2_400;
 export const TELEMETRY_HISTORY_BUCKET_STEPS_MS = [
   10_000,
   15_000,
@@ -242,23 +246,6 @@ export const TELEMETRY_HISTORY_BUCKET_STEPS_MS = [
   1_800_000,
   3_600_000,
 ] as const;
-
-export function getTelemetryHistoryBucketMs(windowMs: number): number {
-  const safeWindowMs = Math.max(1, Math.floor(windowMs));
-  if (safeWindowMs >= 30 * DAY_IN_MS) {
-    return 60 * 60 * 1000;
-  }
-  const targetStepMs = Math.ceil(safeWindowMs / TELEMETRY_HISTORY_BUCKET_TARGET_POINTS);
-  return TELEMETRY_HISTORY_BUCKET_STEPS_MS.find((stepMs) => stepMs >= targetStepMs)
-    ?? TELEMETRY_HISTORY_BUCKET_STEPS_MS[TELEMETRY_HISTORY_BUCKET_STEPS_MS.length - 1];
-}
-
-export function getDefaultTrendViewWindowMs(
-  _presetKey: HistoryPresetKey | null | undefined,
-  loadedWindowMs: number,
-): number {
-  return Math.max(1, loadedWindowMs);
-}
 
 export function asFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -462,19 +449,6 @@ export function formatFrequencyHz(input: unknown): string {
   return `${input.toFixed(3)} Hz`;
 }
 
-export function normalizeSpectrumUnit(input: unknown): string {
-  if (typeof input !== "string") {
-    return "m/s²";
-  }
-
-  const normalized = input.trim().toLowerCase().replace(/\s+/g, "");
-  if (normalized === "m/s2" || normalized === "m/s^2" || normalized === "m/s²") {
-    return "m/s²";
-  }
-
-  return input.trim() || "m/s²";
-}
-
 export function formatPeakSummary(frequencyHz?: number, amplitude?: number, unit = "m/s²"): string {
   if (
     typeof frequencyHz !== "number" ||
@@ -512,13 +486,6 @@ export function formatByteSize(value: number | undefined): string {
   return `${fixed} ${units[unitIndex]}`;
 }
 
-export function clampTempHalfSpan(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 5;
-  }
-  return Math.max(TEMP_HALF_SPAN_MIN, Math.min(TEMP_HALF_SPAN_MAX, Number(value.toFixed(3))));
-}
-
 export function clampAccelAmplitudeLimit(value: number): number {
   if (!Number.isFinite(value)) {
     return ACCEL_LIMIT_MS2;
@@ -531,17 +498,6 @@ export function formatDateInputValue(value: Date): string {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-export function formatDateInputLabel(value: string): string {
-  if (!value) {
-    return "Chọn ngày";
-  }
-  const parsed = Date.parse(`${value}T00:00:00`);
-  if (!Number.isFinite(parsed)) {
-    return "Chọn ngày";
-  }
-  return new Date(parsed).toLocaleDateString("vi-VN");
 }
 
 export function parseDateInputValue(value: string): Date | null {
@@ -718,9 +674,6 @@ export type TrendViewport = {
   endMs: number;
 };
 
-export type AccelTrendMode = "instant" | "rms";
-export const DEFAULT_ACCEL_TREND_MODE: AccelTrendMode = "rms";
-
 export type HoverTelemetrySnapshot = {
   ts: number;
   telemetryUuid?: string;
@@ -817,7 +770,7 @@ export type TrendSeriesConfig = {
   latestLabelFormatter?: (value: number) => string | undefined;
 };
 
-export type TrendGapSegment = {
+type TrendGapSegment = {
   from: number;
   to: number;
 };
@@ -888,7 +841,7 @@ function findMissingDataBandAt(missingDataBands: TrendGapSegment[], timestampMs:
   }) ?? null;
 }
 
-export type ChartPanState = {
+type ChartPanState = {
   startClientX: number;
   startDomainStartMs: number;
   startDomainEndMs: number;
@@ -896,7 +849,7 @@ export type ChartPanState = {
   moved: boolean;
 };
 
-export type ButtonPanState = {
+type ButtonPanState = {
   direction: -1 | 1;
   startedAt: number;
   lastTickAt: number;
@@ -905,6 +858,8 @@ export type ButtonPanState = {
 export type DenseTelemetryRow = {
   ts: number;
   telemetryUuid?: string;
+  coverageStartMs?: number;
+  coverageEndMs?: number;
   temp: number | null;
   ax: number | null;
   ay: number | null;
@@ -916,61 +871,6 @@ export type DenseTelemetryRow = {
   drmsY: number | null;
   drmsZ: number | null;
 };
-
-export function buildRollingRmsAccelRows(
-  rows: DenseTelemetryRow[],
-  windowMs: number,
-): Array<{ ts: number; telemetryUuid?: string; ax: number | null; ay: number | null; az: number | null }> {
-  const safeWindowMs = Math.max(1, windowMs);
-  const axes = ["ax", "ay", "az"] as const;
-  const state: Record<
-    (typeof axes)[number],
-    { samples: Array<{ ts: number; value: number }>; sumSquares: number }
-  > = {
-    ax: { samples: [], sumSquares: 0 },
-    ay: { samples: [], sumSquares: 0 },
-    az: { samples: [], sumSquares: 0 },
-  };
-
-  return rows.map((row) => {
-    const next: { ts: number; telemetryUuid?: string; ax: number | null; ay: number | null; az: number | null } = {
-      ts: row.ts,
-      telemetryUuid: row.telemetryUuid,
-      ax: null,
-      ay: null,
-      az: null,
-    };
-
-    for (const axis of axes) {
-      const axisState = state[axis];
-      const rawValue = row[axis];
-      if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
-        axisState.samples = [];
-        axisState.sumSquares = 0;
-        next[axis] = null;
-        continue;
-      }
-
-      axisState.samples.push({ ts: row.ts, value: rawValue });
-      axisState.sumSquares += rawValue * rawValue;
-
-      const cutoffTs = row.ts - safeWindowMs;
-      while (axisState.samples.length > 0 && (axisState.samples[0]?.ts ?? row.ts) < cutoffTs) {
-        const removed = axisState.samples.shift();
-        if (removed) {
-          axisState.sumSquares -= removed.value * removed.value;
-        }
-      }
-
-      const sampleCount = axisState.samples.length;
-      next[axis] = sampleCount > 0
-        ? Number(Math.sqrt(Math.max(0, axisState.sumSquares) / sampleCount).toFixed(4))
-        : null;
-    }
-
-    return next;
-  });
-}
 
 export function clampTrendViewport(
   requestedViewport: TrendViewport,
@@ -1139,6 +1039,8 @@ export function buildOverviewTelemetryRows(rows: DenseTelemetryRow[], maxPoints 
     .map((row) => ({
       ts: row.ts,
       telemetryUuid: typeof row.telemetryUuid === "string" ? row.telemetryUuid : undefined,
+      coverageStartMs: typeof row.coverageStartMs === "number" ? row.coverageStartMs : undefined,
+      coverageEndMs: typeof row.coverageEndMs === "number" ? row.coverageEndMs : undefined,
       temp: typeof row.temp === "number" ? row.temp : null,
       ax: typeof row.ax === "number" ? row.ax : null,
       ay: typeof row.ay === "number" ? row.ay : null,
@@ -1219,7 +1121,7 @@ export function parseSpectrumHoverTarget(state: unknown): SpectrumHoverTarget | 
   return { timestampMs, telemetryUuid };
 }
 
-export function TrendOverviewBrush({
+export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
   rows,
   statusBands,
   missingDataBands = [],
@@ -1250,6 +1152,7 @@ export function TrendOverviewBrush({
   minWindowMs?: number;
   onRangeCommit?: (startTs: number, endTs: number) => void;
 }) {
+  const { wallboard } = useDisplayMode();
   const wrapperRef = useRef<HTMLDivElement>(null);
   useNonPassiveWheelBlock(wrapperRef);
   const brushRef = useRef<BaseBrush | null>(null);
@@ -1258,7 +1161,12 @@ export function TrendOverviewBrush({
   const lastBrushRangeRef = useRef<{ startTs: number; endTs: number } | null>(null);
   const suppressBrushChangeRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
-  const margin = useMemo(() => ({ top: 2, right: 10, bottom: 16, left: 10 }), []);
+  const margin = useMemo(
+    () => wallboard
+      ? { top: 6, right: 18, bottom: 34, left: 18 }
+      : { top: 2, right: 10, bottom: 16, left: 10 },
+    [wallboard],
+  );
   const handleOverviewContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
   }, []);
@@ -1627,7 +1535,7 @@ export function TrendOverviewBrush({
                 width={xMax}
                 height={yMax}
                 initialBrushPosition={initialBrushPosition}
-                handleSize={10}
+                handleSize={wallboard ? 22 : 10}
                 brushDirection="horizontal"
                 resizeTriggerAreas={["left", "right"]}
                 useWindowMoveEvents
@@ -1679,7 +1587,7 @@ export function TrendOverviewBrush({
               return (
                 <g key={`overview-tick-${tick.getTime()}`} transform={`translate(${x},0)`}>
                   <line y1={height - 15} y2={height - 12} stroke={C.border} strokeWidth={0.8} />
-                  <text y={height - 7} fill={axisLabelColor} fontSize={7.5} textAnchor="middle">
+                  <text y={height - (wallboard ? 10 : 7)} fill={axisLabelColor} fontSize={wallboard ? 22 : 7.5} fontWeight={wallboard ? 700 : 400} textAnchor="middle">
                     {formatTrendAxisTime(tick.getTime(), firstTs, lastTs)}
                   </text>
                 </g>
@@ -1690,7 +1598,7 @@ export function TrendOverviewBrush({
       ) : null}
     </div>
   );
-}
+});
 
 type TelemetryTrendChartProps = {
   data: TrendRow[];
@@ -1726,7 +1634,7 @@ type TelemetryTrendChartProps = {
   onLeave?: () => void;
 };
 
-export function TelemetryTrendChart({
+export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   data,
   hoverPoints,
   series,
@@ -1753,6 +1661,7 @@ export function TelemetryTrendChart({
   onViewportPanStateChange,
   onLeave,
 }: TelemetryTrendChartProps) {
+  const { wallboard } = useDisplayMode();
   const wrapperRef = useRef<HTMLDivElement>(null);
   useNonPassiveWheelBlock(wrapperRef);
   const rawPlotClipId = useId();
@@ -1772,8 +1681,10 @@ export function TelemetryTrendChart({
   const activeHoverTarget = syncedHoverTarget ?? localHoverTarget;
 
   const margin = useMemo(
-    () => ({ left: 20, right: 8, top: showLegend ? 18 : 8, bottom: 18 }),
-    [showLegend],
+    () => wallboard
+      ? { left: 72, right: 24, top: showLegend ? 48 : 24, bottom: 44 }
+      : { left: 20, right: 8, top: showLegend ? 18 : 8, bottom: 18 },
+    [showLegend, wallboard],
   );
 
   useEffect(() => {
@@ -1881,9 +1792,11 @@ export function TelemetryTrendChart({
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
-  const timeAxisTickCount = Math.max(2, Math.min(6, Math.floor(innerWidth / 150)));
+  const timeAxisTickCount = Math.max(2, Math.min(6, Math.floor(innerWidth / (wallboard ? 320 : 150))));
   const legendItemWidth = showLegend && series.length > 0
-    ? Math.max(96, Math.min(176, Math.floor((innerWidth - 12) / series.length)))
+    ? wallboard
+      ? Math.max(220, Math.min(420, Math.floor((innerWidth - 24) / series.length)))
+      : Math.max(96, Math.min(176, Math.floor((innerWidth - 12) / series.length)))
     : 78;
 
   const domainMin = timeDomain?.[0] ?? (data.length > 0 ? data[0]?.ts ?? Date.now() : Date.now() - 1000);
@@ -2037,8 +1950,12 @@ export function TelemetryTrendChart({
     };
   }, [localPointerHover, visibleMissingDataBands]);
 
-  const tooltipEstimatedWidth = activeStatusTooltip || activeMissingDataTooltip ? 170 : 112;
-  const tooltipEstimatedHeight = activeStatusTooltip || activeMissingDataTooltip ? 104 : Math.max(58, 36 + hoverSeriesRows.length * 18);
+  const tooltipEstimatedWidth = wallboard
+    ? activeStatusTooltip || activeMissingDataTooltip ? 330 : 260
+    : activeStatusTooltip || activeMissingDataTooltip ? 170 : 112;
+  const tooltipEstimatedHeight = wallboard
+    ? activeStatusTooltip || activeMissingDataTooltip ? 210 : Math.max(126, 76 + hoverSeriesRows.length * 34)
+    : activeStatusTooltip || activeMissingDataTooltip ? 104 : Math.max(58, 36 + hoverSeriesRows.length * 18);
   const tooltipPlacement = useMemo(() => {
     const safeLeft = 8;
     const safeTop = 8;
@@ -2353,12 +2270,12 @@ export function TelemetryTrendChart({
                       stroke={stroke}
                       strokeWidth={0.8}
                     />
-                    {width >= 56 ? (
+                    {width >= (wallboard ? 140 : 56) ? (
                       <text
-                        x={Math.min(x1, x2) + 6}
-                        y={margin.top + 12}
+                        x={Math.min(x1, x2) + (wallboard ? 12 : 6)}
+                        y={margin.top + (wallboard ? 26 : 12)}
                         fill={isServerOffline ? '#b45309' : '#dc2626'}
-                        fontSize={9}
+                        fontSize={wallboard ? 22 : 9}
                         fontWeight={800}
                       >
                         {label}
@@ -2386,12 +2303,12 @@ export function TelemetryTrendChart({
                       stroke="rgba(96, 165, 250, 0.24)"
                       strokeWidth={0.8}
                     />
-                    {width >= 70 ? (
+                    {width >= (wallboard ? 160 : 70) ? (
                       <text
-                        x={Math.min(x1, x2) + 6}
-                        y={margin.top + 12}
+                        x={Math.min(x1, x2) + (wallboard ? 12 : 6)}
+                        y={margin.top + (wallboard ? 26 : 12)}
                         fill="#2563eb"
-                        fontSize={9}
+                        fontSize={wallboard ? 22 : 9}
                         fontWeight={800}
                       >
                         No data
@@ -2409,7 +2326,7 @@ export function TelemetryTrendChart({
                     x={(point) => xScale(new Date(point.ts))}
                     y={(point) => yScale(point.value)}
                     stroke={config.color}
-                    strokeWidth={config.strokeWidth ?? 1.8}
+                    strokeWidth={wallboard ? Math.max(3.4, config.strokeWidth ?? 1.8) : config.strokeWidth ?? 1.8}
                   />
                 )),
               )}
@@ -2423,9 +2340,9 @@ export function TelemetryTrendChart({
                 const latestLabel = config.latestLabelFormatter?.(latest.value);
                 return (
                   <g key={'latest-' + config.key}>
-                    <circle cx={cx} cy={cy} r={5} fill={config.color} stroke={C.surface} strokeWidth={2} />
+                    <circle cx={cx} cy={cy} r={wallboard ? 9 : 5} fill={config.color} stroke={C.surface} strokeWidth={wallboard ? 3 : 2} />
                     {latestLabel ? (
-                      <text x={cx} y={cy - 10} textAnchor="middle" fill={C.textBright} fontSize={10} fontWeight={700}>
+                      <text x={cx} y={cy - (wallboard ? 18 : 10)} textAnchor="middle" fill={C.textBright} fontSize={wallboard ? 24 : 10} fontWeight={800}>
                         {latestLabel}
                       </text>
                     ) : null}
@@ -2446,8 +2363,8 @@ export function TelemetryTrendChart({
                   />
                   <circle
                     cx={xScale(new Date(pinnedTarget.timestampMs))}
-                    cy={margin.top + 7}
-                    r={4}
+                    cy={margin.top + (wallboard ? 12 : 7)}
+                    r={wallboard ? 8 : 4}
                     fill="#f59e0b"
                     stroke={C.surface}
                     strokeWidth={1.5}
@@ -2470,7 +2387,7 @@ export function TelemetryTrendChart({
                       key={'hover-dot-' + row.key}
                       cx={xScale(new Date(activeHoverTarget.timestampMs))}
                       cy={yScale(row.value ?? 0)}
-                      r={4}
+                      r={wallboard ? 8 : 4}
                       fill={row.color}
                       stroke={C.surface}
                       strokeWidth={1.5}
@@ -2482,7 +2399,7 @@ export function TelemetryTrendChart({
               {playheadX !== null ? (
                 <g pointerEvents="none">
                   <line x1={playheadX} x2={playheadX} y1={margin.top} y2={margin.top + innerHeight} stroke={C.primary} strokeWidth={2.4} />
-                  <circle cx={playheadX} cy={margin.top + 7} r={4.5} fill={C.primary} stroke={C.surface} strokeWidth={1.5} />
+                  <circle cx={playheadX} cy={margin.top + (wallboard ? 12 : 7)} r={wallboard ? 8 : 4.5} fill={C.primary} stroke={C.surface} strokeWidth={wallboard ? 2.5 : 1.5} />
                 </g>
               ) : null}
             </g>
@@ -2495,7 +2412,8 @@ export function TelemetryTrendChart({
             tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 7,
+              fontSize: wallboard ? 22 : 7,
+              fontWeight: wallboard ? 700 : 400,
               textAnchor: 'end',
               dy: '0.33em',
               dx: '-0.05em',
@@ -2509,7 +2427,7 @@ export function TelemetryTrendChart({
             top={margin.top + innerHeight}
             numTicks={timeAxisTickCount}
             tickFormat={(value) => formatTrendAxisTime(Number(value), domainMin, domainMax)}
-            tickLabelProps={() => ({ fill: axisLabelColor, fontSize: 8, textAnchor: 'middle' })}
+            tickLabelProps={() => ({ fill: axisLabelColor, fontSize: wallboard ? 22 : 8, fontWeight: wallboard ? 700 : 400, textAnchor: 'middle' })}
             stroke={gridColor}
             tickStroke={gridColor}
           />
@@ -2518,8 +2436,8 @@ export function TelemetryTrendChart({
             <Group top={4} left={margin.left + 4}>
               {series.map((seriesConfig, index) => (
                 <g key={'legend-' + seriesConfig.key} transform={'translate(' + String(index * legendItemWidth) + ', 0)'}>
-                  <rect x={0} y={0} width={10} height={3} rx={2} fill={seriesConfig.color} />
-                  <text x={13} y={4} fill={C.textMuted} fontSize={10} fontWeight={600}>
+                  <rect x={0} y={wallboard ? 4 : 0} width={wallboard ? 24 : 10} height={wallboard ? 6 : 3} rx={3} fill={seriesConfig.color} />
+                  <text x={wallboard ? 34 : 13} y={wallboard ? 20 : 4} fill={C.textMuted} fontSize={wallboard ? 22 : 10} fontWeight={wallboard ? 750 : 600}>
                     {seriesConfig.name}
                   </text>
                 </g>
@@ -2560,9 +2478,9 @@ export function TelemetryTrendChart({
           style={{
             position: 'absolute',
             left: margin.left + 10,
-            top: margin.top + innerHeight / 2 - 17,
-            width: 34,
-            height: 34,
+            top: margin.top + innerHeight / 2 - (wallboard ? 28 : 17),
+            width: wallboard ? 56 : 34,
+            height: wallboard ? 56 : 34,
             padding: 0,
             appearance: 'none',
             borderRadius: 999,
@@ -2580,7 +2498,7 @@ export function TelemetryTrendChart({
             backdropFilter: 'blur(4px)',
           }}
         >
-          <ArrowLeft size={15} strokeWidth={2.4} />
+          <ArrowLeft size={wallboard ? 28 : 15} strokeWidth={2.4} />
         </button>
       ) : null}
 
@@ -2600,10 +2518,10 @@ export function TelemetryTrendChart({
           }}
           style={{
             position: 'absolute',
-            left: chartWidth - margin.right - 44,
-            top: margin.top + innerHeight / 2 - 17,
-            width: 34,
-            height: 34,
+            left: chartWidth - margin.right - (wallboard ? 66 : 44),
+            top: margin.top + innerHeight / 2 - (wallboard ? 28 : 17),
+            width: wallboard ? 56 : 34,
+            height: wallboard ? 56 : 34,
             padding: 0,
             appearance: 'none',
             borderRadius: 999,
@@ -2621,12 +2539,13 @@ export function TelemetryTrendChart({
             backdropFilter: 'blur(4px)',
           }}
         >
-          <ArrowRight size={15} strokeWidth={2.4} />
+          <ArrowRight size={wallboard ? 28 : 15} strokeWidth={2.4} />
         </button>
       ) : null}
 
       {activeStatusTooltip || activeMissingDataTooltip || activeHoverTarget ? (
         <div
+          className="dc-chart-tooltip"
           style={{
             position: 'absolute',
             left: tooltipPlacement.left,
@@ -2634,13 +2553,15 @@ export function TelemetryTrendChart({
             pointerEvents: 'none',
             background: C.surface,
             border: '1px solid ' + C.border,
-            borderRadius: 8,
-            padding: '7px 8px',
+            borderRadius: wallboard ? 14 : 8,
+            padding: wallboard ? '14px 16px' : '7px 8px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             color: C.textBright,
-            fontSize: '0.68rem',
+            fontSize: wallboard ? '24px' : '0.68rem',
             lineHeight: 1.35,
-            minWidth: activeStatusTooltip || activeMissingDataTooltip ? 152 : 84,
+            minWidth: wallboard
+              ? activeStatusTooltip || activeMissingDataTooltip ? 300 : 220
+              : activeStatusTooltip || activeMissingDataTooltip ? 152 : 84,
           }}
         >
           {activeStatusTooltip ? (
@@ -2697,9 +2618,9 @@ export function TelemetryTrendChart({
       ) : null}
     </div>
   );
-}
+});
 
-export function SpectrumZoomChart({
+export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
   data,
   color,
   axisLabelColor,
@@ -2725,19 +2646,17 @@ export function SpectrumZoomChart({
   yMax?: number;
   onYAxisZoom?: (deltaY: number) => void;
 }) {
+  const { wallboard } = useDisplayMode();
   const wrapperRef = useRef<HTMLDivElement>(null);
   useNonPassiveWheelBlock(wrapperRef);
   const [chartWidth, setChartWidth] = useState(0);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const margin = useMemo(
-    () => ({
-      left: 20,
-      right: 5,
-      top: 12,
-      bottom: 18,
-    }),
-    [],
+    () => wallboard
+      ? { left: 72, right: 22, top: 28, bottom: 46 }
+      : { left: 20, right: 5, top: 12, bottom: 18 },
+    [wallboard],
   );
 
   useEffect(() => {
@@ -2834,13 +2753,13 @@ export function SpectrumZoomChart({
       return context.measureText(text).width;
     };
 
-    const titleFontSize = 11;
-    const metaFontSize = 9;
-    const titleLineHeight = 14;
-    const metaLineHeight = 12;
-    const padX = 8;
-    const padTop = 7;
-    const padBottom = 6;
+    const titleFontSize = wallboard ? 24 : 11;
+    const metaFontSize = wallboard ? 22 : 9;
+    const titleLineHeight = wallboard ? 30 : 14;
+    const metaLineHeight = wallboard ? 28 : 12;
+    const padX = wallboard ? 16 : 8;
+    const padTop = wallboard ? 14 : 7;
+    const padBottom = wallboard ? 12 : 6;
 
     const contentWidth = Math.max(
       measureText(titleText, `800 ${titleFontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`, 7.2),
@@ -2865,7 +2784,7 @@ export function SpectrumZoomChart({
     const lineStartY = boxY + boxHeight * 0.58;
     const elbowX = lineStartX + (startsFromRight ? 12 : -12);
     const elbowY = lineStartY;
-    const circleRadius = 11;
+    const circleRadius = wallboard ? 18 : 11;
     const titleY = boxY + padTop + titleFontSize;
     const freqY = titleY + metaLineHeight;
     const ampY = freqY + metaLineHeight;
@@ -2889,7 +2808,7 @@ export function SpectrumZoomChart({
       ampY,
       textX,
     };
-  }, [innerHeight, innerWidth, margin.left, margin.top, peakIndex, peakPoint, peakX, peakY]);
+  }, [innerHeight, innerWidth, margin.left, margin.top, peakIndex, peakPoint, peakX, peakY, wallboard]);
 
   const axisLabelMap = useMemo(() => {
     const labels = new Map<number, string>();
@@ -2995,14 +2914,14 @@ export function SpectrumZoomChart({
                   cy={peakY}
                   r={peakAnnotation.circleRadius}
                   fill="none"
-                  stroke="#f77f6a"
-                  strokeWidth={1.8}
+                  stroke={color}
+                  strokeWidth={wallboard ? 3 : 1.8}
                 />
                 <polyline
                   points={`${peakAnnotation.lineStartX},${peakAnnotation.lineStartY} ${peakAnnotation.elbowX},${peakAnnotation.elbowY} ${peakX},${peakY}`}
                   fill="none"
-                  stroke="#f77f6a"
-                  strokeWidth={1.5}
+                  stroke={color}
+                  strokeWidth={wallboard ? 2.6 : 1.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
@@ -3014,13 +2933,13 @@ export function SpectrumZoomChart({
                   rx={0}
                   fill={C.surface}
                   stroke={color}
-                  strokeWidth={1.2}
+                  strokeWidth={wallboard ? 2.2 : 1.2}
                 />
                 <text
                   x={peakAnnotation.textX}
                   y={peakAnnotation.titleY}
                   fill={C.textBright}
-                  fontSize={11}
+                  fontSize={wallboard ? 24 : 11}
                   fontWeight={800}
                 >
                   {peakAnnotation.titleText}
@@ -3029,8 +2948,8 @@ export function SpectrumZoomChart({
                   x={peakAnnotation.textX}
                   y={peakAnnotation.freqY}
                   fill={axisLabelColor}
-                  fontSize={9}
-                  fontWeight={600}
+                  fontSize={wallboard ? 22 : 9}
+                  fontWeight={wallboard ? 700 : 600}
                 >
                   {peakAnnotation.freqText}
                 </text>
@@ -3038,8 +2957,8 @@ export function SpectrumZoomChart({
                   x={peakAnnotation.textX}
                   y={peakAnnotation.ampY}
                   fill={axisLabelColor}
-                  fontSize={9}
-                  fontWeight={600}
+                  fontSize={wallboard ? 22 : 9}
+                  fontWeight={wallboard ? 700 : 600}
                 >
                   {peakAnnotation.ampText}
                 </text>
@@ -3065,7 +2984,8 @@ export function SpectrumZoomChart({
             tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 7,
+              fontSize: wallboard ? 22 : 7,
+              fontWeight: wallboard ? 700 : 400,
               textAnchor: "end",
               dy: "0.33em",
               dx: "-0.05em",
@@ -3088,7 +3008,8 @@ export function SpectrumZoomChart({
             }}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: 8,
+              fontSize: wallboard ? 22 : 8,
+              fontWeight: wallboard ? 700 : 400,
               textAnchor: "middle",
             })}
             stroke={gridColor}
@@ -3113,20 +3034,21 @@ export function SpectrumZoomChart({
 
       {hoverPoint ? (
         <div
+          className="dc-chart-tooltip"
           style={{
             position: "absolute",
-            left: Math.min(Math.max(8, hoverX + 10), Math.max(8, chartWidth - 190)),
-            top: 34,
+            left: Math.min(Math.max(8, hoverX + 10), Math.max(8, chartWidth - (wallboard ? 340 : 190))),
+            top: wallboard ? 54 : 34,
             pointerEvents: "none",
             background: C.surface,
             border: `1px solid ${C.border}`,
-            borderRadius: 8,
-            padding: "7px 9px",
+            borderRadius: wallboard ? 14 : 8,
+            padding: wallboard ? "14px 16px" : "7px 9px",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             color: C.textBright,
-            fontSize: "0.68rem",
+            fontSize: wallboard ? "24px" : "0.68rem",
             lineHeight: 1.35,
-            minWidth: 150,
+            minWidth: wallboard ? 300 : 150,
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 2 }}>Bin {hoverPoint.bin}</div>
@@ -3138,7 +3060,7 @@ export function SpectrumZoomChart({
       ) : null}
     </div>
   );
-}
+});
 
 /* ── Section wrapper ── */
 export function ChartSection({
@@ -3158,9 +3080,12 @@ export function ChartSection({
   titleGap?: number;
   cardPadding?: string;
 }) {
+  const { wallboard } = useDisplayMode();
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
+    <div className="dc-chart-section" style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0 }}>
       <div
+        className="dc-chart-section-header"
         style={{
           display: "flex",
           alignItems: "center",
@@ -3168,17 +3093,18 @@ export function ChartSection({
           gap: 4,
           marginBottom: titleGap,
           flexWrap: "nowrap",
-          minHeight: 18,
+          minHeight: wallboard ? 42 : 18,
         }}
       >
         <div style={{ display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0, flex: "1 1 0" }}>
           <span style={{ color: C.primary, display: "inline-flex", flexShrink: 0 }}>{icon}</span>
           <span
+            className="dc-chart-section-title"
             title={title}
             style={{
               color: C.textBright,
-              fontSize: "0.7rem",
-              fontWeight: 700,
+              fontSize: wallboard ? "30px" : "0.7rem",
+              fontWeight: wallboard ? 800 : 700,
               minWidth: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -3191,6 +3117,7 @@ export function ChartSection({
         {headerAction ? <div style={{ flexShrink: 0, minWidth: 0 }}>{headerAction}</div> : null}
       </div>
       <div
+        className="dc-chart-section-card"
         style={{
           background: C.card,
           border: `1px solid ${C.cardBorder}`,
@@ -3236,6 +3163,7 @@ export function SpectrumLoadingState({
       }}
     >
       <div
+        className="dc-spectrum-loading-state-label"
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -3294,6 +3222,7 @@ export function SpectrumNoDataState({
       }}
     >
       <span
+        className="dc-spectrum-no-data-state-label"
         style={{
           display: "inline-flex",
           alignItems: "center",

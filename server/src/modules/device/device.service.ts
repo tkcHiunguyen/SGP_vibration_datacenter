@@ -46,14 +46,14 @@ type DeviceServiceOptions = {
   resolveSocketZone?: SocketZoneResolver;
 };
 
-export type UpdateAdxlHealthInput = {
+type UpdateAdxlHealthInput = {
   status: AdxlStatus;
   reason?: AdxlFaultReason;
   captureTimeoutCount?: number;
   i2cReadErrorCount?: number;
 };
 
-export type UpdateAdxlHealthResult = {
+type UpdateAdxlHealthResult = {
   health: DeviceAdxlHealth;
   updated: boolean;
 };
