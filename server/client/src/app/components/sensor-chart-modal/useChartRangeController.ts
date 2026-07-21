@@ -45,7 +45,30 @@ type UseChartRangeControllerOptions = {
 const rangeCache = new PerDeviceChartRangeLruCache<ChartRangeResponse>(12);
 const prefetchInFlight = new Set<string>();
 
+export type RealtimeArrival = {
+  point: DeviceTelemetryPoint;
+  arrivedAtMs: number;
+};
+
+export type ChartDataSource = "empty" | "cache" | "fetch" | "realtime";
+
+const AVERAGED_POINT_KEYS = [
+  "temperature",
+  "ax",
+  "ay",
+  "az",
+  "vrmsXMms",
+  "vrmsYMms",
+  "vrmsZMms",
+  "drmsXUm",
+  "drmsYUm",
+  "drmsZUm",
+  "drmsBandMinHz",
+  "drmsBandMaxHz",
+] as const satisfies readonly (keyof DeviceTelemetryPoint)[];
+
 function pointKey(point: DeviceTelemetryPoint): string {
+  if (point.bucketStartedAt) return `bucket:${point.bucketStartedAt}`;
   return point.messageId || point.telemetryUuid || point.receivedAt;
 }
 
@@ -54,21 +77,90 @@ function pointTimestamp(point: DeviceTelemetryPoint): number {
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
-function mergeRealtimePoints(
+function pointSortTimestamp(point: DeviceTelemetryPoint): number {
+  const bucketStartedAt = point.bucketStartedAt ? Date.parse(point.bucketStartedAt) : Number.NaN;
+  return Number.isFinite(bucketStartedAt) ? bucketStartedAt : pointTimestamp(point);
+}
+
+function pointOverlapsRange(point: DeviceTelemetryPoint, range: ChartRange): boolean {
+  const bucketStartedAt = point.bucketStartedAt ? Date.parse(point.bucketStartedAt) : Number.NaN;
+  const bucketEndedAt = point.bucketEndedAt ? Date.parse(point.bucketEndedAt) : Number.NaN;
+  if (Number.isFinite(bucketStartedAt) && Number.isFinite(bucketEndedAt)) {
+    return bucketEndedAt > range.fromMs && bucketStartedAt <= range.toMs;
+  }
+  const timestamp = pointTimestamp(point);
+  return timestamp >= range.fromMs && timestamp <= range.toMs;
+}
+
+function normalizeRealtimePoint(point: DeviceTelemetryPoint, bucketMs: number): DeviceTelemetryPoint {
+  const timestamp = pointTimestamp(point);
+  if (!Number.isFinite(timestamp) || bucketMs <= 0) return point;
+  const bucketStartedMs = Math.floor(timestamp / bucketMs) * bucketMs;
+  return {
+    ...point,
+    bucketStartedAt: new Date(bucketStartedMs).toISOString(),
+    bucketEndedAt: new Date(bucketStartedMs + bucketMs).toISOString(),
+    sampleCount: 1,
+  };
+}
+
+function mergeBucketPoint(existing: DeviceTelemetryPoint, incoming: DeviceTelemetryPoint): DeviceTelemetryPoint {
+  if (
+    (incoming.messageId && incoming.messageId === existing.messageId)
+    || (incoming.telemetryUuid && incoming.telemetryUuid === existing.telemetryUuid)
+  ) {
+    return existing;
+  }
+
+  const existingCount = Math.max(1, Math.floor(existing.sampleCount ?? 1));
+  const nextCount = existingCount + 1;
+  const merged: DeviceTelemetryPoint = {
+    ...existing,
+    receivedAt: incoming.receivedAt,
+    messageId: incoming.messageId ?? existing.messageId,
+    telemetryUuid: incoming.telemetryUuid ?? existing.telemetryUuid,
+    uuid: incoming.uuid ?? existing.uuid,
+    sampleCount: nextCount,
+    temperatureAvailable: incoming.temperatureAvailable ?? existing.temperatureAvailable,
+    vibrationAvailable: incoming.vibrationAvailable ?? existing.vibrationAvailable,
+    available: incoming.available ?? existing.available,
+    adxlStatus: incoming.adxlStatus ?? existing.adxlStatus,
+    adxlFaultReason: incoming.adxlFaultReason ?? existing.adxlFaultReason,
+    vrmsUnit: incoming.vrmsUnit ?? existing.vrmsUnit,
+    drmsUnit: incoming.drmsUnit ?? existing.drmsUnit,
+  };
+
+  for (const key of AVERAGED_POINT_KEYS) {
+    const previousValue = existing[key];
+    const nextValue = incoming[key];
+    if (typeof nextValue !== "number" || !Number.isFinite(nextValue)) continue;
+    (merged as unknown as Record<string, unknown>)[key] = typeof previousValue === "number" && Number.isFinite(previousValue)
+      ? (previousValue * existingCount + nextValue) / nextCount
+      : nextValue;
+  }
+  return merged;
+}
+
+export function mergeRealtimePoints(
   current: DeviceTelemetryPoint[],
   incoming: DeviceTelemetryPoint[],
   range: ChartRange,
+  bucketMs = getChartRangeBucketMs(range),
 ): DeviceTelemetryPoint[] {
   if (!isRealtimeChartRange(range) || incoming.length === 0) return current;
   const unique = new Map<string, DeviceTelemetryPoint>();
   for (const point of current) unique.set(pointKey(point), point);
-  for (const point of incoming) {
+  for (const point of [...incoming].sort((left, right) => pointTimestamp(left) - pointTimestamp(right))) {
     const timestamp = pointTimestamp(point);
-    if (timestamp >= range.fromMs) unique.set(pointKey(point), point);
+    if (timestamp < range.fromMs || timestamp > range.toMs) continue;
+    const normalized = normalizeRealtimePoint(point, bucketMs);
+    const key = pointKey(normalized);
+    const existing = unique.get(key);
+    unique.set(key, existing ? mergeBucketPoint(existing, normalized) : normalized);
   }
   const merged = [...unique.values()]
-    .filter((point) => pointTimestamp(point) >= range.fromMs)
-    .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
+    .filter((point) => pointOverlapsRange(point, range))
+    .sort((left, right) => pointSortTimestamp(left) - pointSortTimestamp(right));
   if (
     merged.length === current.length
     && merged.every((point, index) => point === current[index])
@@ -76,6 +168,34 @@ function mergeRealtimePoints(
     return current;
   }
   return merged;
+}
+
+export function mergeFetchedRangeWithRealtime(
+  fetched: DeviceTelemetryPoint[],
+  arrivals: RealtimeArrival[],
+  range: ChartRange,
+  bucketMs: number,
+  requestStartedAtMs: number,
+): DeviceTelemetryPoint[] {
+  const arrivedDuringRequest = arrivals
+    .filter((arrival) => arrival.arrivedAtMs >= requestStartedAtMs)
+    .map((arrival) => arrival.point);
+  return mergeRealtimePoints(fetched, arrivedDuringRequest, range, bucketMs);
+}
+
+function advanceRangeToPoints(range: ChartRange, points: DeviceTelemetryPoint[]): ChartRange {
+  if (!isRealtimeChartRange(range) || points.length === 0) return range;
+  const latestTimestamp = points.reduce(
+    (latest, point) => Math.max(latest, pointTimestamp(point)),
+    Number.NEGATIVE_INFINITY,
+  );
+  if (!Number.isFinite(latestTimestamp) || latestTimestamp <= range.toMs) return range;
+  const durationMs = range.toMs - range.fromMs;
+  return {
+    ...range,
+    fromMs: latestTimestamp - durationMs,
+    toMs: latestTimestamp,
+  };
 }
 
 function nextPrefetchPreset(preset: ChartRangePreset): ChartRangePreset | null {
@@ -115,10 +235,12 @@ export function useChartRangeController({
     }),
   );
   const [data, setData] = useState<DeviceTelemetryPoint[]>([]);
+  const [dataSource, setDataSource] = useState<ChartDataSource>("empty");
   const [metadata, setMetadata] = useState<ChartRangeResponseMetadata | null>(null);
   const [activeQueryKey, setActiveQueryKey] = useState("");
   const requestRef = useRef(new LatestChartRangeRequest());
   const stateRef = useRef(state);
+  const realtimeArrivalsRef = useRef(new Map<string, RealtimeArrival>());
   const prefetchCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -178,9 +300,13 @@ export function useChartRangeController({
     const cached = rangeCache.getExact(normalizedDeviceId, queryKey)
       ?? rangeCache.getReusable(normalizedDeviceId, range);
     const { requestId, signal } = requestRef.current.begin();
+    const requestStartedAtMs = Date.now();
 
     if (cached) {
-      setData(cached.value.points);
+      const arrivals = [...realtimeArrivalsRef.current.values()];
+      const cachedRange = advanceRangeToPoints(range, arrivals.map((arrival) => arrival.point));
+      setData(mergeRealtimePoints(cached.value.points, arrivals.map((arrival) => arrival.point), cachedRange, bucketMs));
+      setDataSource("cache");
       setMetadata(cached.value.metadata);
       setActiveQueryKey(cached.queryKey);
     }
@@ -189,15 +315,25 @@ export function useChartRangeController({
     try {
       const response = await fetchRange(normalizedDeviceId, range, bucketMs, signal);
       if (!requestRef.current.isLatest(requestId)) return;
+      const arrivals = [...realtimeArrivalsRef.current.values()];
+      const resolvedRange = advanceRangeToPoints(range, arrivals.map((arrival) => arrival.point));
+      const mergedPoints = mergeFetchedRangeWithRealtime(
+        response.points,
+        arrivals,
+        resolvedRange,
+        bucketMs,
+        requestStartedAtMs,
+      );
       rangeCache.set(normalizedDeviceId, {
         queryKey,
         semanticKey: createChartRangeSemanticKey(range),
         range,
         bucketMs,
-        value: response,
+        value: { ...response, points: mergedPoints },
         updatedAtMs: Date.now(),
       });
-      setData(response.points);
+      setData(mergedPoints);
+      setDataSource("fetch");
       setMetadata(response.metadata);
       setActiveQueryKey(queryKey);
       dispatch({ type: "resolve", range, requestId });
@@ -214,7 +350,9 @@ export function useChartRangeController({
     prefetchCleanupRef.current = null;
     const nextRange = createRelativeChartRange(initialPreset);
     dispatch({ type: "reset", range: nextRange });
+    realtimeArrivalsRef.current.clear();
     setData([]);
+    setDataSource("empty");
     setMetadata(null);
     setActiveQueryKey("");
     if (normalizedDeviceId) void selectRange(nextRange);
@@ -228,6 +366,10 @@ export function useChartRangeController({
   useEffect(() => {
     const activeRange = stateRef.current.activeRange;
     if (!isRealtimeChartRange(activeRange) || realtimePoints.length === 0) return;
+    const arrivedAtMs = Date.now();
+    for (const point of realtimePoints) {
+      realtimeArrivalsRef.current.set(pointKey(point), { point, arrivedAtMs });
+    }
     const latestTimestamp = realtimePoints.reduce(
       (latest, point) => Math.max(latest, pointTimestamp(point)),
       Number.NEGATIVE_INFINITY,
@@ -235,18 +377,26 @@ export function useChartRangeController({
     if (Number.isFinite(latestTimestamp) && latestTimestamp > activeRange.toMs) {
       dispatch({ type: "advance-realtime", toMs: latestTimestamp });
     }
-    setData((current) => mergeRealtimePoints(current, realtimePoints, {
+    const nextRange = {
       ...activeRange,
       fromMs: Number.isFinite(latestTimestamp)
         ? latestTimestamp - (activeRange.toMs - activeRange.fromMs)
         : activeRange.fromMs,
       toMs: Number.isFinite(latestTimestamp) ? Math.max(activeRange.toMs, latestTimestamp) : activeRange.toMs,
-    }));
+    };
+    for (const [key, arrival] of realtimeArrivalsRef.current) {
+      if (!pointOverlapsRange(arrival.point, nextRange)) {
+        realtimeArrivalsRef.current.delete(key);
+      }
+    }
+    setData((current) => mergeRealtimePoints(current, realtimePoints, nextRange, getChartRangeBucketMs(nextRange)));
+    setDataSource("realtime");
   }, [realtimePoints]);
 
   return {
     state,
     data,
+    dataSource,
     metadata,
     activeQueryKey,
     selectedRange: state.pendingRange ?? state.activeRange,

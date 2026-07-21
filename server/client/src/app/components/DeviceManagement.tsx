@@ -3,7 +3,7 @@ import {
   Info, Search, AlertTriangle,
   Wifi, WifiOff, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
   Activity, Layers, MapPin, ArrowUpAZ, Hash, CircleDot, Filter, Globe, X, ExternalLink, PencilLine, Trash2,
-  PanelRightClose, PanelRightOpen,
+  PanelRightOpen,
 } from "lucide-react";
 import { DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 import { ConsoleStatCard, type ToastItem } from "./ui";
@@ -1940,28 +1940,6 @@ export function DeviceManagement({
         >
           {chartSidebarOpen && activeChartSensor ? (
             <>
-              <button
-                type="button"
-                className="dc-chart-panel-toggle"
-                aria-label={chartSidebarMobile ? "Đóng biểu đồ" : "Thu gọn biểu đồ"}
-                title={chartSidebarMobile ? "Đóng biểu đồ" : "Thu gọn biểu đồ"}
-                onClick={() => setChartSidebarCollapsed(true)}
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 8,
-                  border: `1px solid ${C.cardBorder}`,
-                  background: C.card,
-                  color: C.textBase,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <PanelRightClose size={14} strokeWidth={2.2} />
-              </button>
-
               {!chartSidebarStacked && !chartSidebarMobile ? (
                 <div
                   role="separator"
@@ -2027,6 +2005,10 @@ export function DeviceManagement({
                   }}
                   onDeviceDataCleared={onDeviceDataCleared}
                   onClose={() => {
+                    setChartSidebarCollapsed(true);
+                    setChartSidebarResizing(false);
+                  }}
+                  onCollapse={() => {
                     setChartSidebarCollapsed(true);
                     setChartSidebarResizing(false);
                   }}

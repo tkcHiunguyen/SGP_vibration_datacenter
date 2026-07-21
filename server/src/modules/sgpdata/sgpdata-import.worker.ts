@@ -16,7 +16,9 @@ import type {
   SgpDataTelemetryPoint,
 } from './sgpdata.types.js';
 
-const TELEMETRY_BATCH_SIZE = 750;
+const TELEMETRY_BATCH_SIZE = 2_000;
+const SPECTRUM_IMPORT_CONCURRENCY = 4;
+const PROGRESS_PERSIST_INTERVAL_MS = 500;
 
 type WorkerOptions = {
   workerRunId?: string;
@@ -144,10 +146,8 @@ export class SgpDataImportWorker {
       await this.setStage(job, 'validating', 'Đang xác minh file trước khi import');
       if (await sha256File(job.filePath) !== job.fileSha256) throw new Error('sgpdata_upload_changed');
 
-      const importableDeviceIds = await this.importDevices(job);
-      const summaryRanges = await this.importTelemetry(job, importableDeviceIds);
-      await this.importPlacementConfigs(job, importableDeviceIds);
-      await this.importSpectrum(job, importableDeviceIds);
+      const importableDeviceIds = await this.importDevicesAndPlacementConfigs(job);
+      const summaryRanges = await this.importTelemetryAndSpectrum(job, importableDeviceIds);
 
       await this.setStage(job, 'rebuilding_summaries', 'Đang xây lại dữ liệu tổng hợp cho biểu đồ');
       await this.telemetryService.rebuildHourlySummaries([...summaryRanges.values()]);
@@ -194,11 +194,19 @@ export class SgpDataImportWorker {
     }
   }
 
-  private async importDevices(job: SgpDataImportJob): Promise<Set<string>> {
+  private async importDevicesAndPlacementConfigs(job: SgpDataImportJob): Promise<Set<string>> {
     await this.setStage(job, 'importing_devices', 'Đang nhập thông tin thiết bị');
-    const archived = new Map<string, SgpDataDevice>();
-    for await (const entry of iterateSgpDataEntries(job.filePath)) {
-      if (entry.type === 'device') archived.set(entry.data.deviceId.trim(), entry.data);
+    const previewMetadata = job.preview?.deviceMetadata;
+    const previewPlacementConfigs = job.preview?.placementConfigs;
+    const archived = new Map<string, SgpDataDevice>(
+      (previewMetadata ?? []).map((device) => [device.deviceId.trim(), device]),
+    );
+    const placementConfigs = [...(previewPlacementConfigs ?? [])];
+    if (!previewMetadata || !previewPlacementConfigs) {
+      for await (const entry of iterateSgpDataEntries(job.filePath)) {
+        if (!previewMetadata && entry.type === 'device') archived.set(entry.data.deviceId.trim(), entry.data);
+        if (!previewPlacementConfigs && entry.type === 'placementConfig') placementConfigs.push(entry.data);
+      }
     }
 
     const importable = new Set<string>();
@@ -234,21 +242,25 @@ export class SgpDataImportWorker {
       job.processed.devices += 1;
       await this.persistProgress(job, job.processed.devices, job.totals.devices, `Đã xử lý thiết bị ${deviceId}`);
     }
+    await this.importPlacementConfigs(job, importable, placementConfigs);
     return importable;
   }
 
-  private async importTelemetry(
+  private async importTelemetryAndSpectrum(
     job: SgpDataImportJob,
     importableDeviceIds: Set<string>,
   ): Promise<Map<string, TelemetrySummaryRebuildRange>> {
     await this.setStage(job, 'importing_telemetry', 'Đang nhập dữ liệu đo theo batch');
     const ranges = new Map<string, TelemetrySummaryRebuildRange>();
-    let batch: TelemetryImportPoint[] = [];
+    let telemetryBatch: TelemetryImportPoint[] = [];
+    let spectrumBatch: Array<{ deviceId: string; frame: SpectrumArchiveFrame | null }> = [];
+    let activeStage: 'telemetry' | 'spectrum' = 'telemetry';
+    let lastSpectrumProgressAt = 0;
 
-    const flush = async () => {
-      if (batch.length === 0) return;
-      const current = batch;
-      batch = [];
+    const flushTelemetry = async () => {
+      if (telemetryBatch.length === 0) return;
+      const current = telemetryBatch;
+      telemetryBatch = [];
       const result = await this.telemetryService.importHistoryBatch(current, job.mode);
       job.mutations.inserted += result.inserted;
       job.mutations.updated += result.updated;
@@ -277,29 +289,93 @@ export class SgpDataImportWorker {
       );
     };
 
+    const flushSpectrum = async (forceProgress = false) => {
+      if (spectrumBatch.length === 0) return;
+      const current = spectrumBatch;
+      spectrumBatch = [];
+      const outcomes = await Promise.all(current.map(async ({ frame }) => (
+        frame ? await this.spectrumStorageService.importArchiveFrame(frame, job.mode) : 'skipped' as const
+      )));
+      for (let index = 0; index < current.length; index += 1) {
+        const candidate = current[index]!;
+        const outcome = outcomes[index]!;
+        job.mutations[outcome] += 1;
+        if (candidate.frame) {
+          const device = job.devices[candidate.frame.deviceId];
+          if (device) {
+            device.status = 'running';
+            device.spectrumProcessed += 1;
+          }
+        }
+        job.processed.spectrum += 1;
+        job.currentDeviceId = candidate.deviceId;
+      }
+      job.checkpoint = { lastEntry: processedRecords(job), lastStage: job.stage };
+      const now = Date.now();
+      if (
+        forceProgress
+        || job.processed.spectrum >= job.totals.spectrum
+        || now - lastSpectrumProgressAt >= PROGRESS_PERSIST_INTERVAL_MS
+      ) {
+        lastSpectrumProgressAt = now;
+        await this.persistProgress(
+          job,
+          job.processed.spectrum,
+          job.totals.spectrum,
+          `Đã xử lý ${job.processed.spectrum}/${job.totals.spectrum} frame FFT`,
+        );
+      }
+    };
+
     for await (const entry of iterateSgpDataEntries(job.filePath)) {
-      if (entry.type !== 'measurement') continue;
-      const point = normalizeTelemetryPoint(entry.data);
-      if (!point || !importableDeviceIds.has(point.deviceId)) {
-        job.processed.measurements += 1;
-        job.mutations.skipped += 1;
+      if (entry.type === 'measurement') {
+        if (activeStage === 'spectrum') {
+          await flushSpectrum(true);
+          await this.setStage(job, 'importing_telemetry', 'Đang tiếp tục nhập dữ liệu đo');
+          activeStage = 'telemetry';
+        }
+        const point = normalizeTelemetryPoint(entry.data);
+        if (!point || !importableDeviceIds.has(point.deviceId)) {
+          job.processed.measurements += 1;
+          job.mutations.skipped += 1;
+          continue;
+        }
+        telemetryBatch.push(point);
+        if (telemetryBatch.length >= TELEMETRY_BATCH_SIZE) await flushTelemetry();
         continue;
       }
-      batch.push(point);
-      if (batch.length >= TELEMETRY_BATCH_SIZE) await flush();
+      if (entry.type !== 'spectrumFrame') continue;
+      if (activeStage === 'telemetry') {
+        await flushTelemetry();
+        if (job.processed.measurements > 0) {
+          await this.persistProgress(job, job.processed.measurements, job.totals.measurements, 'Đã hoàn tất telemetry');
+        }
+        await this.setStage(job, 'importing_spectrum', 'Đang nhập phổ FFT theo nhóm song song');
+        activeStage = 'spectrum';
+      }
+      const frame = normalizeSpectrumFrame(entry.data);
+      spectrumBatch.push({
+        deviceId: frame?.deviceId ?? entry.data.deviceId.trim(),
+        frame: frame && importableDeviceIds.has(frame.deviceId) ? frame : null,
+      });
+      if (spectrumBatch.length >= SPECTRUM_IMPORT_CONCURRENCY) await flushSpectrum();
     }
-    await flush();
-    if (job.processed.measurements < job.totals.measurements) {
+    await flushTelemetry();
+    await flushSpectrum(true);
+    if (activeStage === 'telemetry' && job.processed.measurements > 0) {
       await this.persistProgress(job, job.processed.measurements, job.totals.measurements, 'Đã hoàn tất telemetry');
     }
     return ranges;
   }
 
-  private async importPlacementConfigs(job: SgpDataImportJob, importableDeviceIds: Set<string>): Promise<void> {
+  private async importPlacementConfigs(
+    job: SgpDataImportJob,
+    importableDeviceIds: Set<string>,
+    placementConfigs: Array<{ deviceId: string; config: Record<string, unknown> }>,
+  ): Promise<void> {
+    if (placementConfigs.length === 0) return;
     await this.setStage(job, 'importing_placement_configs', 'Đang nhập cấu hình vị trí');
-    for await (const entry of iterateSgpDataEntries(job.filePath)) {
-      if (entry.type !== 'placementConfig') continue;
-      const { deviceId, config } = entry.data;
+    for (const { deviceId, config } of placementConfigs) {
       job.currentDeviceId = deviceId;
       if (!importableDeviceIds.has(deviceId)) {
         job.mutations.skipped += 1;
@@ -318,33 +394,6 @@ export class SgpDataImportWorker {
         job.processed.placementConfigs,
         job.totals.placementConfigs,
         `Đã xử lý cấu hình ${deviceId}`,
-      );
-    }
-  }
-
-  private async importSpectrum(job: SgpDataImportJob, importableDeviceIds: Set<string>): Promise<void> {
-    await this.setStage(job, 'importing_spectrum', 'Đang nhập từng frame phổ FFT');
-    for await (const entry of iterateSgpDataEntries(job.filePath)) {
-      if (entry.type !== 'spectrumFrame') continue;
-      const frame = normalizeSpectrumFrame(entry.data);
-      if (!frame || !importableDeviceIds.has(frame.deviceId)) {
-        job.mutations.skipped += 1;
-      } else {
-        job.currentDeviceId = frame.deviceId;
-        const outcome = await this.spectrumStorageService.importArchiveFrame(frame, job.mode);
-        job.mutations[outcome] += 1;
-        const device = job.devices[frame.deviceId];
-        if (device) {
-          device.status = 'running';
-          device.spectrumProcessed += 1;
-        }
-      }
-      job.processed.spectrum += 1;
-      await this.persistProgress(
-        job,
-        job.processed.spectrum,
-        job.totals.spectrum,
-        `Đã xử lý ${job.processed.spectrum}/${job.totals.spectrum} frame FFT`,
       );
     }
   }

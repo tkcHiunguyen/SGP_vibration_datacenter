@@ -45,6 +45,12 @@ function totalRecords(job: SgpDataImportJob): number {
   return job.totals.devices + job.totals.measurements + job.totals.spectrum + job.totals.placementConfigs;
 }
 
+function publicImportPreview(job: SgpDataImportJob) {
+  if (!job.preview) return undefined;
+  const { deviceMetadata: _deviceMetadata, placementConfigs: _placementConfigs, ...preview } = job.preview;
+  return preview;
+}
+
 function importJobDetail(job: SgpDataImportJob) {
   const elapsedSeconds = Math.max(0, Math.floor((Date.parse(job.completedAt ?? new Date().toISOString()) - Date.parse(job.startedAt ?? job.createdAt)) / 1_000));
   return {
@@ -70,7 +76,7 @@ function importJobDetail(job: SgpDataImportJob) {
     recordsPerSecond: job.recordsPerSecond,
     estimatedSecondsRemaining: job.estimatedSecondsRemaining,
     elapsedSeconds,
-    preview: job.preview,
+    preview: publicImportPreview(job),
     devices: Object.values(job.devices),
     events: job.events.slice(-20),
     error: job.error,
@@ -139,7 +145,7 @@ export function registerSgpDataRoutes({ app, importService, exportService, autho
     if (!job.preview) return reply.code(409).send({ ok: false, error: 'sgpdata_preview_not_ready', data: importJobDetail(job) });
     return reply.send({
       ok: true,
-      data: { ...job.preview, uploadId: job.uploadId, jobId: job.jobId, file: { name: job.fileName, sizeBytes: job.sizeBytes } },
+      data: { ...publicImportPreview(job), uploadId: job.uploadId, jobId: job.jobId, file: { name: job.fileName, sizeBytes: job.sizeBytes } },
     });
   });
 

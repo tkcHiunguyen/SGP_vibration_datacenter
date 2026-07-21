@@ -51,6 +51,7 @@ type TelemetryBucketRow = TelemetryRow & {
 
 const DEFAULT_HISTORY_LIMIT = 200;
 const MAX_HISTORY_LIMIT = 12_000;
+const IMPORT_KEY_LOOKUP_BATCH_SIZE = 1_000;
 const HOUR_MS = 60 * 60 * 1000;
 
 type CountRow = {
@@ -916,17 +917,22 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     if (rows.length === 0) return result;
 
     return await this.mysql.transaction(async (tx) => {
-      const telemetryPlaceholders = rows.map(() => '(?, ?)').join(', ');
-      const messagePlaceholders = rows.map(() => '(?, ?)').join(', ');
-      const existingRows = await tx.query<ExistingImportKeyRow>(
-        `SELECT device_id, telemetry_uuid, message_id FROM device_datas
-         WHERE (device_id, telemetry_uuid) IN (${telemetryPlaceholders})
-            OR (device_id, message_id) IN (${messagePlaceholders})`,
-        [
-          ...rows.flatMap((row) => [row.deviceId, row.telemetryUuid]),
-          ...rows.flatMap((row) => [row.deviceId, row.messageId]),
-        ],
-      );
+      const existingRows: ExistingImportKeyRow[] = [];
+      for (let index = 0; index < rows.length; index += IMPORT_KEY_LOOKUP_BATCH_SIZE) {
+        const chunk = rows.slice(index, index + IMPORT_KEY_LOOKUP_BATCH_SIZE);
+        const placeholders = chunk.map(() => '(?, ?)').join(', ');
+        existingRows.push(...await tx.query<ExistingImportKeyRow>(
+          `SELECT device_id, telemetry_uuid, message_id FROM device_datas
+           WHERE (device_id, telemetry_uuid) IN (${placeholders})
+           UNION ALL
+           SELECT device_id, telemetry_uuid, message_id FROM device_datas
+           WHERE (device_id, message_id) IN (${placeholders})`,
+          [
+            ...chunk.flatMap((row) => [row.deviceId, row.telemetryUuid]),
+            ...chunk.flatMap((row) => [row.deviceId, row.messageId]),
+          ],
+        ));
+      }
       const existingTelemetry = new Set(existingRows.filter((row) => row.telemetry_uuid).map((row) => `${row.device_id}\u0000${row.telemetry_uuid}`));
       const existingMessages = new Set(existingRows.filter((row) => row.message_id).map((row) => `${row.device_id}\u0000${row.message_id}`));
       const isExisting = (row: ImportRow) => existingTelemetry.has(`${row.deviceId}\u0000${row.telemetryUuid}`)

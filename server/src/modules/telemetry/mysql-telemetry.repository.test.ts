@@ -355,6 +355,24 @@ test('a 750-record import batch performs one existing-key query and one multi-ro
   assert.equal(mysql.calls.filter((call) => call.sql.includes('INSERT INTO device_datas')).length, 1);
 });
 
+test('large import batches keep duplicate lookups within the indexed range-plan threshold', async () => {
+  const mysql = new FakeMySqlAccess({ existing: [] });
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+  const points = Array.from({ length: 2_001 }, (_, index) => ({
+    deviceId: 'ESP-LARGE-BATCH',
+    receivedAt: new Date(Date.parse('2026-07-17T00:00:00.000Z') + index * 1_000).toISOString(),
+    telemetryUuid: `telemetry-large-${index}`,
+    payload: { messageId: `message-large-${index}`, temperature: 20 + (index % 5) },
+  }));
+
+  const result = await repository.importHistoryBatch(points, 'merge');
+  const lookupCalls = mysql.calls.filter((call) => call.sql.includes('(device_id, telemetry_uuid)'));
+  assert.equal(result.inserted, points.length);
+  assert.equal(lookupCalls.length, 3);
+  assert.equal(lookupCalls.every((call) => call.sql.includes('UNION ALL')), true);
+  assert.equal(Math.max(...lookupCalls.map((call) => call.params.length)), 4_000);
+});
+
 test('archive export advances a received_at/id cursor between batches', async () => {
   class PagedMySqlAccess extends FakeMySqlAccess {
     private page = 0;

@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import {
   createAppVersionReloadUrl,
+  isAppVersionWatcherBusy,
   parseAppVersionManifest,
+  setAppVersionWatcherBusy,
   shouldReloadForAppVersion,
 } from "../app-version";
 
@@ -22,9 +24,10 @@ export function AppVersionWatcher() {
     let stopped = false;
     let reloadStarted = false;
     const checkVersion = async () => {
-      if (stopped || reloadStarted || document.hidden) {
+      if (stopped || reloadStarted || document.hidden || isAppVersionWatcherBusy()) {
         return;
       }
+      setAppVersionWatcherBusy(true);
       try {
         const response = await fetch(`/app/version.json?t=${Date.now()}`, {
           cache: "no-store",
@@ -41,6 +44,10 @@ export function AppVersionWatcher() {
         window.location.replace(createAppVersionReloadUrl(window.location.href, manifest.buildId));
       } catch {
         // A temporary network failure should not interrupt the wallboard.
+      } finally {
+        if (!reloadStarted) {
+          setAppVersionWatcherBusy(false);
+        }
       }
     };
 
@@ -55,6 +62,7 @@ export function AppVersionWatcher() {
 
     return () => {
       stopped = true;
+      setAppVersionWatcherBusy(false);
       window.clearTimeout(initialTimer);
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);

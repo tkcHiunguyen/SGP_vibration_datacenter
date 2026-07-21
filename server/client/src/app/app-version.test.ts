@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   createAppVersionReloadUrl,
+  isAppVersionWatcherBusy,
   parseAppVersionManifest,
+  setAppVersionWatcherBusy,
   shouldReloadForAppVersion,
 } from "./app-version";
 
@@ -24,4 +26,11 @@ test("parses the generated app version manifest", () => {
 test("adds a cache-busting build id without changing the current page", () => {
   const url = createAppVersionReloadUrl("http://localhost:8080/dashboard?zone=A", "build-b");
   assert.equal(url, "http://localhost:8080/dashboard?zone=A&ui_version=build-b");
+});
+
+test("exposes version-check activity so screenshot capture can wait", () => {
+  setAppVersionWatcherBusy(true);
+  assert.equal(isAppVersionWatcherBusy(), true);
+  setAppVersionWatcherBusy(false);
+  assert.equal(isAppVersionWatcherBusy(), false);
 });

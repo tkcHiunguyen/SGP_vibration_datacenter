@@ -11,6 +11,7 @@ import {
   sgpDataManifestSchema,
   sgpDataSpectrumFrameSchema,
   sgpDataTelemetryPointSchema,
+  type SgpDataDevice,
   type SgpDataPreview,
   type SgpDataStreamEntry,
 } from './sgpdata.types.js';
@@ -210,6 +211,8 @@ export async function sha256File(filePath: string): Promise<string> {
 export async function inspectSgpDataFile(filePath: string, parserLimits: ParserLimits = {}): Promise<SgpDataPreview> {
   let manifest = sgpDataManifestSchema.parse({ format: 'sgpdata', version: 2 });
   const devices = new Map<string, SgpDataPreview['devices'][number]>();
+  const deviceMetadata = new Map<string, SgpDataDevice>();
+  const placementConfigs: Array<{ deviceId: string; config: Record<string, unknown> }> = [];
   let measurementCount = 0;
   let spectrumCount = 0;
   let placementConfigCount = 0;
@@ -220,6 +223,7 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
         manifest = entry.data;
         break;
       case 'device':
+        deviceMetadata.set(entry.data.deviceId, entry.data);
         devices.set(entry.data.deviceId, {
           ...devices.get(entry.data.deviceId),
           deviceId: entry.data.deviceId,
@@ -255,6 +259,7 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
       }
       case 'placementConfig':
         placementConfigCount += 1;
+        placementConfigs.push(entry.data);
         if (!devices.has(entry.data.deviceId)) {
           devices.set(entry.data.deviceId, {
             deviceId: entry.data.deviceId,
@@ -280,6 +285,8 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
     },
     dateRange: manifest.dateRange,
     devices: [...devices.values()],
+    deviceMetadata: [...deviceMetadata.values()],
+    placementConfigs,
     measurements: measurementCount,
     spectra: spectrumCount,
   };

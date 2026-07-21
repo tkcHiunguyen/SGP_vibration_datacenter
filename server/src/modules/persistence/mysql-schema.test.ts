@@ -89,6 +89,13 @@ test('runtime MySQL schema includes hourly telemetry availability summaries', ()
   }
 });
 
+test('runtime MySQL schema migrates archive range indexes', () => {
+  for (const indexName of ['idx_device_datas_received_at', 'idx_device_spectrum_frames_captured_at']) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`index_name = '${indexName}'`, 'i'));
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`ADD KEY ${indexName}`, 'i'));
+  }
+});
+
 test('runtime MySQL schema backfills hourly availability once during deployment', () => {
   assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS app_schema_migrations/i);
   assert.match(MYSQL_SCHEMA_SQL, /20260718_backfill_hourly_telemetry_availability_v1/i);

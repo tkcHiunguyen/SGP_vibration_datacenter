@@ -142,6 +142,8 @@ export type SgpDataPreview = {
     measurementsTotal: number;
     spectrumTotal: number;
   }>;
+  deviceMetadata?: SgpDataDevice[];
+  placementConfigs?: Array<{ deviceId: string; config: Record<string, unknown> }>;
   measurements: number;
   spectra: number;
 };

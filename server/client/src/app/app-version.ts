@@ -1,9 +1,19 @@
 export const APP_VERSION_QUERY_KEY = "ui_version";
 
+let appVersionWatcherBusy = false;
+
 export type AppVersionManifest = {
   buildId: string;
   builtAt?: string;
 };
+
+export function setAppVersionWatcherBusy(busy: boolean): void {
+  appVersionWatcherBusy = busy;
+}
+
+export function isAppVersionWatcherBusy(): boolean {
+  return appVersionWatcherBusy;
+}
 
 export function parseAppVersionManifest(value: unknown): AppVersionManifest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

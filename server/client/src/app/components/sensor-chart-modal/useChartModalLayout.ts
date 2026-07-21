@@ -4,31 +4,43 @@ import { getChartModalLayout } from "./chart-parts";
 import type { ChartModalLayout } from "./chart-parts";
 import { useDisplayMode } from "../../context/DisplayModeContext";
 
-export function useChartModalLayout(containerRef?: RefObject<HTMLElement | null>): ChartModalLayout {
+export function useChartModalLayout(
+  containerRef?: RefObject<HTMLElement | null>,
+  bodyRef?: RefObject<HTMLElement | null>,
+): ChartModalLayout {
   const { wallboard } = useDisplayMode();
   const [modalLayout, setModalLayout] = useState<ChartModalLayout>(() => getChartModalLayout(undefined, undefined, wallboard));
 
   useEffect(() => {
     const updateLayout = () => {
-      const rect = containerRef?.current?.getBoundingClientRect();
-      setModalLayout(getChartModalLayout(rect?.width, rect?.height, wallboard));
+      const containerRect = containerRef?.current?.getBoundingClientRect();
+      const bodyRect = bodyRef?.current?.getBoundingClientRect();
+      setModalLayout(getChartModalLayout(
+        bodyRect?.width ?? containerRect?.width,
+        bodyRect?.height ?? containerRect?.height,
+        wallboard,
+      ));
     };
 
     updateLayout();
     window.addEventListener("resize", updateLayout);
-    const node = containerRef?.current;
-    const observer = node && typeof ResizeObserver !== "undefined"
+    const containerNode = containerRef?.current;
+    const bodyNode = bodyRef?.current;
+    const observer = (containerNode || bodyNode) && typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(updateLayout)
       : null;
-    if (node && observer) {
-      observer.observe(node);
+    if (containerNode && observer) {
+      observer.observe(containerNode);
+    }
+    if (bodyNode && observer) {
+      observer.observe(bodyNode);
     }
 
     return () => {
       window.removeEventListener("resize", updateLayout);
       observer?.disconnect();
     };
-  }, [containerRef, wallboard]);
+  }, [bodyRef, containerRef, wallboard]);
 
   return modalLayout;
 }

@@ -14,6 +14,7 @@ const AXES: SpectrumAxis[] = ['x', 'y', 'z'];
 const DEFAULT_FRAME_FLUSH_MS = 700;
 const DEFAULT_MATCH_WINDOW_MS = 500;
 const DEFAULT_LOOKUP_MAX_DELTA_MS = 1200;
+const ARCHIVE_READ_CONCURRENCY = 16;
 const MYSQL_RETRYABLE_ERRORS = new Set(['ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK']);
 
 function sleep(ms: number): Promise<void> {
@@ -731,7 +732,7 @@ export class SpectrumStorageService {
     return Math.max(0, Math.floor(Number(rows[0]?.total ?? 0)));
   }
 
-  async *exportArchiveFrames(query: SpectrumArchiveQuery, batchSize = 200): AsyncIterable<SpectrumArchiveFrame> {
+  async *exportArchiveFrames(query: SpectrumArchiveQuery, batchSize = 1_000): AsyncIterable<SpectrumArchiveFrame> {
     if (!this.mysql) return;
     const limit = Math.max(10, Math.min(1_000, Math.floor(batchSize)));
     const deviceId = query.deviceId?.trim();
@@ -759,9 +760,13 @@ export class SpectrumStorageService {
         params,
       );
       if (rows.length === 0) return;
-      for (const row of rows) {
-        const frame = await this.readArchiveFrame(row);
-        if (frame) yield frame;
+      for (let index = 0; index < rows.length; index += ARCHIVE_READ_CONCURRENCY) {
+        const frames = await Promise.all(
+          rows.slice(index, index + ARCHIVE_READ_CONCURRENCY).map((row) => this.readArchiveFrame(row)),
+        );
+        for (const frame of frames) {
+          if (frame) yield frame;
+        }
       }
       const last = rows.at(-1)!;
       cursorAt = toIsoTimestamp(last.captured_at);

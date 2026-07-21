@@ -58,11 +58,21 @@ test("keeps RMS spectrum zero when all amplitudes are zero", () => {
   assert.equal(data.every((row) => row.unit === "m/s²"), true);
 });
 
-test("keeps the 4K wallboard chart stack inside one viewport", () => {
-  const layout = getChartModalLayout(3072, 1897, true);
+for (const scenario of [
+  { name: "1920x1080 dashboard", width: 1536, bodyHeight: 900, wallboard: false },
+  { name: "2560x1440 dashboard", width: 2048, bodyHeight: 1260, wallboard: false },
+  { name: "3840x2160 wallboard", width: 3072, bodyHeight: 1897, wallboard: true },
+]) {
+  test(`fills the ${scenario.name} chart body without overflow`, () => {
+    const layout = getChartModalLayout(scenario.width, scenario.bodyHeight, scenario.wallboard);
 
-  assert.ok(layout.chartHeight <= 320);
-  assert.ok(layout.spectrumHeight <= 240);
-  assert.ok(layout.overviewHeight <= 84);
-  assert.ok(layout.chartHeight * 2 + layout.spectrumHeight + layout.overviewHeight <= 970);
-});
+    assert.equal(layout.bodyScrollable, false);
+    assert.ok(layout.contentUsedHeight <= scenario.bodyHeight);
+    assert.ok(layout.contentUnusedHeight <= 12);
+    assert.ok(layout.chartHeight > 0);
+    assert.ok(layout.spectrumHeight > 0);
+    assert.ok(layout.overviewHeight > 0);
+    assert.ok(layout.spectrumHeight > layout.chartHeight);
+    assert.ok(layout.overviewHeight <= (scenario.wallboard ? 50 : 30));
+  });
+}

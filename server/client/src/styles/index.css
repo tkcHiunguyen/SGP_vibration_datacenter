@@ -224,13 +224,6 @@ body,
   height: 12px;
 }
 
-.dc-chart-panel-toggle {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 12;
-}
-
 .settings-page-root,
 .ota-page-root {
   max-width: 1840px;
@@ -295,9 +288,6 @@ body,
     flex-direction: column;
   }
 
-  .dc-chart-panel-toggle {
-    position: fixed;
-  }
 }
 
 @media (max-width: 999px) {
@@ -836,15 +826,13 @@ body,
   height: 52px !important;
 }
 
-.dc-wallboard-mode .dc-chart-panel-toggle {
-  top: 16px;
-  right: 16px;
+.dc-wallboard-mode .dc-chart-panel-collapse-button {
   width: 56px !important;
   height: 56px !important;
   border-radius: 12px !important;
 }
 
-.dc-wallboard-mode .dc-chart-panel-toggle svg {
+.dc-wallboard-mode .dc-chart-panel-collapse-button svg {
   width: 28px;
   height: 28px;
 }
@@ -1315,5 +1303,129 @@ select,
 @keyframes motor-scene-loader-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+.sgpdata-panel-enter {
+  animation: sgpdata-panel-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sgpdata-drop-zone,
+.sgpdata-action-button,
+.sgpdata-metric-card,
+.sgpdata-history-row,
+.sgpdata-step {
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.sgpdata-drop-zone.is-active {
+  transform: translateY(-2px) scale(1.005);
+  box-shadow: 0 12px 30px rgba(14, 165, 233, 0.12);
+}
+
+.sgpdata-action-button:not(:disabled):hover,
+.sgpdata-metric-card:hover,
+.sgpdata-history-row:hover {
+  transform: translateY(-1px);
+}
+
+.sgpdata-action-button:not(:disabled):active {
+  transform: translateY(0) scale(0.985);
+}
+
+.sgpdata-progress-track {
+  position: relative;
+  isolation: isolate;
+}
+
+.sgpdata-progress-fill {
+  position: relative;
+  min-width: 0;
+  border-radius: inherit;
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sgpdata-progress-fill.is-active {
+  background-image: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.34) 42%, transparent 64%);
+  background-size: 220% 100%;
+  animation: sgpdata-progress-flow 1.15s linear infinite;
+}
+
+.sgpdata-step.is-running {
+  animation: sgpdata-step-pulse 1.8s ease-in-out infinite;
+}
+
+.sgpdata-step.is-done {
+  transform: translateY(-1px);
+}
+
+@keyframes sgpdata-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sgpdata-progress-flow {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes sgpdata-step-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(14, 165, 233, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12), 0 8px 20px rgba(14, 165, 233, 0.08);
+  }
+}
+
+@keyframes sgpdata-progress-breathe {
+  0%, 100% {
+    opacity: 0.68;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes sgpdata-step-breathe {
+  0%, 100% {
+    opacity: 0.76;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sgpdata-panel-enter {
+    animation: none;
+  }
+
+  .sgpdata-progress-fill.is-active {
+    background-image: none;
+    animation: sgpdata-progress-breathe 2s ease-in-out infinite;
+  }
+
+  .sgpdata-step.is-running {
+    animation: sgpdata-step-breathe 2s ease-in-out infinite;
+  }
+
+  .sgpdata-drop-zone,
+  .sgpdata-action-button,
+  .sgpdata-metric-card,
+  .sgpdata-history-row,
+  .sgpdata-step,
+  .sgpdata-progress-fill {
+    transition: none;
   }
 }

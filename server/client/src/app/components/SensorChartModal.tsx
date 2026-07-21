@@ -1,5 +1,5 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw } from "lucide-react";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw, PanelRightClose } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { parseTelemetryHistoryPayload } from "../data/telemetry-history";
 import { useTheme } from "../context/ThemeContext";
@@ -935,6 +935,7 @@ interface Props {
   onSensorUpdated?: (sensor: Sensor) => void;
   onDeviceDataCleared?: (deviceId: string) => void;
   onClose: () => void;
+  onCollapse?: () => void;
   pinned?: boolean;
 }
 
@@ -954,6 +955,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   onSensorUpdated,
   onDeviceDataCleared,
   onClose,
+  onCollapse,
   pinned = false,
 }: Props) {
   const { C } = useTheme();
@@ -1039,7 +1041,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   const [detailTileVersion, setDetailTileVersion] = useState(0);
   const [selectedTelemetryStepMs, setSelectedTelemetryStepMs] = useState<TelemetryResolutionSelection>("auto");
   const modalRootRef = useRef<HTMLDivElement | null>(null);
-  const modalLayout = useChartModalLayout(modalRootRef);
+  const modalBodyRef = useRef<HTMLDivElement | null>(null);
+  const modalLayout = useChartModalLayout(modalRootRef, modalBodyRef);
   const closeTimerRef = useRef<number | null>(null);
   const onSensorUpdatedRef = useRef(onSensorUpdated);
   const spectrumHoverTimerRef = useRef<number | null>(null);
@@ -2696,15 +2699,28 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     () => detailTelemetryData.some(hasDenseTelemetryValue),
     [detailTelemetryData],
   );
+  const detailTelemetryDataWithRealtimeTail = useMemo(() => {
+    const lastDetailValueTs = detailTelemetryData.reduce(
+      (latest, row) => hasDenseTelemetryValue(row) ? Math.max(latest, row.ts) : latest,
+      Number.NEGATIVE_INFINITY,
+    );
+    if (!Number.isFinite(lastDetailValueTs)) return detailTelemetryData;
+    const rowsByTimestamp = new Map(detailTelemetryData.map((row) => [row.ts, row]));
+    for (const row of timelineTelemetryData) {
+      if (row.ts > lastDetailValueTs && hasDenseTelemetryValue(row)) {
+        rowsByTimestamp.set(row.ts, row);
+      }
+    }
+    return [...rowsByTimestamp.values()].sort((left, right) => left.ts - right.ts);
+  }, [detailTelemetryData, timelineTelemetryData]);
   const detailLayerActive = Boolean(
     trendDetailMode
-    && detailTileUx.phase === "ready"
     && detailTileUx.mode === trendDetailMode
     && hasDetailTelemetryData,
   );
-  const activeTelemetryData = detailLayerActive ? detailTelemetryData : timelineTelemetryData;
+  const activeTelemetryData = detailLayerActive ? detailTelemetryDataWithRealtimeTail : timelineTelemetryData;
   const activeTelemetryGapStepMs = detailLayerActive
-    ? estimateTelemetryGapStepMs(detailTelemetryData, trendVisibleWindow.endMs - trendVisibleWindow.startMs)
+    ? estimateTelemetryGapStepMs(detailTelemetryDataWithRealtimeTail, trendVisibleWindow.endMs - trendVisibleWindow.startMs)
     : telemetryGapStepMs;
   const manualTelemetryStepMs = selectedTelemetryStepMs === "auto" ? null : selectedTelemetryStepMs;
 
@@ -3216,7 +3232,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
           minWidth: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 1, padding: 0, minHeight: 22, minWidth: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginBottom: 1, padding: 0, minHeight: modalLayout.fftCardHeaderHeight, minWidth: 0, overflow: "hidden" }}>
           {renderFftAxisLabelButton(deviceAxis, spectrumAxis)}
           <div
             className="dc-fft-peak-summary"
@@ -4089,6 +4105,31 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               Mới nhất
             </button>
 
+            {pinned && onCollapse ? (
+              <button
+                type="button"
+                className="dc-chart-panel-collapse-button"
+                aria-label="Thu gọn biểu đồ"
+                title="Thu gọn biểu đồ"
+                onClick={onCollapse}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.textBase,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                <PanelRightClose size={14} strokeWidth={2.2} />
+              </button>
+            ) : null}
+
             {/* X close button – prominent */}
             {!pinned ? (
               <button
@@ -4125,6 +4166,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
         </div>
 
         <div
+          ref={modalBodyRef}
+          data-ux="chart-modal-body"
           style={{
             flex: "1 1 auto",
             minHeight: 0,
@@ -4140,9 +4183,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             data-ux="chart-modal-scroll"
             style={{
               flex: "1 1 auto",
+              height: "100%",
               minWidth: 0,
               minHeight: 0,
-              overflowY: "auto",
+              boxSizing: "border-box",
+              overflowY: modalLayout.bodyScrollable ? "auto" : "hidden",
               overflowX: "hidden",
               padding: modalLayout.contentPadding,
               overscrollBehavior: "contain",
@@ -4325,6 +4370,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   <div onContextMenu={handleTelemetryChartUnpin} style={{ position: "relative" }}>
                     <TelemetryTrendChart
                       data={visibleTelemetryData}
+                      dataSource={detailLayerActive ? "detail" : rangeController.dataSource}
                       hoverPoints={visibleTelemetryHoverPoints}
                       series={chart.series}
                       statusBands={displayTrendStatusBands}
@@ -4372,7 +4418,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 justifyContent: "space-between",
                 gap: 6,
                 marginBottom: modalLayout.fftHeaderGap,
-                minHeight: 16,
+                minHeight: modalLayout.fftSectionHeaderHeight,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", minWidth: 0 }}>
@@ -4474,6 +4520,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     display: "flex",
                     alignItems: "center",
                     gap: 5,
+                    minHeight: modalLayout.overviewHeaderHeight,
                     marginBottom: modalLayout.chartTitleGap,
                     flexWrap: "wrap",
                     minWidth: 0,

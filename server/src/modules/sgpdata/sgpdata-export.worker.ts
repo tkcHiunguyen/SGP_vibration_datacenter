@@ -16,12 +16,21 @@ type ExportWorkerOptions = {
   workerRunId?: string;
 };
 
+const EXPORT_TELEMETRY_BATCH_SIZE = 5_000;
+const EXPORT_SPECTRUM_BATCH_SIZE = 1_000;
+const EXPORT_SPECTRUM_WRITE_CHUNK_SIZE = 100;
+const EXPORT_PROGRESS_INTERVAL_MS = 500;
+
 function ndjsonLine(type: string, data: unknown): string {
   return JSON.stringify({ type, data });
 }
 
 async function writeLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
   if (!stream.write(`${line}\n`)) await once(stream, 'drain');
+}
+
+async function writeChunk(stream: NodeJS.WritableStream, chunk: string): Promise<void> {
+  if (!stream.write(chunk)) await once(stream, 'drain');
 }
 
 function clampProgress(value: number): number {
@@ -108,17 +117,27 @@ export class SgpDataExportWorker {
         placementConfigCount: placementConfigs.size,
       };
       const checksum = createHash('sha256');
-      const gzipStream = createGzip();
-      const outputPromise = pipeline(gzipStream, createWriteStream(filePath));
+      const gzipStream = createGzip({ level: 3, chunkSize: 256 * 1024 });
+      const outputPromise = pipeline(gzipStream, createWriteStream(filePath, { highWaterMark: 1024 * 1024 }));
       const writeEntry = async (type: string, data: unknown) => {
         const line = ndjsonLine(type, data);
         checksum.update(line).update('\n');
         await writeLine(gzipStream, line);
       };
-      const updateProgress = async (stage: string) => {
+      const writeEntries = async (type: string, items: unknown[]) => {
+        if (items.length === 0) return;
+        const chunk = `${items.map((item) => ndjsonLine(type, item)).join('\n')}\n`;
+        checksum.update(chunk);
+        await writeChunk(gzipStream, chunk);
+      };
+      let lastProgressUpdateAt = 0;
+      const updateProgress = async (stage: string, force = false) => {
+        const now = Date.now();
+        if (!force && processed < totalRecords && now - lastProgressUpdateAt < EXPORT_PROGRESS_INTERVAL_MS) return;
+        lastProgressUpdateAt = now;
         job.stage = stage;
         job.progress = totalRecords > 0 ? clampProgress(3 + (processed / totalRecords) * 94) : 97;
-        job.updatedAt = new Date().toISOString();
+        job.updatedAt = new Date(now).toISOString();
         await this.jobs.update(job);
       };
 
@@ -127,24 +146,32 @@ export class SgpDataExportWorker {
         await writeEntry('device', device);
         processed += 1;
       }
-      await updateProgress('Đang xuất cấu hình thiết bị');
+      await updateProgress('Đang xuất cấu hình thiết bị', true);
       for (const [deviceId, config] of placementConfigs) {
         await writeEntry('placementConfig', { deviceId, config });
         processed += 1;
       }
 
-      await updateProgress('Đang xuất telemetry theo batch');
-      for await (const batch of this.telemetryService.exportHistoryBatches(query, 1_000)) {
-        for (const point of batch) await writeEntry('measurement', point);
+      await updateProgress('Đang xuất telemetry theo batch', true);
+      for await (const batch of this.telemetryService.exportHistoryBatches(query, EXPORT_TELEMETRY_BATCH_SIZE)) {
+        await writeEntries('measurement', batch);
         processed += batch.length;
         await updateProgress(`Đã xuất ${processed}/${totalRecords} record`);
       }
 
-      await updateProgress('Đang xuất từng frame FFT');
-      for await (const frame of this.spectrumStorageService.exportArchiveFrames(query)) {
-        await writeEntry('spectrumFrame', frame);
+      await updateProgress('Đang xuất frame FFT theo nhóm song song', true);
+      let spectrumChunk: unknown[] = [];
+      for await (const frame of this.spectrumStorageService.exportArchiveFrames(query, EXPORT_SPECTRUM_BATCH_SIZE)) {
+        spectrumChunk.push(frame);
         processed += 1;
-        if (processed % 25 === 0 || processed === totalRecords) await updateProgress(`Đã xuất ${processed}/${totalRecords} record`);
+        if (spectrumChunk.length < EXPORT_SPECTRUM_WRITE_CHUNK_SIZE) continue;
+        await writeEntries('spectrumFrame', spectrumChunk);
+        spectrumChunk = [];
+        await updateProgress(`Đã xuất ${processed}/${totalRecords} record`);
+      }
+      if (spectrumChunk.length > 0) {
+        await writeEntries('spectrumFrame', spectrumChunk);
+        await updateProgress(`Đã xuất ${processed}/${totalRecords} record`, processed === totalRecords);
       }
 
       manifest.checksumSha256 = checksum.digest('hex');

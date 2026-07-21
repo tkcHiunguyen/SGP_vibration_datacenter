@@ -58,6 +58,8 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   const importedSpectrum: SpectrumArchiveFrame[] = [];
   const importedPlacements: Array<{ deviceId: string; config: Record<string, unknown> }> = [];
   const importedDevices: unknown[] = [];
+  let requestedTelemetryBatchSize = 0;
+  let requestedSpectrumBatchSize = 0;
   const deviceService = {
     list: () => [{ deviceId: metadata.deviceId, online: false, metadata }],
     getMetadata: (deviceId: string) => deviceId === metadata.deviceId ? metadata : null,
@@ -65,7 +67,10 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   } as unknown as DeviceService;
   const telemetryService = {
     countArchive: async () => telemetry.length,
-    exportHistoryBatches: async function* () { yield telemetry; },
+    exportHistoryBatches: async function* (_query: unknown, batchSize?: number) {
+      requestedTelemetryBatchSize = batchSize ?? 0;
+      yield telemetry;
+    },
     importHistoryBatch: async (points: TelemetryImportPoint[]) => {
       importedTelemetry.push(...points);
       return { inserted: points.length, updated: 0, skipped: 0 };
@@ -75,7 +80,10 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   const spectrumService = {
     readPlacementConfig: async () => placement,
     countArchiveFrames: async () => 1,
-    exportArchiveFrames: async function* () { yield spectrumFrame; },
+    exportArchiveFrames: async function* (_query: unknown, batchSize?: number) {
+      requestedSpectrumBatchSize = batchSize ?? 0;
+      yield spectrumFrame;
+    },
     writePlacementConfig: async (deviceId: string, config: Record<string, unknown>) => {
       importedPlacements.push({ deviceId, config });
       return config;
@@ -102,11 +110,15 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   const exported = await waitForExport(exportRepository, exportJob.jobId);
   assert.equal(exported.status, 'completed');
   assert.ok(exported.filePath);
+  assert.equal(requestedTelemetryBatchSize, 5_000);
+  assert.equal(requestedSpectrumBatchSize, 1_000);
 
   const preview = await inspectSgpDataFile(exported.filePath!);
   assert.equal(preview.metadata.checksumValid, true);
   assert.equal(preview.metadata.measurementCount, telemetry.length);
   assert.equal(preview.metadata.spectrumCount, 1);
+  assert.equal(preview.deviceMetadata?.[0]?.notes, metadata.notes);
+  assert.deepEqual(preview.placementConfigs?.[0], { deviceId: metadata.deviceId, config: placement });
   const importRepository = new InMemorySgpDataJobRepository();
   const importJob: SgpDataImportJob = {
     jobId: 'import-roundtrip', uploadId: 'upload-roundtrip', status: 'queued', stage: 'queued', progress: 5, stageProgress: 0,

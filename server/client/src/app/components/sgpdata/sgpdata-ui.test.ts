@@ -34,3 +34,15 @@ test("end-of-day presets include the final millisecond", async () => {
   const source = await readFile(join(root, "ExportJobPanel.tsx"), "utf8");
   assert.match(source, /23, 59, 59, 999/);
 });
+
+test("import and export progress use active motion with reduced-motion fallback", async () => {
+  const importSource = await readFile(join(root, "ImportJobProgress.tsx"), "utf8");
+  const exportSource = await readFile(join(root, "ExportJobPanel.tsx"), "utf8");
+  const styles = await readFile(join(root, "..", "..", "..", "styles", "index.css"), "utf8");
+
+  assert.match(importSource, /sgpdata-progress-fill/);
+  assert.match(exportSource, /sgpdata-progress-fill/);
+  assert.match(styles, /@keyframes sgpdata-progress-flow/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /@keyframes sgpdata-progress-breathe/);
+});

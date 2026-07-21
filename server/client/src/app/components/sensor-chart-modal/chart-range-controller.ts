@@ -164,8 +164,14 @@ export function chartRangeReducer(state: ChartRangeState, action: ChartRangeActi
       };
     case "resolve":
       if (action.requestId !== state.requestId) return state;
+      const resolvedRange = state.activeRange.kind === "relative"
+        && action.range.kind === "relative"
+        && state.activeRange.preset === action.range.preset
+        && state.activeRange.toMs > action.range.toMs
+        ? state.activeRange
+        : action.range;
       return {
-        activeRange: action.range,
+        activeRange: resolvedRange,
         pendingRange: null,
         status: "idle",
         requestId: action.requestId,

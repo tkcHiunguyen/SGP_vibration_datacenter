@@ -915,6 +915,7 @@ export function registerRoutes({
 
   app.post('/api/display-clients/:clientId/screenshot', async (request, reply) => {
     if (!requireRole(request, reply, 'viewer')) {
+      app.log.warn({ statusCode: reply.statusCode }, 'Display screenshot upload unauthorized');
       return;
     }
 
@@ -935,6 +936,7 @@ export function registerRoutes({
       pagePath: request.headers['x-page-path'],
     });
     if (!metadata.success) {
+      app.log.warn({ clientId, statusCode: 400, errorCode: 'display_screenshot_metadata_invalid' }, 'Display screenshot upload rejected');
       return reply.code(400).send({ ok: false, error: 'display_screenshot_metadata_invalid' });
     }
 
@@ -953,6 +955,7 @@ export function registerRoutes({
         limits: { fileSize: DISPLAY_SCREENSHOT_MAX_BYTES, files: 1 },
       });
       if (!filePart) {
+        app.log.warn({ clientId, statusCode: 400, errorCode: 'display_screenshot_file_required' }, 'Display screenshot upload rejected');
         return reply.code(400).send({ ok: false, error: 'display_screenshot_file_required' });
       }
       const buffer = await filePart.toBuffer();
@@ -965,6 +968,7 @@ export function registerRoutes({
         clientIp: request.ip.replace(/^::ffff:/, ''),
         userAgent: typeof userAgentHeader === 'string' ? userAgentHeader.slice(0, 512) : undefined,
       });
+      app.log.info({ clientId, statusCode: 200, sizeBytes: record.sizeBytes }, 'Display screenshot stored');
       return { ok: true, data: record };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'display_screenshot_upload_failed';
@@ -972,6 +976,7 @@ export function registerRoutes({
         ? String((error as { code?: unknown }).code ?? '')
         : '';
       if (message === 'display_screenshot_file_too_large' || code === 'FST_REQ_FILE_TOO_LARGE') {
+        app.log.warn({ clientId, statusCode: 413, errorCode: 'display_screenshot_file_too_large' }, 'Display screenshot upload rejected');
         return reply.code(413).send({
           ok: false,
           error: 'display_screenshot_file_too_large',
@@ -979,10 +984,11 @@ export function registerRoutes({
         });
       }
       if (message.startsWith('display_screenshot_')) {
+        app.log.warn({ clientId, statusCode: 422, errorCode: message }, 'Display screenshot upload rejected');
         return reply.code(422).send({ ok: false, error: message });
       }
-      app.log.warn({ err: error, clientId }, 'Display screenshot upload failed');
-      return reply.code(400).send({ ok: false, error: 'display_screenshot_upload_invalid' });
+      app.log.error({ err: error, clientId, statusCode: 500, errorCode: 'display_screenshot_storage_failed' }, 'Display screenshot upload failed');
+      return reply.code(500).send({ ok: false, error: 'display_screenshot_storage_failed' });
     }
   });
 

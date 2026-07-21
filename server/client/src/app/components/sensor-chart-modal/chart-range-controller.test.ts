@@ -95,6 +95,16 @@ test("realtime advances only a relative range", () => {
   assert.equal(frozen.activeRange, calendar);
 });
 
+test("a range response does not rewind a realtime range advanced while loading", () => {
+  const requested = createRelativeChartRange("1h", NOW);
+  let state = chartRangeReducer(stateFor(requested), { type: "select", range: requested, requestId: 8 });
+  state = chartRangeReducer(state, { type: "advance-realtime", toMs: NOW + 20_000 });
+  state = chartRangeReducer(state, { type: "resolve", range: requested, requestId: 8 });
+
+  assert.equal(state.activeRange.toMs, NOW + 20_000);
+  assert.equal(state.activeRange.fromMs, NOW + 20_000 - CHART_RANGE_PRESET_MS["1h"]);
+});
+
 test("LRU preserves multiple ranges and evicts the oldest per device", () => {
   const cache = new PerDeviceChartRangeLruCache<{ value: number }>(2);
   const day = createRelativeChartRange("1d", NOW);

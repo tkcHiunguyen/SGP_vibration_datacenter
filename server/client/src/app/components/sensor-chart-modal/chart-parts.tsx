@@ -45,6 +45,7 @@ export const TOP_TREND_CHART_HEIGHT = 220;
 export const TREND_OVERVIEW_HEIGHT = 108;
 export const SPECTRUM_CHART_HEIGHT = 160;
 export const CHART_MODAL_EXPANDED_CHART_PX = 50;
+const TREND_OVERVIEW_BAR_HEIGHT = 10;
 export const DAY_IN_MS = 24 * 60 * 60 * 1000;
 export const CALENDAR_WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"] as const;
 export const VIBRATION_AXIS_LABELS = {
@@ -62,6 +63,9 @@ export const FFT_AXIS_DISPLAY_ORDER: readonly { deviceAxis: DeviceAxisKey; spect
 export type ChartModalLayout = {
   viewportWidth: number;
   viewportHeight: number;
+  bodyScrollable: boolean;
+  contentUsedHeight: number;
+  contentUnusedHeight: number;
   chartHeight: number;
   overviewHeight: number;
   spectrumHeight: number;
@@ -73,7 +77,10 @@ export type ChartModalLayout = {
   fftHeaderGap: number;
   fftGridGap: number;
   fftCardPadding: string;
+  fftSectionHeaderHeight: number;
+  fftCardHeaderHeight: number;
   fftAxisFooterHeight: number;
+  overviewHeaderHeight: number;
   topGridColumns: string;
   spectrumGridColumns: string;
   headerPadding: string;
@@ -91,6 +98,14 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
   const tightHeight = viewportHeight < 720;
   const narrowWidth = viewportWidth < 1500;
   const compactWidth = viewportWidth < 1280;
+  const topGridColumns = viewportWidth < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))";
+  const spectrumGridColumns = viewportWidth < 900
+    ? "1fr"
+    : compactWidth
+      ? "repeat(2, minmax(0, 1fr))"
+      : "repeat(3, minmax(0, 1fr))";
+  const topGridRowCount = viewportWidth < 760 ? 4 : 2;
+  const spectrumGridRowCount = viewportWidth < 900 ? 3 : compactWidth ? 2 : 1;
   const baseChartHeight = tightHeight
     ? 112
     : compactHeight
@@ -110,33 +125,80 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
         : scaledDesktopHeight
           ? 114
           : 128;
-  const verticalFill = viewportWidth >= 900
-    ? Math.max(0, Math.min(80, Math.round((viewportHeight - 760) * 0.35)))
-    : 0;
-  // The pinned panel reports its own width, so use its usable two-column width
-  // instead of the full viewport width when filling tall desktop layouts.
-  const largeScreenVerticalRoom = viewportWidth >= 760
-    ? Math.max(0, viewportHeight - 1200)
-    : 0;
-  const wallboardChartHeight = Math.max(220, Math.min(320, Math.round(viewportHeight * 0.16)));
-  const wallboardOverviewHeight = Math.max(56, Math.min(84, Math.round(viewportHeight * 0.04)));
-  const wallboardSpectrumHeight = Math.max(160, Math.min(240, Math.round(viewportHeight * 0.12)));
+  const topGridGap = wallboard ? 18 : tightHeight ? 4 : 5;
+  const sectionGap = wallboard ? 20 : tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6;
+  const chartTitleGap = wallboard ? 10 : tightHeight ? 1 : scaledDesktopHeight ? 2 : 3;
+  const fftHeaderGap = wallboard ? 12 : tightHeight ? 2 : 3;
+  const fftGridGap = wallboard ? 18 : tightHeight ? 4 : 5;
+  const fftAxisFooterHeight = wallboard ? 24 : tightHeight ? 5 : 6;
+  const fftSectionHeaderHeight = wallboard ? 52 : 22;
+  const fftCardHeaderHeight = wallboard ? 48 : 22;
+  const overviewHeaderHeight = wallboard ? 48 : 22;
+  const chartHeaderHeight = wallboard ? 46 : 18;
+  const chartCardPaddingY = wallboard ? 32 : tightHeight ? 5 : compactHeight ? 6 : scaledDesktopHeight ? 6 : 9;
+  const fftCardPaddingY = wallboard ? 32 : tightHeight ? 6 : compactHeight ? 7 : scaledDesktopHeight ? 7 : 9;
+  const overviewCardPaddingY = wallboard ? 34 : tightHeight ? 8 : compactHeight ? 9 : scaledDesktopHeight ? 9 : 11;
+  const contentPaddingY = wallboard ? 32 : tightHeight ? 5 : compactHeight ? 6 : scaledDesktopHeight ? 6 : 10;
+  const fixedContentHeight = contentPaddingY
+    + topGridRowCount * (chartHeaderHeight + chartTitleGap + chartCardPaddingY + 2)
+    + Math.max(0, topGridRowCount - 1) * topGridGap
+    + sectionGap
+    + fftSectionHeaderHeight
+    + fftHeaderGap
+    + spectrumGridRowCount * (fftCardHeaderHeight + fftCardPaddingY + fftAxisFooterHeight + 2)
+    + Math.max(0, spectrumGridRowCount - 1) * fftGridGap
+    + sectionGap
+    + overviewHeaderHeight
+    + chartTitleGap
+    + overviewCardPaddingY
+    + 2;
+  const minimumChartHeight = wallboard ? 150 : 96;
+  const minimumSpectrumHeight = wallboard ? 120 : 80;
+  const minimumOverviewHeight = wallboard ? 48 : 28;
+  const minimumDynamicHeight = topGridRowCount * minimumChartHeight
+    + spectrumGridRowCount * minimumSpectrumHeight
+    + minimumOverviewHeight;
+  const availableDynamicHeight = Math.max(0, Math.floor(viewportHeight - fixedContentHeight));
+  const bodyScrollable = viewportWidth < 900
+    || viewportHeight < 640
+    || availableDynamicHeight < minimumDynamicHeight;
+
+  let chartHeight = wallboard
+    ? Math.max(220, Math.min(320, Math.round(viewportHeight * 0.16)))
+    : baseChartHeight;
+  let spectrumHeight = wallboard
+    ? Math.max(160, Math.min(240, Math.round(viewportHeight * 0.12)))
+    : baseSpectrumHeight;
+  let overviewHeight = wallboard
+    ? Math.max(56, Math.min(84, Math.round(viewportHeight * 0.04)))
+    : baseOverviewHeight;
+
+  if (!bodyScrollable) {
+    const distributableHeight = availableDynamicHeight - minimumDynamicHeight;
+    chartHeight = minimumChartHeight + Math.floor((distributableHeight * 0.58) / topGridRowCount);
+    spectrumHeight = minimumSpectrumHeight + Math.floor((distributableHeight * 0.42) / spectrumGridRowCount);
+    overviewHeight = availableDynamicHeight
+      - chartHeight * topGridRowCount
+      - spectrumHeight * spectrumGridRowCount;
+  }
+
+  const contentUsedHeight = fixedContentHeight
+    + chartHeight * topGridRowCount
+    + spectrumHeight * spectrumGridRowCount
+    + overviewHeight;
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: wallboard
-      ? wallboardChartHeight
-      : baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47),
-    overviewHeight: wallboard
-      ? wallboardOverviewHeight
-      : baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07),
-    spectrumHeight: wallboard
-      ? wallboardSpectrumHeight
-      : baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15),
-    topGridGap: wallboard ? 18 : tightHeight ? 4 : compactHeight ? 5 : 5,
-    sectionGap: wallboard ? 20 : tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
-    chartTitleGap: wallboard ? 10 : tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,
+    bodyScrollable,
+    contentUsedHeight,
+    contentUnusedHeight: Math.max(0, Math.floor(viewportHeight - contentUsedHeight)),
+    chartHeight,
+    overviewHeight,
+    spectrumHeight,
+    topGridGap,
+    sectionGap,
+    chartTitleGap,
     chartCardPadding: wallboard
       ? "18px 20px 14px"
       : tightHeight
@@ -155,8 +217,8 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
         : scaledDesktopHeight
           ? "4px 8px 5px"
           : "6px 9px 5px",
-    fftHeaderGap: wallboard ? 12 : tightHeight ? 2 : compactHeight ? 3 : 3,
-    fftGridGap: wallboard ? 18 : tightHeight ? 4 : compactHeight ? 5 : 5,
+    fftHeaderGap,
+    fftGridGap,
     fftCardPadding: wallboard
       ? "18px 18px 14px"
       : tightHeight
@@ -166,14 +228,12 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
         : scaledDesktopHeight
           ? "5px 5px 2px"
           : "6px 5px 3px",
-    fftAxisFooterHeight: wallboard ? 24 : tightHeight ? 5 : 6,
-    topGridColumns: viewportWidth < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))",
-    spectrumGridColumns:
-      viewportWidth < 900
-        ? "1fr"
-        : compactWidth
-          ? "repeat(2, minmax(0, 1fr))"
-          : "repeat(3, minmax(0, 1fr))",
+    fftSectionHeaderHeight,
+    fftCardHeaderHeight,
+    fftAxisFooterHeight,
+    overviewHeaderHeight,
+    topGridColumns,
+    spectrumGridColumns,
     headerPadding: wallboard
       ? "18px 24px 16px"
       : tightHeight
@@ -1170,12 +1230,15 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
   const lastBrushRangeRef = useRef<{ startTs: number; endTs: number } | null>(null);
   const suppressBrushChangeRef = useRef(false);
   const [chartWidth, setChartWidth] = useState(0);
-  const margin = useMemo(
-    () => wallboard
-      ? { top: 6, right: 18, bottom: 34, left: 18 }
-      : { top: 2, right: 10, bottom: 16, left: 10 },
-    [wallboard],
-  );
+  const margin = useMemo(() => {
+    const top = wallboard ? 4 : 2;
+    return {
+      top,
+      right: wallboard ? 18 : 10,
+      bottom: Math.max(wallboard ? 22 : 12, height - top - TREND_OVERVIEW_BAR_HEIGHT),
+      left: wallboard ? 18 : 10,
+    };
+  }, [height, wallboard]);
   const handleOverviewContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
   }, []);
@@ -1555,9 +1618,9 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
                 }}
                 onChange={handleBrushChange}
                 onBrushEnd={handleBrushEnd}
-                renderBrushHandle={({ x, y, width, height: handleHeight, isBrushActive, className }) => {
-                  const visualY = Math.max(0, y + 1);
-                  const visualHeight = Math.max(14, Math.min(yMax - visualY, handleHeight - 2));
+                renderBrushHandle={({ x, width, height: handleHeight, isBrushActive, className }) => {
+                  const visualHeight = Math.max(1, Math.min(TREND_OVERVIEW_BAR_HEIGHT, yMax, handleHeight));
+                  const visualY = Math.max(0, (yMax - visualHeight) / 2);
                   const hitWidth = Math.max(22, width + 12);
                   const hitX = x - (hitWidth - width) / 2;
                   return (
@@ -1593,10 +1656,11 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
           <g aria-hidden="true">
             {overviewTicks.map((tick) => {
               const x = margin.left + xScale(tick);
+              const barBottom = margin.top + yMax;
               return (
                 <g key={`overview-tick-${tick.getTime()}`} transform={`translate(${x},0)`}>
-                  <line y1={height - 15} y2={height - 12} stroke={C.border} strokeWidth={0.8} />
-                  <text y={height - (wallboard ? 10 : 7)} fill={axisLabelColor} fontSize={wallboard ? 22 : 7.5} fontWeight={wallboard ? 700 : 400} textAnchor="middle">
+                  <line y1={barBottom + 2} y2={barBottom + 5} stroke={C.border} strokeWidth={0.8} />
+                  <text y={height - (wallboard ? 7 : 4)} fill={axisLabelColor} fontSize={wallboard ? 22 : 7.5} fontWeight={wallboard ? 700 : 400} textAnchor="middle">
                     {formatTrendAxisTime(tick.getTime(), firstTs, lastTs)}
                   </text>
                 </g>
@@ -1611,6 +1675,7 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
 
 type TelemetryTrendChartProps = {
   data: TrendRow[];
+  dataSource?: string;
   hoverPoints: Array<{ ts: number; telemetryUuid?: string }>;
   series: TrendSeriesConfig[];
   statusBands?: TrendStatusBand[];
@@ -1643,8 +1708,56 @@ type TelemetryTrendChartProps = {
   onLeave?: () => void;
 };
 
+export type PlottedTrendSeries = {
+  config: TrendSeriesConfig;
+  segments: Array<Array<{ ts: number; value: number }>>;
+  latest: { ts: number; value: number } | null;
+};
+
+export function buildPlottedTrendSeries(
+  rows: TrendRow[],
+  series: TrendSeriesConfig[],
+  statusBands: TrendStatusBand[] = [],
+  missingDataBands: TrendGapSegment[] = [],
+): PlottedTrendSeries[] {
+  return series.map((seriesConfig) => {
+    const segments: Array<Array<{ ts: number; value: number }>> = [];
+    let currentSegment: Array<{ ts: number; value: number }> = [];
+    let latest: { ts: number; value: number } | null = null;
+    let lastPoint: { ts: number; value: number } | null = null;
+
+    for (const row of rows) {
+      const rawValue = row[seriesConfig.key];
+      if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) continue;
+      const point = { ts: row.ts, value: rawValue };
+      if (
+        currentSegment.length > 0
+        && lastPoint
+        && (
+          intervalHasOfflineStatus(statusBands, lastPoint.ts, point.ts)
+          || intervalHasMissingDataBand(missingDataBands, lastPoint.ts, point.ts)
+        )
+      ) {
+        segments.push(currentSegment);
+        currentSegment = [point];
+      } else {
+        currentSegment.push(point);
+      }
+      latest = point;
+      lastPoint = point;
+    }
+    if (currentSegment.length > 0) segments.push(currentSegment);
+    return { config: seriesConfig, segments, latest };
+  });
+}
+
+export function trendSegmentKey(seriesKey: string, segment: Array<{ ts: number }>): string {
+  return `${seriesKey}:${segment[0]?.ts ?? "empty"}`;
+}
+
 export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   data,
+  dataSource = "timeline",
   hoverPoints,
   series,
   statusBands = [],
@@ -1765,39 +1878,20 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
     return buildTiledTrendRows(data, seriesKeys, targetPoints, tileCount);
   }, [chartWidth, data, series]);
 
-  const plottedSeries = useMemo(() => series.map((seriesConfig) => {
-    const segments: Array<Array<{ ts: number; value: number }>> = [];
-    let currentSegment: Array<{ ts: number; value: number }> = [];
-    let latest: { ts: number; value: number } | null = null;
-    let lastPoint: { ts: number; value: number } | null = null;
+  const plottedSeries = useMemo(
+    () => buildPlottedTrendSeries(renderData, series, statusBands, missingDataBands),
+    [missingDataBands, renderData, series, statusBands],
+  );
 
-    for (const row of renderData) {
-      const rawValue = row[seriesConfig.key];
-      if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
-        const point = { ts: row.ts, value: rawValue };
-        if (
-          currentSegment.length > 0
-          && lastPoint
-          && (
-            intervalHasOfflineStatus(statusBands, lastPoint.ts, point.ts)
-            || intervalHasMissingDataBand(missingDataBands, lastPoint.ts, point.ts)
-          )
-        ) {
-          segments.push(currentSegment);
-          currentSegment = [point];
-        } else {
-          currentSegment.push(point);
-        }
-        latest = point;
-        lastPoint = point;
-      }
-    }
-    if (currentSegment.length > 0) {
-      segments.push(currentSegment);
-    }
-
-    return { config: seriesConfig, segments, latest };
-  }), [missingDataBands, renderData, series, statusBands]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.debug("[trend-render]", {
+      dataSource,
+      wallboard,
+      strokeWidths: plottedSeries.map(({ config }) => config.strokeWidth ?? 1.8),
+      pathCounts: plottedSeries.map(({ config, segments }) => ({ series: config.key, count: segments.length })),
+    });
+  }, [dataSource, plottedSeries, wallboard]);
 
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, height - margin.top - margin.bottom);
@@ -2328,14 +2422,20 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
               })}
 
               {plottedSeries.map(({ config, segments }) =>
-                segments.map((segment, index) => (
+                segments.map((segment) => (
                   <LinePath
-                    key={config.key + '-' + String(index)}
+                    key={trendSegmentKey(config.key, segment)}
                     data={segment}
                     x={(point) => xScale(new Date(point.ts))}
                     y={(point) => yScale(point.value)}
                     stroke={config.color}
-                    strokeWidth={wallboard ? Math.max(3.4, config.strokeWidth ?? 1.8) : config.strokeWidth ?? 1.8}
+                    strokeWidth={config.strokeWidth ?? 1.8}
+                    vectorEffect="non-scaling-stroke"
+                    data-chart-series={config.key}
+                    data-chart-source={dataSource}
+                    data-stroke-width={config.strokeWidth ?? 1.8}
+                    data-segment-start={segment[0]?.ts}
+                    data-segment-end={segment[segment.length - 1]?.ts}
                   />
                 )),
               )}

@@ -52,7 +52,7 @@ async function waitForTerminal(repository: TrackingRepository): Promise<SgpDataI
 test('worker imports telemetry in bounded batches and reports monotonic progress', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sgpdata-worker-'));
   const filePath = join(root, 'batch.sgpdata');
-  await createArchive(filePath, 1_600);
+  await createArchive(filePath, 4_500);
   const repository = new TrackingRepository();
   const batchSizes: number[] = [];
   const summaryRanges: unknown[] = [];
@@ -78,16 +78,16 @@ test('worker imports telemetry in bounded batches and reports monotonic progress
   const job: SgpDataImportJob = {
     jobId: 'job-batch', uploadId: 'upload-batch', status: 'queued', stage: 'queued', progress: 5, stageProgress: 0,
     fileName: 'batch.sgpdata', filePath, fileSha256: await sha256File(filePath), sizeBytes: (await stat(filePath)).size,
-    mode: 'merge', totals: { devices: 1, measurements: 1_600, spectrum: 0, placementConfigs: 0 },
+    mode: 'merge', totals: { devices: 1, measurements: 4_500, spectrum: 0, placementConfigs: 0 },
     processed: { devices: 0, measurements: 0, spectrum: 0, placementConfigs: 0 },
     mutations: { inserted: 0, updated: 0, skipped: 0, failed: 0 }, recordsPerSecond: 0,
     preview: {
       manifest: { format: 'sgpdata', version: 2 },
-      metadata: { deviceCount: 1, measurementCount: 1_600, spectrumCount: 0, placementConfigCount: 0, checksumValid: true },
-      devices: [{ deviceId: 'ESP-BATCH', name: 'Batch device', measurementsTotal: 1_600, spectrumTotal: 0 }],
-      measurements: 1_600, spectra: 0,
+      metadata: { deviceCount: 1, measurementCount: 4_500, spectrumCount: 0, placementConfigCount: 0, checksumValid: true },
+      devices: [{ deviceId: 'ESP-BATCH', name: 'Batch device', measurementsTotal: 4_500, spectrumTotal: 0 }],
+      measurements: 4_500, spectra: 0,
     },
-    devices: { 'ESP-BATCH': { deviceId: 'ESP-BATCH', name: 'Batch device', measurementsTotal: 1_600, measurementsProcessed: 0, spectrumTotal: 0, spectrumProcessed: 0, status: 'queued' } },
+    devices: { 'ESP-BATCH': { deviceId: 'ESP-BATCH', name: 'Batch device', measurementsTotal: 4_500, measurementsProcessed: 0, spectrumTotal: 0, spectrumProcessed: 0, status: 'queued' } },
     events: [], createdAt: now, updatedAt: now,
   };
   await repository.save(job);
@@ -96,9 +96,9 @@ test('worker imports telemetry in bounded batches and reports monotonic progress
   const completed = await waitForTerminal(repository);
 
   assert.equal(completed.status, 'completed');
-  assert.deepEqual(batchSizes, [750, 750, 100]);
-  assert.equal(completed.processed.measurements, 1_600);
-  assert.equal(completed.mutations.inserted, 1_601);
+  assert.deepEqual(batchSizes, [2_000, 2_000, 500]);
+  assert.equal(completed.processed.measurements, 4_500);
+  assert.equal(completed.mutations.inserted, 4_501);
   assert.equal(summaryRanges.length, 1);
   assert.equal(repository.progress.every((value, index, values) => index === 0 || value >= values[index - 1]!), true);
   await assert.rejects(() => readFile(filePath), /ENOENT/);

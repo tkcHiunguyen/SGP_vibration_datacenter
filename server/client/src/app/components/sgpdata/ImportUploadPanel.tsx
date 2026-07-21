@@ -117,9 +117,11 @@ export function ImportUploadPanel({
   }
 
   const stats = preview?.metadata;
+  const uploadBusy = uploading || (uploadProgress === 100 && !preview && !error);
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div className="sgpdata-panel-enter" style={{ display: "grid", gap: 12 }}>
       <div
+        className={`sgpdata-drop-zone${dragActive ? " is-active" : ""}`}
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
         onDrop={(event) => {
@@ -168,8 +170,8 @@ export function ImportUploadPanel({
             <span>{uploadProgress < 100 ? "Tiến trình upload" : preview ? "Upload và kiểm tra hoàn tất" : "Đang kiểm tra trên server"}</span>
             <span>{uploadProgress}%</span>
           </div>
-          <div style={{ height: 8, borderRadius: 999, background: C.surface, overflow: "hidden" }}>
-            <div style={{ width: `${uploadProgress}%`, height: "100%", background: preview ? C.success : C.primary, transition: "width 180ms ease" }} />
+          <div className="sgpdata-progress-track" style={{ height: 8, borderRadius: 999, background: C.surface, overflow: "hidden" }}>
+            <div className={`sgpdata-progress-fill${uploadBusy ? " is-active" : ""}`} style={{ width: `${uploadProgress}%`, height: "100%", backgroundColor: preview ? C.success : C.primary }} />
           </div>
         </div>
       ) : null}
@@ -188,6 +190,7 @@ export function ImportUploadPanel({
                 key={value}
                 type="button"
                 onClick={() => setMode(value)}
+                className="sgpdata-action-button"
                 style={{
                   minHeight: 34,
                   borderRadius: 8,
@@ -205,6 +208,7 @@ export function ImportUploadPanel({
             ))}
           </div>
           <button
+            className="sgpdata-action-button"
             type="button"
             disabled={!uploadId || busy || submitting}
             onClick={() => void startImport()}
@@ -243,7 +247,7 @@ export function ImportUploadPanel({
 
   function MiniStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
     return (
-      <div style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: "9px 10px", minWidth: 0 }}>
+      <div className="sgpdata-metric-card" style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: "9px 10px", minWidth: 0 }}>
         <span style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 800, display: "flex", alignItems: "center", gap: 5 }}>{icon}{label}</span>
         <strong style={{ color: C.textBright, fontSize: "0.82rem", display: "block", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</strong>
       </div>
