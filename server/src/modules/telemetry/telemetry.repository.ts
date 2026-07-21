@@ -63,6 +63,14 @@ export type TelemetryImportResult = {
   skipped: number;
 };
 
+export type TelemetryImportMode = 'merge' | 'idempotent';
+
+export type TelemetrySummaryRebuildRange = {
+  deviceId: string;
+  from: string;
+  to: string;
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 export interface TelemetryRepository {
@@ -72,6 +80,10 @@ export interface TelemetryRepository {
   listAvailableDays(query: TelemetryAvailabilityQuery): MaybePromise<DeviceTelemetryAvailabilityDay[]>;
   summarizeDevice(deviceId: string): MaybePromise<DeviceTelemetrySummary>;
   exportHistory(query: TelemetryArchiveQuery): MaybePromise<TelemetryImportPoint[]>;
+  countArchive(query: TelemetryArchiveQuery): MaybePromise<number>;
+  exportHistoryBatches(query: TelemetryArchiveQuery, batchSize?: number): AsyncIterable<TelemetryImportPoint[]>;
   importHistory(points: TelemetryImportPoint[]): MaybePromise<TelemetryImportResult>;
+  importHistoryBatch(points: TelemetryImportPoint[], mode: TelemetryImportMode): MaybePromise<TelemetryImportResult>;
+  rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): MaybePromise<void>;
   applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

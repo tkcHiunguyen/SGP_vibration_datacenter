@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
@@ -99,10 +99,18 @@ export type SpectrumArchiveFrame = {
   contentBase64: string;
 };
 
-type SpectrumArchiveImportResult = {
+export type SpectrumArchiveImportResult = {
   inserted: number;
   updated: number;
   skipped: number;
+};
+
+export type SpectrumArchiveImportMode = 'merge' | 'idempotent';
+
+export type SpectrumArchiveQuery = {
+  from: string;
+  to: string;
+  deviceId?: string;
 };
 
 type PlacementConfigPayload = Record<string, unknown> & {
@@ -702,143 +710,141 @@ export class SpectrumStorageService {
   }
 
   async exportFrames(deviceId: string, from: string, to: string): Promise<SpectrumArchiveFrame[]> {
-    if (!this.mysql) {
-      return [];
-    }
-    const rows = await this.mysql.query<SpectrumFrameRow>(
-      `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
-         FROM device_spectrum_frames
-        WHERE device_id = ? AND captured_at >= ? AND captured_at <= ?
-        ORDER BY captured_at ASC`,
-      [deviceId, from, to],
-    );
     const frames: SpectrumArchiveFrame[] = [];
-    for (const row of rows) {
-      const safePath = assertSafeRelativePath(row.storage_path);
-      const absolutePath = join(this.baseDir, safePath);
-      if (!isInsideBase(this.baseDir, absolutePath)) {
-        continue;
-      }
-      try {
-        const content = await readFile(absolutePath);
-        const checksum = createHash('sha256').update(content).digest('hex');
-        if (row.checksum_sha256 && checksum !== row.checksum_sha256) {
-          continue;
-        }
-        const telemetryUuid = createArchiveSpectrumTelemetryUuid(row);
-        frames.push({
-          deviceId: row.device_id,
-          capturedAt: toIsoTimestamp(row.captured_at),
-          telemetryUuid,
-          storagePath: safePath,
-          fileSizeBytes: typeof row.file_size_bytes === 'number' ? row.file_size_bytes : content.byteLength,
-          checksumSha256: row.checksum_sha256 ?? checksum,
-          contentBase64: content.toString('base64'),
-        });
-      } catch {
-        continue;
-      }
-    }
+    for await (const frame of this.exportArchiveFrames({ deviceId, from, to })) frames.push(frame);
     return frames;
   }
 
-  async importFrames(frames: SpectrumArchiveFrame[]): Promise<SpectrumArchiveImportResult> {
+  async countArchiveFrames(query: SpectrumArchiveQuery): Promise<number> {
+    if (!this.mysql) return 0;
+    const where = ['captured_at >= ?', 'captured_at <= ?'];
+    const params: Array<string | number | boolean | null | Date | Buffer> = [query.from, query.to];
+    const deviceId = query.deviceId?.trim();
+    if (deviceId) {
+      where.push('device_id = ?');
+      params.push(deviceId);
+    }
+    const rows = await this.mysql.query<{ total: number | string }>(
+      `SELECT COUNT(*) AS total FROM device_spectrum_frames WHERE ${where.join(' AND ')}`,
+      params,
+    );
+    return Math.max(0, Math.floor(Number(rows[0]?.total ?? 0)));
+  }
+
+  async *exportArchiveFrames(query: SpectrumArchiveQuery, batchSize = 200): AsyncIterable<SpectrumArchiveFrame> {
+    if (!this.mysql) return;
+    const limit = Math.max(10, Math.min(1_000, Math.floor(batchSize)));
+    const deviceId = query.deviceId?.trim();
+    let cursorAt: string | null = null;
+    let cursorId = 0;
+
+    while (true) {
+      const where = ['captured_at >= ?', 'captured_at <= ?'];
+      const params: Array<string | number | boolean | null | Date | Buffer> = [query.from, query.to];
+      if (deviceId) {
+        where.push('device_id = ?');
+        params.push(deviceId);
+      }
+      if (cursorAt) {
+        where.push('(captured_at > ? OR (captured_at = ? AND id > ?))');
+        params.push(cursorAt, cursorAt, cursorId);
+      }
+      params.push(limit);
+      const rows = await this.mysql.query<SpectrumFrameRow>(
+        `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
+           FROM device_spectrum_frames
+          WHERE ${where.join(' AND ')}
+          ORDER BY captured_at ASC, id ASC
+          LIMIT ?`,
+        params,
+      );
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        const frame = await this.readArchiveFrame(row);
+        if (frame) yield frame;
+      }
+      const last = rows.at(-1)!;
+      cursorAt = toIsoTimestamp(last.captured_at);
+      cursorId = Number(last.id);
+      if (rows.length < limit) return;
+    }
+  }
+
+  async importFrames(
+    frames: SpectrumArchiveFrame[],
+    mode: SpectrumArchiveImportMode = 'merge',
+  ): Promise<SpectrumArchiveImportResult> {
     const result: SpectrumArchiveImportResult = { inserted: 0, updated: 0, skipped: 0 };
     for (const frame of frames) {
-      try {
-        const safePath = assertSafeRelativePath(frame.storagePath);
-        const absolutePath = join(this.baseDir, safePath);
-        if (!isInsideBase(this.baseDir, absolutePath)) {
-          throw new Error('unsafe_spectrum_path');
-        }
-        const content = Buffer.from(frame.contentBase64, 'base64');
-        const checksum = createHash('sha256').update(content).digest('hex');
-        if (frame.checksumSha256 && checksum !== frame.checksumSha256) {
-          result.skipped += 1;
-          continue;
-        }
-        await mkdir(dirname(absolutePath), { recursive: true });
-        const temporaryPath = `${absolutePath}.tmp`;
-        await writeFile(temporaryPath, content);
-        await rename(temporaryPath, absolutePath);
-
-        if (!this.mysql) {
-          result.inserted += 1;
-          continue;
-        }
-        const payload = await this.readPersistedPayload(safePath);
-        const axes = payload?.axes ?? { x: null, y: null, z: null };
-        const deviceDataId = await this.resolveDeviceDataId(frame.deviceId, frame.telemetryUuid);
-        const affectedRows = await this.mysql.execute(
-          `INSERT INTO device_spectrum_frames (
-             device_id,
-             device_data_id,
-             captured_at,
-             telemetry_uuid,
-             storage_path,
-             file_size_bytes,
-             checksum_sha256,
-             bin_count,
-             sample_rate_hz,
-             bin_hz,
-             magnitude_unit,
-             peak_x_freq_hz,
-             peak_x_amplitude,
-             peak_y_freq_hz,
-             peak_y_amplitude,
-             peak_z_freq_hz,
-             peak_z_amplitude,
-             created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             device_data_id = VALUES(device_data_id),
-             captured_at = VALUES(captured_at),
-             storage_path = VALUES(storage_path),
-             file_size_bytes = VALUES(file_size_bytes),
-             checksum_sha256 = VALUES(checksum_sha256),
-             bin_count = VALUES(bin_count),
-             sample_rate_hz = VALUES(sample_rate_hz),
-             bin_hz = VALUES(bin_hz),
-             magnitude_unit = VALUES(magnitude_unit),
-             peak_x_freq_hz = VALUES(peak_x_freq_hz),
-             peak_x_amplitude = VALUES(peak_x_amplitude),
-             peak_y_freq_hz = VALUES(peak_y_freq_hz),
-             peak_y_amplitude = VALUES(peak_y_amplitude),
-             peak_z_freq_hz = VALUES(peak_z_freq_hz),
-             peak_z_amplitude = VALUES(peak_z_amplitude)`,
-          [
-            frame.deviceId,
-            deviceDataId,
-            frame.capturedAt,
-            frame.telemetryUuid ?? null,
-            safePath,
-            content.byteLength,
-            checksum,
-            axes.x?.binCount ?? axes.y?.binCount ?? axes.z?.binCount ?? null,
-            axes.x?.sampleRateHz ?? axes.y?.sampleRateHz ?? axes.z?.sampleRateHz ?? null,
-            axes.x?.binHz ?? axes.y?.binHz ?? axes.z?.binHz ?? null,
-            axes.x?.magnitudeUnit ?? axes.y?.magnitudeUnit ?? axes.z?.magnitudeUnit ?? null,
-            axes.x?.peakFrequencyHz ?? null,
-            axes.x?.peakAmplitude ?? null,
-            axes.y?.peakFrequencyHz ?? null,
-            axes.y?.peakAmplitude ?? null,
-            axes.z?.peakFrequencyHz ?? null,
-            axes.z?.peakAmplitude ?? null,
-            new Date().toISOString(),
-          ],
-        );
-        if (affectedRows === 1) {
-          result.inserted += 1;
-        } else if (affectedRows > 1) {
-          result.updated += 1;
-        } else {
-          result.skipped += 1;
-        }
-      } catch {
-        result.skipped += 1;
-      }
+      const item = await this.importArchiveFrame(frame, mode);
+      result[item] += 1;
     }
     return result;
+  }
+
+  async importArchiveFrame(
+    frame: SpectrumArchiveFrame,
+    mode: SpectrumArchiveImportMode,
+  ): Promise<'inserted' | 'updated' | 'skipped'> {
+    try {
+      const safePath = assertSafeRelativePath(frame.storagePath);
+      const absolutePath = join(this.baseDir, safePath);
+      if (!isInsideBase(this.baseDir, absolutePath)) throw new Error('unsafe_spectrum_path');
+      const telemetryUuid = (frame.telemetryUuid ?? `sgp-frame:${frame.deviceId}:${frame.capturedAt}`).slice(0, 255);
+      const existing = this.mysql
+        ? (await this.mysql.query<{ storage_path: string }>(
+            `SELECT storage_path FROM device_spectrum_frames WHERE device_id = ? AND telemetry_uuid = ? LIMIT 1`,
+            [frame.deviceId, telemetryUuid],
+          ))[0]
+        : null;
+      if (mode === 'idempotent' && (existing || await stat(absolutePath).then(() => true).catch(() => false))) {
+        return 'skipped';
+      }
+
+      const content = Buffer.from(frame.contentBase64, 'base64');
+      const checksum = createHash('sha256').update(content).digest('hex');
+      if (frame.checksumSha256 && checksum !== frame.checksumSha256) return 'skipped';
+      await mkdir(dirname(absolutePath), { recursive: true });
+      const temporaryPath = `${absolutePath}.${randomUUID()}.tmp`;
+      await writeFile(temporaryPath, content);
+      await rename(temporaryPath, absolutePath);
+
+      if (!this.mysql) return existing ? 'updated' : 'inserted';
+      const payload = await this.readPersistedPayload(safePath);
+      const axes = payload?.axes ?? { x: null, y: null, z: null };
+      const deviceDataId = await this.resolveDeviceDataId(frame.deviceId, telemetryUuid);
+      await this.mysql.execute(
+        `INSERT INTO device_spectrum_frames (
+           device_id, device_data_id, captured_at, telemetry_uuid, storage_path, file_size_bytes, checksum_sha256,
+           bin_count, sample_rate_hz, bin_hz, magnitude_unit,
+           peak_x_freq_hz, peak_x_amplitude, peak_y_freq_hz, peak_y_amplitude, peak_z_freq_hz, peak_z_amplitude, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           device_data_id = VALUES(device_data_id), captured_at = VALUES(captured_at), storage_path = VALUES(storage_path),
+           file_size_bytes = VALUES(file_size_bytes), checksum_sha256 = VALUES(checksum_sha256), bin_count = VALUES(bin_count),
+           sample_rate_hz = VALUES(sample_rate_hz), bin_hz = VALUES(bin_hz), magnitude_unit = VALUES(magnitude_unit),
+           peak_x_freq_hz = VALUES(peak_x_freq_hz), peak_x_amplitude = VALUES(peak_x_amplitude),
+           peak_y_freq_hz = VALUES(peak_y_freq_hz), peak_y_amplitude = VALUES(peak_y_amplitude),
+           peak_z_freq_hz = VALUES(peak_z_freq_hz), peak_z_amplitude = VALUES(peak_z_amplitude)`,
+        [
+          frame.deviceId, deviceDataId, frame.capturedAt, telemetryUuid, safePath, content.byteLength, checksum,
+          axes.x?.binCount ?? axes.y?.binCount ?? axes.z?.binCount ?? null,
+          axes.x?.sampleRateHz ?? axes.y?.sampleRateHz ?? axes.z?.sampleRateHz ?? null,
+          axes.x?.binHz ?? axes.y?.binHz ?? axes.z?.binHz ?? null,
+          axes.x?.magnitudeUnit ?? axes.y?.magnitudeUnit ?? axes.z?.magnitudeUnit ?? null,
+          axes.x?.peakFrequencyHz ?? null, axes.x?.peakAmplitude ?? null,
+          axes.y?.peakFrequencyHz ?? null, axes.y?.peakAmplitude ?? null,
+          axes.z?.peakFrequencyHz ?? null, axes.z?.peakAmplitude ?? null,
+          new Date().toISOString(),
+        ],
+      );
+      if (existing?.storage_path && existing.storage_path !== safePath) {
+        await unlink(join(this.baseDir, assertSafeRelativePath(existing.storage_path))).catch(() => undefined);
+      }
+      return existing ? 'updated' : 'inserted';
+    } catch {
+      return 'skipped';
+    }
   }
 
   async readPlacementConfig(deviceId: string): Promise<PlacementConfigPayload | null> {
@@ -889,6 +895,28 @@ export class SpectrumStorageService {
         return null;
       }
       return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readArchiveFrame(row: SpectrumFrameRow): Promise<SpectrumArchiveFrame | null> {
+    try {
+      const safePath = assertSafeRelativePath(row.storage_path);
+      const absolutePath = join(this.baseDir, safePath);
+      if (!isInsideBase(this.baseDir, absolutePath)) return null;
+      const content = await readFile(absolutePath);
+      const checksum = createHash('sha256').update(content).digest('hex');
+      if (row.checksum_sha256 && checksum !== row.checksum_sha256) return null;
+      return {
+        deviceId: row.device_id,
+        capturedAt: toIsoTimestamp(row.captured_at),
+        telemetryUuid: createArchiveSpectrumTelemetryUuid(row),
+        storagePath: safePath,
+        fileSizeBytes: typeof row.file_size_bytes === 'number' ? row.file_size_bytes : content.byteLength,
+        checksumSha256: row.checksum_sha256 ?? checksum,
+        contentBase64: content.toString('base64'),
+      };
     } catch {
       return null;
     }

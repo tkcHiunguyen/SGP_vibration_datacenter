@@ -15,7 +15,7 @@
     "build:client": "pnpm -C server/client build",
     "build": "pnpm build:client && pnpm build:server",
     "typecheck": "pnpm -C server/client typecheck && pnpm -C server typecheck",
-    "test": "pnpm -C server test",
+    "test": "pnpm -C server/client test && pnpm -C server test",
     "release:check": "pnpm db:schema:export && pnpm typecheck && pnpm test && pnpm build",
     "prod:deploy": "node scripts/prod-deploy.mjs",
     "perf:build": "pnpm -C server/client build && pnpm -C server build",

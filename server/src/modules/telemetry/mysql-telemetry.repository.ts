@@ -7,9 +7,11 @@ import type {
   TelemetryHistoryPoint,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
+  TelemetryImportMode,
   TelemetryImportPoint,
   TelemetryImportResult,
   TelemetryRepository,
+  TelemetrySummaryRebuildRange,
 } from './telemetry.repository.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
@@ -53,6 +55,12 @@ const HOUR_MS = 60 * 60 * 1000;
 
 type CountRow = {
   total: number;
+};
+
+type ExistingImportKeyRow = {
+  device_id: string;
+  telemetry_uuid: string | null;
+  message_id: string | null;
 };
 
 type TelemetrySummaryRow = {
@@ -271,6 +279,22 @@ function createArchiveTelemetryUuid(row: TelemetryRow): string | undefined {
   }
 
   return `sgp-time:${row.device_id}:${toIsoTimestamp(row.received_at)}`.slice(0, 255);
+}
+
+function toArchivePoint(row: TelemetryRow): TelemetryImportPoint {
+  const telemetryUuid = createArchiveTelemetryUuid(row);
+  const payload: TelemetryPayload = { ...toPayload(row) };
+  if (telemetryUuid) {
+    payload.telemetry_uuid = telemetryUuid;
+    payload.telemetryUuid = telemetryUuid;
+  }
+  return {
+    deviceId: row.device_id,
+    receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
+    payload,
+    telemetryUuid,
+    sampleCount: toFiniteNumber(row.sample_count),
+  };
 }
 
 function parseIsoTimestamp(value?: string): number | null {
@@ -765,163 +789,241 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     };
   }
 
-  async exportHistory(query: TelemetryArchiveQuery): Promise<TelemetryImportPoint[]> {
-    if (!this.mysql) {
-      return [];
-    }
-
+  async countArchive(query: TelemetryArchiveQuery): Promise<number> {
+    if (!this.mysql) return 0;
     const fromTimestamp = parseIsoTimestamp(query.from);
     const toTimestamp = parseIsoTimestamp(query.to);
-    if (fromTimestamp === null || toTimestamp === null) {
-      return [];
-    }
-
-    const where: string[] = ['received_at >= ?', 'received_at <= ?'];
+    if (fromTimestamp === null || toTimestamp === null) return 0;
+    const where = ['received_at >= ?', 'received_at <= ?'];
     const params: Array<string | number | boolean | null | Date | Buffer> = [
       new Date(fromTimestamp).toISOString(),
       new Date(toTimestamp).toISOString(),
     ];
-
     const targetDeviceId = query.deviceId?.trim();
     if (targetDeviceId) {
       where.push('device_id = ?');
       params.push(targetDeviceId);
     }
+    const rows = await this.mysql.query<CountRow>(`SELECT COUNT(*) AS total FROM device_datas WHERE ${where.join(' AND ')}`, params);
+    return Math.max(0, Math.floor(Number(rows[0]?.total ?? 0)));
+  }
 
-    const rows = await this.mysql.query<TelemetryRow>(
-      `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
-              vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
-              drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
-              sample_count, telemetry_uuid, message_id,
-              temperature_available, vibration_available, adxl_status, adxl_fault_reason
-         FROM device_datas
-        WHERE ${where.join(' AND ')}
-        ORDER BY device_id ASC, received_at ASC, id ASC`,
-      params,
-    );
+  async *exportHistoryBatches(query: TelemetryArchiveQuery, batchSize = 1_000): AsyncIterable<TelemetryImportPoint[]> {
+    if (!this.mysql) return;
+    const fromTimestamp = parseIsoTimestamp(query.from);
+    const toTimestamp = parseIsoTimestamp(query.to);
+    if (fromTimestamp === null || toTimestamp === null) return;
+    const limit = Math.max(100, Math.min(5_000, Math.floor(batchSize)));
+    const fromIso = new Date(fromTimestamp).toISOString();
+    const toIso = new Date(toTimestamp).toISOString();
+    const targetDeviceId = query.deviceId?.trim();
+    let cursorAt: string | null = null;
+    let cursorId = 0;
 
-    return rows.map((row) => {
-      const telemetryUuid = createArchiveTelemetryUuid(row);
-      const payload: TelemetryPayload = { ...toPayload(row) };
-      if (telemetryUuid) {
-        payload.telemetry_uuid = telemetryUuid;
-        payload.telemetryUuid = telemetryUuid;
+    while (true) {
+      const where = ['received_at >= ?', 'received_at <= ?'];
+      const params: Array<string | number | boolean | null | Date | Buffer> = [fromIso, toIso];
+      if (targetDeviceId) {
+        where.push('device_id = ?');
+        params.push(targetDeviceId);
       }
-      return {
-        deviceId: row.device_id,
-        receivedAt: new Date(toIsoTimestamp(row.received_at)).toISOString(),
-        payload,
-        telemetryUuid,
-        sampleCount: toFiniteNumber(row.sample_count),
-      };
-    });
+      if (cursorAt) {
+        where.push('(received_at > ? OR (received_at = ? AND id > ?))');
+        params.push(cursorAt, cursorAt, cursorId);
+      }
+      params.push(limit);
+      const rows = await this.mysql.query<TelemetryRow>(
+        `SELECT id, device_id, received_at, temperature, vibration, ax, ay, az,
+                vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+                drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
+                sample_count, telemetry_uuid, message_id,
+                temperature_available, vibration_available, adxl_status, adxl_fault_reason
+           FROM device_datas
+          WHERE ${where.join(' AND ')}
+          ORDER BY received_at ASC, id ASC
+          LIMIT ?`,
+        params,
+      );
+      if (rows.length === 0) return;
+      yield rows.map(toArchivePoint);
+      const last = rows.at(-1)!;
+      cursorAt = toIsoTimestamp(last.received_at);
+      cursorId = Number(last.id);
+      if (rows.length < limit) return;
+    }
+  }
+
+  async exportHistory(query: TelemetryArchiveQuery): Promise<TelemetryImportPoint[]> {
+    const points: TelemetryImportPoint[] = [];
+    for await (const batch of this.exportHistoryBatches(query)) points.push(...batch);
+    return points;
   }
 
   async importHistory(points: TelemetryImportPoint[]): Promise<TelemetryImportResult> {
+    return await this.importHistoryBatch(points, 'merge');
+  }
+
+  async importHistoryBatch(points: TelemetryImportPoint[], mode: TelemetryImportMode): Promise<TelemetryImportResult> {
     const result: TelemetryImportResult = { inserted: 0, updated: 0, skipped: 0 };
     if (!this.mysql) {
       result.skipped = points.length;
       return result;
     }
 
+    type ImportRow = { deviceId: string; telemetryUuid: string; messageId: string; values: Array<string | number | boolean | null | Date | Buffer> };
+    const unique: ImportRow[] = [];
+    const seenTelemetry = new Set<string>();
+    const seenMessages = new Set<string>();
     for (const point of points) {
+      const deviceId = point.deviceId.trim();
+      const receivedAtMs = Date.parse(point.receivedAt);
+      if (!deviceId || !Number.isFinite(receivedAtMs)) {
+        result.skipped += 1;
+        continue;
+      }
+      const receivedAt = new Date(receivedAtMs).toISOString();
       const payload = point.payload ?? {};
       const metrics = createTelemetryMetricValues(payload);
-      const telemetryUuid = payload.vibrationAvailable === false
-        ? null
-        : point.telemetryUuid ?? normalizeTelemetryUuid(payload);
-      const affectedRows = await this.mysql.execute(
-        `INSERT INTO device_datas (
-           device_id,
-           received_at,
-           temperature,
-           vibration,
-           ax,
-           ay,
-           az,
-           vrms_x_mms,
-           vrms_y_mms,
-           vrms_z_mms,
-           vrms_unit,
-           drms_x_um,
-           drms_y_um,
-           drms_z_um,
-           drms_band_min_hz,
-           drms_band_max_hz,
-            drms_unit,
-            sample_count,
-            telemetry_uuid,
-            message_id,
-            temperature_available,
-            vibration_available,
-            adxl_status,
-            adxl_fault_reason
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           temperature = VALUES(temperature),
-           vibration = VALUES(vibration),
-           ax = VALUES(ax),
-           ay = VALUES(ay),
-           az = VALUES(az),
-           vrms_x_mms = VALUES(vrms_x_mms),
-           vrms_y_mms = VALUES(vrms_y_mms),
-           vrms_z_mms = VALUES(vrms_z_mms),
-           vrms_unit = VALUES(vrms_unit),
-           drms_x_um = VALUES(drms_x_um),
-           drms_y_um = VALUES(drms_y_um),
-           drms_z_um = VALUES(drms_z_um),
-           drms_band_min_hz = VALUES(drms_band_min_hz),
-            drms_band_max_hz = VALUES(drms_band_max_hz),
-            drms_unit = VALUES(drms_unit),
-            sample_count = VALUES(sample_count),
-            telemetry_uuid = VALUES(telemetry_uuid),
-            message_id = VALUES(message_id),
-            temperature_available = VALUES(temperature_available),
-            vibration_available = VALUES(vibration_available),
-            adxl_status = VALUES(adxl_status),
-            adxl_fault_reason = VALUES(adxl_fault_reason)`,
-        [
-          point.deviceId,
-          point.receivedAt,
-          metrics.temperature,
-          metrics.vibration,
-          metrics.ax,
-          metrics.ay,
-          metrics.az,
-          metrics.vrmsX,
-          metrics.vrmsY,
-          metrics.vrmsZ,
-          metrics.vrmsUnit,
-          metrics.drmsX,
-          metrics.drmsY,
-          metrics.drmsZ,
-          metrics.drmsBandMin,
-          metrics.drmsBandMax,
-          metrics.drmsUnit,
-          typeof point.sampleCount === 'number'
-            ? point.sampleCount
-            : typeof payload.sample_count === 'number'
-              ? payload.sample_count
-              : null,
-          telemetryUuid,
-          normalizeMessageId(payload),
+      const telemetryUuid = (point.telemetryUuid ?? normalizeTelemetryUuid(payload) ?? `sgp-time:${deviceId}:${receivedAt}`).slice(0, 255);
+      const messageId = (normalizeMessageId(payload) ?? telemetryUuid).slice(0, 255);
+      const row: ImportRow = {
+        deviceId,
+        telemetryUuid,
+        messageId,
+        values: [
+          deviceId, receivedAt, metrics.temperature, metrics.vibration, metrics.ax, metrics.ay, metrics.az,
+          metrics.vrmsX, metrics.vrmsY, metrics.vrmsZ, metrics.vrmsUnit,
+          metrics.drmsX, metrics.drmsY, metrics.drmsZ, metrics.drmsBandMin, metrics.drmsBandMax, metrics.drmsUnit,
+          typeof point.sampleCount === 'number' ? point.sampleCount : typeof payload.sample_count === 'number' ? payload.sample_count : null,
+          telemetryUuid, messageId,
           typeof payload.temperatureAvailable === 'boolean' ? Number(payload.temperatureAvailable) : null,
           typeof payload.vibrationAvailable === 'boolean' ? Number(payload.vibrationAvailable) : null,
           payload.adxlStatus ?? null,
           payload.adxlStatus === 'fault' ? payload.adxlFaultReason ?? null : null,
         ],
-      );
-      if (affectedRows === 1) {
-        result.inserted += 1;
-        await this.upsertHourlyAvailability(point.deviceId, point.receivedAt);
-      } else if (affectedRows > 1) {
-        result.updated += 1;
-      } else {
+      };
+      const telemetryKey = `${deviceId}\u0000${telemetryUuid}`;
+      const messageKey = `${deviceId}\u0000${messageId}`;
+      if (seenTelemetry.has(telemetryKey) || seenMessages.has(messageKey)) {
         result.skipped += 1;
+        continue;
       }
+      seenTelemetry.add(telemetryKey);
+      seenMessages.add(messageKey);
+      unique.push(row);
     }
+    const rows = unique;
+    if (rows.length === 0) return result;
 
-    return result;
+    return await this.mysql.transaction(async (tx) => {
+      const telemetryPlaceholders = rows.map(() => '(?, ?)').join(', ');
+      const messagePlaceholders = rows.map(() => '(?, ?)').join(', ');
+      const existingRows = await tx.query<ExistingImportKeyRow>(
+        `SELECT device_id, telemetry_uuid, message_id FROM device_datas
+         WHERE (device_id, telemetry_uuid) IN (${telemetryPlaceholders})
+            OR (device_id, message_id) IN (${messagePlaceholders})`,
+        [
+          ...rows.flatMap((row) => [row.deviceId, row.telemetryUuid]),
+          ...rows.flatMap((row) => [row.deviceId, row.messageId]),
+        ],
+      );
+      const existingTelemetry = new Set(existingRows.filter((row) => row.telemetry_uuid).map((row) => `${row.device_id}\u0000${row.telemetry_uuid}`));
+      const existingMessages = new Set(existingRows.filter((row) => row.message_id).map((row) => `${row.device_id}\u0000${row.message_id}`));
+      const isExisting = (row: ImportRow) => existingTelemetry.has(`${row.deviceId}\u0000${row.telemetryUuid}`)
+        || existingMessages.has(`${row.deviceId}\u0000${row.messageId}`);
+      const writeRows = mode === 'idempotent' ? rows.filter((row) => !isExisting(row)) : rows;
+      if (mode === 'idempotent') {
+        result.skipped += rows.length - writeRows.length;
+      } else {
+        result.inserted += rows.filter((row) => !isExisting(row)).length;
+        result.updated += rows.filter(isExisting).length;
+      }
+      if (writeRows.length === 0) return result;
+
+      const rowPlaceholder = `(${Array.from({ length: 24 }, () => '?').join(', ')})`;
+      const insertPrefix = mode === 'idempotent' ? 'INSERT IGNORE' : 'INSERT';
+      const updateClause = mode === 'merge' ? `ON DUPLICATE KEY UPDATE
+        received_at = VALUES(received_at), temperature = VALUES(temperature), vibration = VALUES(vibration), ax = VALUES(ax), ay = VALUES(ay), az = VALUES(az),
+        vrms_x_mms = VALUES(vrms_x_mms), vrms_y_mms = VALUES(vrms_y_mms), vrms_z_mms = VALUES(vrms_z_mms), vrms_unit = VALUES(vrms_unit),
+        drms_x_um = VALUES(drms_x_um), drms_y_um = VALUES(drms_y_um), drms_z_um = VALUES(drms_z_um),
+        drms_band_min_hz = VALUES(drms_band_min_hz), drms_band_max_hz = VALUES(drms_band_max_hz), drms_unit = VALUES(drms_unit),
+        sample_count = VALUES(sample_count), telemetry_uuid = VALUES(telemetry_uuid), message_id = VALUES(message_id),
+        temperature_available = VALUES(temperature_available), vibration_available = VALUES(vibration_available),
+        adxl_status = VALUES(adxl_status), adxl_fault_reason = VALUES(adxl_fault_reason)` : '';
+      const affectedRows = await tx.execute(
+        `${insertPrefix} INTO device_datas (
+          device_id, received_at, temperature, vibration, ax, ay, az,
+          vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+          drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
+          sample_count, telemetry_uuid, message_id, temperature_available, vibration_available, adxl_status, adxl_fault_reason
+        ) VALUES ${writeRows.map(() => rowPlaceholder).join(', ')} ${updateClause}`,
+        writeRows.flatMap((row) => row.values),
+      );
+      if (mode === 'idempotent') {
+        result.inserted += affectedRows;
+        result.skipped += Math.max(0, writeRows.length - affectedRows);
+      }
+      return result;
+    });
+  }
+
+  async rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): Promise<void> {
+    if (!this.mysql || ranges.length === 0) return;
+    const merged = new Map<string, { from: number; to: number }>();
+    for (const range of ranges) {
+      const deviceId = range.deviceId.trim();
+      const from = Date.parse(range.from);
+      const to = Date.parse(range.to);
+      if (!deviceId || !Number.isFinite(from) || !Number.isFinite(to)) continue;
+      const current = merged.get(deviceId);
+      merged.set(deviceId, {
+        from: current ? Math.min(current.from, from) : from,
+        to: current ? Math.max(current.to, to) : to,
+      });
+    }
+    for (const [deviceId, range] of merged) {
+      const fromHour = new Date(Math.floor(range.from / HOUR_MS) * HOUR_MS).toISOString();
+      const toExclusive = new Date((Math.floor(range.to / HOUR_MS) + 1) * HOUR_MS).toISOString();
+      await this.mysql.transaction(async (tx) => {
+        await tx.execute(
+          `DELETE FROM device_telemetry_hour_summaries WHERE device_id = ? AND hour_started_at >= ? AND hour_started_at < ?`,
+          [deviceId, fromHour, toExclusive],
+        );
+        await tx.execute(
+          `INSERT INTO device_telemetry_hour_summaries (device_id, hour_started_at, sample_count, first_received_at, last_received_at)
+           SELECT device_id, DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00'), COUNT(*), MIN(received_at), MAX(received_at)
+           FROM device_datas WHERE device_id = ? AND received_at >= ? AND received_at < ?
+           GROUP BY device_id, DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00')`,
+          [deviceId, fromHour, toExclusive],
+        );
+        await tx.execute(
+          `DELETE FROM device_telemetry_hour_metric_summaries WHERE device_id = ? AND hour_started_at >= ? AND hour_started_at < ?`,
+          [deviceId, fromHour, toExclusive],
+        );
+        await tx.execute(
+          `INSERT INTO device_telemetry_hour_metric_summaries (
+             device_id, hour_started_at, sample_count, first_received_at, last_received_at,
+             temperature, vibration, ax, ay, az, vrms_x_mms, vrms_y_mms, vrms_z_mms, vrms_unit,
+             drms_x_um, drms_y_um, drms_z_um, drms_band_min_hz, drms_band_max_hz, drms_unit,
+             temperature_sample_count, vibration_sample_count, ax_sample_count, ay_sample_count, az_sample_count,
+             vrms_x_sample_count, vrms_y_sample_count, vrms_z_sample_count,
+             drms_x_sample_count, drms_y_sample_count, drms_z_sample_count,
+             drms_band_min_sample_count, drms_band_max_sample_count
+           )
+           SELECT device_id, DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00'), COUNT(*), MIN(received_at), MAX(received_at),
+             AVG(temperature), AVG(vibration), AVG(ax), AVG(ay), AVG(az),
+             AVG(vrms_x_mms), AVG(vrms_y_mms), AVG(vrms_z_mms), MAX(vrms_unit),
+             AVG(drms_x_um), AVG(drms_y_um), AVG(drms_z_um), AVG(drms_band_min_hz), AVG(drms_band_max_hz), MAX(drms_unit),
+             COUNT(temperature), COUNT(vibration), COUNT(ax), COUNT(ay), COUNT(az),
+             COUNT(vrms_x_mms), COUNT(vrms_y_mms), COUNT(vrms_z_mms),
+             COUNT(drms_x_um), COUNT(drms_y_um), COUNT(drms_z_um),
+             COUNT(drms_band_min_hz), COUNT(drms_band_max_hz)
+           FROM device_datas WHERE device_id = ? AND received_at >= ? AND received_at < ?
+           GROUP BY device_id, DATE_FORMAT(received_at, '%Y-%m-%d %H:00:00')`,
+          [deviceId, fromHour, toExclusive],
+        );
+      });
+    }
   }
 
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {

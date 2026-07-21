@@ -7,9 +7,11 @@ import type {
   TelemetryAvailabilityQuery,
   TelemetryHistoryQuery,
   TelemetryHistoryResult,
+  TelemetryImportMode,
   TelemetryImportPoint,
   TelemetryImportResult,
   TelemetryRepository,
+  TelemetrySummaryRebuildRange,
 } from './telemetry.repository.js';
 import { DeviceService } from '../device/device.service.js';
 
@@ -158,8 +160,24 @@ export class TelemetryService {
     return await this.repository.exportHistory(query);
   }
 
+  async countArchive(query: TelemetryArchiveQuery): Promise<number> {
+    return await this.repository.countArchive(query);
+  }
+
+  exportHistoryBatches(query: TelemetryArchiveQuery, batchSize?: number): AsyncIterable<TelemetryImportPoint[]> {
+    return this.repository.exportHistoryBatches(query, batchSize);
+  }
+
   async importHistory(points: TelemetryImportPoint[]): Promise<TelemetryImportResult> {
     return await this.repository.importHistory(points);
+  }
+
+  async importHistoryBatch(points: TelemetryImportPoint[], mode: TelemetryImportMode): Promise<TelemetryImportResult> {
+    return await this.repository.importHistoryBatch(points, mode);
+  }
+
+  async rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): Promise<void> {
+    await this.repository.rebuildHourlySummaries(ranges);
   }
 
   async applyRetention(): Promise<{ removed: number; kept: number; cutoffAt: string } | null> {

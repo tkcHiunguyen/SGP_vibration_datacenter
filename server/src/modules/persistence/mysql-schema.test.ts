@@ -37,6 +37,30 @@ const exportJobColumns = [
   'updated_at',
 ];
 
+const importJobColumns = [
+  'job_id',
+  'upload_id',
+  'status',
+  'stage',
+  'progress',
+  'stage_progress',
+  'file_name',
+  'file_path',
+  'file_sha256',
+  'size_bytes',
+  'mode',
+  'total_measurements',
+  'processed_measurements',
+  'inserted_count',
+  'updated_count',
+  'skipped_count',
+  'failed_count',
+  'records_per_second',
+  'estimated_seconds_remaining',
+  'checkpoint_json',
+  'expires_at',
+];
+
 test('runtime MySQL schema includes derived telemetry columns', () => {
   for (const column of telemetryColumns) {
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
@@ -47,6 +71,13 @@ test('runtime MySQL schema includes derived telemetry columns', () => {
 test('runtime MySQL schema includes data export job table', () => {
   assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS data_export_jobs/i);
   for (const column of exportJobColumns) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
+  }
+});
+
+test('runtime MySQL schema includes persistent data import jobs', () => {
+  assert.match(MYSQL_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS data_import_jobs/i);
+  for (const column of importJobColumns) {
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));
   }
 });

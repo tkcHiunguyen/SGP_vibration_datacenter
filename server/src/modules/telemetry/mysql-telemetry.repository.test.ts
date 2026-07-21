@@ -27,6 +27,10 @@ class FakeMySqlAccess {
       return (this.rowsByKind.bucket ?? []) as T[];
     }
 
+    if (sql.includes('FROM device_datas') && sql.includes('(device_id, telemetry_uuid)')) {
+      return (this.rowsByKind.existing ?? []) as T[];
+    }
+
     return (this.rowsByKind.raw ?? []) as T[];
   }
 
@@ -41,6 +45,10 @@ class FakeMySqlAccess {
   async ensureReady(): Promise<void> {}
 
   async close(): Promise<void> {}
+
+  async transaction<T>(work: (executor: FakeMySqlAccess) => Promise<T>): Promise<T> {
+    return await work(this);
+  }
 }
 
 test('normal telemetry persists both temperature and vibration metrics', async () => {
@@ -80,7 +88,7 @@ test('normal telemetry persists both temperature and vibration metrics', async (
   assert.equal(values.length, hourlySummaryInsert.params.length + 1);
 });
 
-test('imported history updates hourly availability for newly inserted records', async () => {
+test('batch import uses one multi-row write and hourly summaries are rebuilt in bulk', async () => {
   const mysql = new FakeMySqlAccess({});
   const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
 
@@ -99,14 +107,16 @@ test('imported history updates hourly availability for newly inserted records', 
   ]);
 
   assert.equal(result.inserted, 1);
-  const availabilityInsert = mysql.calls.find((call) => call.sql.includes('INSERT INTO device_telemetry_hour_summaries'));
-  assert.ok(availabilityInsert);
-  assert.deepEqual(availabilityInsert.params, [
-    'ESP-IMPORT',
-    '2026-07-17T08:00:00.000Z',
-    '2026-07-17T08:15:30.000Z',
-    '2026-07-17T08:15:30.000Z',
-  ]);
+  assert.equal(mysql.calls.filter((call) => call.sql.includes('INSERT INTO device_datas')).length, 1);
+  assert.equal(mysql.calls.some((call) => call.sql.includes('device_telemetry_hour_summaries')), false);
+
+  await repository.rebuildHourlySummaries([{
+    deviceId: 'ESP-IMPORT',
+    from: '2026-07-17T08:15:30.000Z',
+    to: '2026-07-17T08:15:30.000Z',
+  }]);
+  assert.ok(mysql.calls.some((call) => call.sql.includes('INSERT INTO device_telemetry_hour_summaries')));
+  assert.ok(mysql.calls.some((call) => call.sql.includes('INSERT INTO device_telemetry_hour_metric_summaries')));
 });
 
 test('partial ADXL-fault telemetry stores temperature without vibration or spectrum linkage', async () => {
@@ -301,8 +311,90 @@ test('archive export returns raw range without history limit and fills stable te
   assert.equal(result.length, 1);
   assert.equal(result[0]?.telemetryUuid, 'sgp-time:ESP-1:2026-04-29T17:00:05.000Z');
   assert.equal(result[0]?.payload.telemetry_uuid, result[0]?.telemetryUuid);
-  const exportCall = mysql.calls.find((call) => call.sql.includes('ORDER BY device_id ASC, received_at ASC, id ASC'));
+  const exportCall = mysql.calls.find((call) => call.sql.includes('ORDER BY received_at ASC, id ASC'));
   assert.ok(exportCall);
-  assert.doesNotMatch(exportCall.sql, /LIMIT \?/);
-  assert.deepEqual(exportCall.params, ['2026-04-29T17:00:00.000Z', '2026-04-30T16:59:59.999Z']);
+  assert.match(exportCall.sql, /LIMIT \?/);
+  assert.deepEqual(exportCall.params, ['2026-04-29T17:00:00.000Z', '2026-04-30T16:59:59.999Z', 1000]);
+});
+
+test('merge updates duplicates while idempotent skips them without a write', async () => {
+  const existing = [{ device_id: 'ESP-1', telemetry_uuid: 'telemetry-1', message_id: 'telemetry-1' }];
+  const point = {
+    deviceId: 'ESP-1',
+    receivedAt: '2026-07-17T08:15:30.000Z',
+    telemetryUuid: 'telemetry-1',
+    payload: { messageId: 'telemetry-1', temperature: 30 },
+  };
+
+  const mergeMysql = new FakeMySqlAccess({ existing });
+  const merge = await new MySqlTelemetryRepository(mergeMysql as unknown as MySqlAccess)
+    .importHistoryBatch([point], 'merge');
+  assert.deepEqual(merge, { inserted: 0, updated: 1, skipped: 0 });
+  assert.equal(mergeMysql.calls.filter((call) => call.sql.includes('INSERT INTO device_datas')).length, 1);
+
+  const idempotentMysql = new FakeMySqlAccess({ existing });
+  const idempotent = await new MySqlTelemetryRepository(idempotentMysql as unknown as MySqlAccess)
+    .importHistoryBatch([point], 'idempotent');
+  assert.deepEqual(idempotent, { inserted: 0, updated: 0, skipped: 1 });
+  assert.equal(idempotentMysql.calls.filter((call) => call.sql.includes('INSERT INTO device_datas')).length, 0);
+});
+
+test('a 750-record import batch performs one existing-key query and one multi-row insert', async () => {
+  const mysql = new FakeMySqlAccess({ existing: [] });
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+  const points = Array.from({ length: 750 }, (_, index) => ({
+    deviceId: 'ESP-BATCH',
+    receivedAt: new Date(Date.parse('2026-07-17T00:00:00.000Z') + index * 1_000).toISOString(),
+    telemetryUuid: `telemetry-${index}`,
+    payload: { messageId: `message-${index}`, temperature: 20 + (index % 5) },
+  }));
+
+  const result = await repository.importHistoryBatch(points, 'merge');
+  assert.equal(result.inserted, 750);
+  assert.equal(mysql.calls.filter((call) => call.sql.includes('(device_id, telemetry_uuid)')).length, 1);
+  assert.equal(mysql.calls.filter((call) => call.sql.includes('INSERT INTO device_datas')).length, 1);
+});
+
+test('archive export advances a received_at/id cursor between batches', async () => {
+  class PagedMySqlAccess extends FakeMySqlAccess {
+    private page = 0;
+
+    override async query<T extends Record<string, unknown>>(
+      sql: string,
+      params: Array<string | number | boolean | null | Date | Buffer> = [],
+    ): Promise<T[]> {
+      if (!sql.includes('ORDER BY received_at ASC, id ASC')) return await super.query<T>(sql, params);
+      this.calls.push({ sql, params });
+      this.page += 1;
+      const count = this.page === 1 ? 100 : 1;
+      const start = this.page === 1 ? 1 : 101;
+      return Array.from({ length: count }, (_, offset) => ({
+        id: start + offset,
+        device_id: 'ESP-CURSOR',
+        received_at: new Date(Date.parse('2026-07-17T00:00:00.000Z') + (start + offset) * 1_000).toISOString(),
+        temperature: 20,
+        vibration: null,
+        ax: null,
+        ay: null,
+        az: null,
+        telemetry_uuid: `cursor-${start + offset}`,
+        message_id: `cursor-${start + offset}`,
+      })) as unknown as T[];
+    }
+  }
+
+  const mysql = new PagedMySqlAccess({});
+  const repository = new MySqlTelemetryRepository(mysql as unknown as MySqlAccess);
+  const sizes: number[] = [];
+  for await (const batch of repository.exportHistoryBatches({
+    from: '2026-07-17T00:00:00.000Z',
+    to: '2026-07-18T00:00:00.000Z',
+  }, 100)) {
+    sizes.push(batch.length);
+  }
+  assert.deepEqual(sizes, [100, 1]);
+  const calls = mysql.calls.filter((call) => call.sql.includes('ORDER BY received_at ASC, id ASC'));
+  assert.equal(calls.length, 2);
+  assert.match(calls[1]!.sql, /received_at > \?/);
+  assert.equal(calls[1]!.params.at(-1), 100);
 });

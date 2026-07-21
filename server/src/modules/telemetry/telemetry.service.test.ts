@@ -21,7 +21,11 @@ class FakeTelemetryRepository implements TelemetryRepository {
   async listAvailableDays() { return []; }
   async summarizeDevice() { return { total: 0, estimatedBytes: 0 }; }
   async exportHistory() { return []; }
+  async countArchive() { return 0; }
+  async *exportHistoryBatches() { yield []; }
   async importHistory() { return { inserted: 0, updated: 0, skipped: 0 }; }
+  async importHistoryBatch() { return { inserted: 0, updated: 0, skipped: 0 }; }
+  async rebuildHourlySummaries() {}
   async applyRetention() { return null; }
 }
 

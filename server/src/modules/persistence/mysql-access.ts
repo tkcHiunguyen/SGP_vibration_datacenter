@@ -1,9 +1,14 @@
-import { createPool, type Pool, type RowDataPacket } from 'mysql2/promise';
+import { createPool, type Pool, type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import type { MySqlConnectionSettings } from './mysql-env.js';
 import { resolveMySqlConnectionSettings } from './mysql-env.js';
 import { MYSQL_SCHEMA_SQL } from './mysql-schema.js';
 
 type QueryParams = Array<string | number | boolean | null | Date | Buffer>;
+
+export type MySqlExecutor = {
+  query<T extends Record<string, unknown>>(sql: string, params?: QueryParams): Promise<T[]>;
+  execute(sql: string, params?: QueryParams): Promise<number>;
+};
 
 function isIsoDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
@@ -73,6 +78,22 @@ export class MySqlAccess {
     return 0;
   }
 
+  async transaction<T>(work: (executor: MySqlExecutor) => Promise<T>): Promise<T> {
+    await this.ensureReady();
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const result = await work(this.connectionExecutor(connection));
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -86,6 +107,22 @@ export class MySqlAccess {
       return;
     }
     await this.pool.query(MYSQL_SCHEMA_SQL);
+  }
+
+  private connectionExecutor(connection: PoolConnection): MySqlExecutor {
+    return {
+      query: async <T extends Record<string, unknown>>(sql: string, params: QueryParams = []) => {
+        const [rows] = await connection.query<RowDataPacket[]>(sql, normalizeParams(params) as never);
+        return rows as unknown as T[];
+      },
+      execute: async (sql: string, params: QueryParams = []) => {
+        const [result] = await connection.execute(sql, normalizeParams(params) as never);
+        if (typeof result === 'object' && result && 'affectedRows' in result) {
+          return (result as { affectedRows?: number }).affectedRows ?? 0;
+        }
+        return 0;
+      },
+    };
   }
 }
 

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +7,36 @@ import { dirname, resolve } from 'node:path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+function appVersionPlugin(): Plugin {
+  let buildId = '';
+  let builtAt = '';
+
+  return {
+    name: 'sgp-app-version',
+    apply: 'build',
+    buildStart() {
+      buildId = `${Date.now().toString(36)}`;
+      builtAt = new Date().toISOString();
+    },
+    transformIndexHtml() {
+      return [{
+        tag: 'meta',
+        attrs: { name: 'sgp-app-build-id', content: buildId },
+        injectTo: 'head',
+      }];
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ buildId, builtAt }),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [appVersionPlugin(), react(), tailwindcss()],
   base: '/app/',
   define: {
     'process.env': '{}',

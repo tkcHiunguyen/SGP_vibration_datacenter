@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   DEFAULT_HISTORY_PRESET_KEY,
   FFT_AXIS_DISPLAY_ORDER,
+  getChartModalLayout,
   toSpectrumChartData,
   VIBRATION_AXIS_LABELS,
 } from "./chart-parts";
@@ -55,4 +56,13 @@ test("keeps RMS spectrum zero when all amplitudes are zero", () => {
 
   assert.equal(data.every((row) => row.amp === 0), true);
   assert.equal(data.every((row) => row.unit === "m/s²"), true);
+});
+
+test("keeps the 4K wallboard chart stack inside one viewport", () => {
+  const layout = getChartModalLayout(3072, 1897, true);
+
+  assert.ok(layout.chartHeight <= 320);
+  assert.ok(layout.spectrumHeight <= 240);
+  assert.ok(layout.overviewHeight <= 84);
+  assert.ok(layout.chartHeight * 2 + layout.spectrumHeight + layout.overviewHeight <= 970);
 });

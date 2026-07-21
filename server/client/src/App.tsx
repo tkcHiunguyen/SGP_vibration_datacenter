@@ -5,6 +5,7 @@ import { DisplayModeProvider, useDisplayMode } from "./app/context/DisplayModeCo
 import { TopHeader } from "./app/components/TopHeader";
 import { LeftPanel } from "./app/components/LeftPanel";
 import { MainPanel } from "./app/components/MainPanel";
+import { DisplayScreenshotReporter } from "./app/components/DisplayScreenshotReporter";
 import { ToastStack } from "./app/components/ui";
 import {
   DeviceListItem,
@@ -697,6 +698,7 @@ function DashboardShell({
         />
       </div>
       <ToastStack items={toasts} onDismiss={onDismissToast} />
+      <DisplayScreenshotReporter />
     </div>
   );
 }

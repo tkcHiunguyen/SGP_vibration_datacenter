@@ -14,6 +14,7 @@ import { AuditService } from './modules/audit/audit.service.js';
 import { createAuthServiceFromEnv } from './modules/auth/index.js';
 import { InMemoryDeviceRepository } from './modules/device/in-memory-device.repository.js';
 import { DeviceService } from './modules/device/device.service.js';
+import { DisplayScreenshotService } from './modules/display-screenshot/display-screenshot.service.js';
 import { InMemoryDataExportJobRepository } from './modules/data-export/in-memory-data-export-job.repository.js';
 import { MySqlDataExportJobRepository } from './modules/data-export/mysql-data-export-job.repository.js';
 import { MySqlTelemetryRepository } from './modules/telemetry/mysql-telemetry.repository.js';
@@ -30,6 +31,11 @@ import { TelemetryIngressGuard } from './modules/reliability/telemetry-ingress-g
 import { ServerRuntimeTracker } from './modules/reliability/server-runtime-tracker.js';
 import { SpectrumStorageService } from './modules/spectrum/spectrum-storage.service.js';
 import { ZoneService } from './modules/zone/zone.service.js';
+import { createSgpDataJobRepository } from './modules/sgpdata/sgpdata-job.repository.js';
+import { SgpDataImportWorker } from './modules/sgpdata/sgpdata-import.worker.js';
+import { SgpDataImportService } from './modules/sgpdata/sgpdata-import.service.js';
+import { SgpDataExportWorker } from './modules/sgpdata/sgpdata-export.worker.js';
+import { SgpDataExportService } from './modules/sgpdata/sgpdata-export.service.js';
 
 const serviceName = 'sgp-vibration-datacenter-server';
 const isRunningViaPnpm = (process.env.npm_execpath || '').includes('pnpm');
@@ -117,9 +123,6 @@ const commandRepository = mysqlAccess
 const dataExportJobRepository = mysqlAccess
   ? await MySqlDataExportJobRepository.create(mysqlAccess)
   : new InMemoryDataExportJobRepository();
-if (serverRuntime) {
-  await dataExportJobRepository.markActiveJobsInterrupted(serverRuntime.startedAt, 'server_restarted');
-}
 const alertRepository = await InMemoryAlertRepository.create(mysqlAccess);
 const auditRepository = await InMemoryAuditRepository.create(mysqlAccess);
 
@@ -129,6 +132,7 @@ const deviceService = new DeviceService(deviceRepository, {
   resolveSocketZone: (zone) => zoneService.resolveExistingCode(zone),
 });
 const telemetryService = new TelemetryService(telemetryRepository, deviceService);
+const displayScreenshotService = new DisplayScreenshotService();
 const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
   baseDir: env.SPECTRUM_STORAGE_DIR,
   frameFlushMs: env.SPECTRUM_FRAME_FLUSH_MS,
@@ -141,6 +145,34 @@ const commandServiceWithTimeout = new CommandService(
   commandRepository,
   env.COMMAND_TIMEOUT_MS,
 );
+const sgpDataJobRepository = createSgpDataJobRepository(mysqlAccess);
+const sgpDataExportDir = join(process.cwd(), 'storage', 'exports');
+const sgpDataImportWorker = new SgpDataImportWorker(
+  sgpDataJobRepository,
+  deviceService,
+  telemetryService,
+  spectrumStorageService,
+  auditService,
+  { workerRunId: serverRuntime?.runId },
+);
+const sgpDataImportService = new SgpDataImportService(sgpDataJobRepository, sgpDataImportWorker);
+const sgpDataExportWorker = new SgpDataExportWorker(
+  dataExportJobRepository,
+  deviceService,
+  telemetryService,
+  spectrumStorageService,
+  auditService,
+  sgpDataExportDir,
+  { workerRunId: serverRuntime?.runId },
+);
+const sgpDataExportService = new SgpDataExportService(
+  dataExportJobRepository,
+  deviceService,
+  sgpDataExportWorker,
+  { exportDir: sgpDataExportDir },
+);
+await sgpDataImportService.initialize(serverRuntime?.startedAt);
+await sgpDataExportService.initialize(serverRuntime?.startedAt);
 const telemetryIngressGuard = new TelemetryIngressGuard({
   dedupeWindowMs: env.TELEMETRY_DEDUPE_WINDOW_MS,
   maxPerDevicePerMinute: env.TELEMETRY_MAX_PER_DEVICE_PER_MINUTE,
@@ -158,9 +190,10 @@ for (const listener of listeners) {
     commandService: commandServiceWithTimeout,
     realtimeGateway,
     zoneService,
+    displayScreenshotService,
     spectrumStorageService,
-    dataExportJobRepository,
-    dataExportJobWorkerRunId: serverRuntime?.runId,
+    sgpDataImportService,
+    sgpDataExportService,
     persistenceStatus: mysqlRuntime.status,
   });
 }

@@ -12,7 +12,7 @@
     "seed:demo-2m:reset": "tsx src/tools/seed-demo-2m.ts --reset",
     "seed:demo-2m:live": "tsx src/tools/seed-demo-2m.ts --live",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test $(find src -name '*.test.ts' -print)",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js"
   },
   "dependencies": {

@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Database, Download, Settings, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, Download, Monitor, Settings, Upload } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import { ConsolePage, ConsolePageHeader, ConsolePanel } from "./ui";
 import { SgpDataPortabilityPanel } from "./SgpDataPortabilityPanel";
+import { DisplayScreenshotsPanel } from "./DisplayScreenshotsPanel";
 
-type SettingsKey = "data-import" | "data-export";
+type SettingsKey = "data-import" | "data-export" | "display-screens";
 type SettingsItem = {
   key: SettingsKey;
   title: string;
@@ -33,8 +34,16 @@ export function SettingsPage() {
       icon: <Download size={15} strokeWidth={2.1} />,
       status: "Export",
     },
+    {
+      key: "display-screens",
+      title: "Màn hình hiển thị",
+      detail: "Xem ảnh giao diện từ các client",
+      icon: <Monitor size={15} strokeWidth={2.1} />,
+      status: "Screens",
+    },
   ], []);
   const activeItem = items.find((item) => item.key === activeKey) ?? items[0];
+  const displayItem = items.find((item) => item.key === "display-screens")!;
 
   return (
     <ConsolePage
@@ -43,7 +52,7 @@ export function SettingsPage() {
       <ConsolePageHeader
         icon={<Settings size={17} strokeWidth={2.1} />}
         title="Cài đặt"
-        subtitle="Quản lý dữ liệu hệ thống."
+        subtitle="Quản lý dữ liệu và các màn hình hiển thị."
       />
 
       <div
@@ -59,6 +68,10 @@ export function SettingsPage() {
           </div>
           <div style={{ display: "grid", gap: 10, padding: 10 }}>
             <DataGroup />
+            <div style={{ color: C.textMuted, fontSize: "0.61rem", fontWeight: 850, letterSpacing: "0.08em", padding: "2px 4px 0", textTransform: "uppercase" }}>
+              Client
+            </div>
+            <SettingsNavItem item={displayItem} active={activeKey === displayItem.key} />
           </div>
         </ConsolePanel>
 
@@ -90,7 +103,11 @@ export function SettingsPage() {
           </div>
 
           <div style={{ padding: 14, minWidth: 0 }}>
-            <SgpDataPortabilityPanel mode={activeKey === "data-export" ? "export" : "import"} />
+            {activeKey === "display-screens" ? (
+              <DisplayScreenshotsPanel />
+            ) : (
+              <SgpDataPortabilityPanel mode={activeKey === "data-export" ? "export" : "import"} />
+            )}
           </div>
         </ConsolePanel>
       </div>
@@ -127,7 +144,7 @@ export function SettingsPage() {
         </button>
         {dataOpen ? (
           <div style={{ display: "grid", gap: 6, paddingLeft: 12 }}>
-            {items.map((item) => (
+            {items.filter((item) => item.key !== "display-screens").map((item) => (
               <SettingsNavItem key={item.key} item={item} active={item.key === activeKey} />
             ))}
           </div>

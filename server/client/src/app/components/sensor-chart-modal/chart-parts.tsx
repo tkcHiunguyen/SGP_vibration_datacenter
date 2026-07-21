@@ -118,13 +118,22 @@ export function getChartModalLayout(containerWidth?: number, containerHeight?: n
   const largeScreenVerticalRoom = viewportWidth >= 760
     ? Math.max(0, viewportHeight - 1200)
     : 0;
+  const wallboardChartHeight = Math.max(220, Math.min(320, Math.round(viewportHeight * 0.16)));
+  const wallboardOverviewHeight = Math.max(56, Math.min(84, Math.round(viewportHeight * 0.04)));
+  const wallboardSpectrumHeight = Math.max(160, Math.min(240, Math.round(viewportHeight * 0.12)));
 
   return {
     viewportWidth,
     viewportHeight,
-    chartHeight: baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47) + (wallboard ? 72 : 0),
-    overviewHeight: baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07) + (wallboard ? 24 : 0),
-    spectrumHeight: baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15) + (wallboard ? 56 : 0),
+    chartHeight: wallboard
+      ? wallboardChartHeight
+      : baseChartHeight + verticalFill + Math.round(largeScreenVerticalRoom * 0.47),
+    overviewHeight: wallboard
+      ? wallboardOverviewHeight
+      : baseOverviewHeight + Math.round(largeScreenVerticalRoom * 0.07),
+    spectrumHeight: wallboard
+      ? wallboardSpectrumHeight
+      : baseSpectrumHeight + Math.round(verticalFill * 1.9) + Math.round(largeScreenVerticalRoom * 0.15),
     topGridGap: wallboard ? 18 : tightHeight ? 4 : compactHeight ? 5 : 5,
     sectionGap: wallboard ? 20 : tightHeight ? 3 : compactHeight ? 4 : scaledDesktopHeight ? 4 : 6,
     chartTitleGap: wallboard ? 10 : tightHeight ? 1 : scaledDesktopHeight ? 2 : 3,

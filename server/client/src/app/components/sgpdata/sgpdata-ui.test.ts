@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+const root = dirname(fileURLToPath(import.meta.url));
+
+test("import UI uploads once with real XHR progress and creates the job from uploadId", async () => {
+  const source = await readFile(join(root, "ImportUploadPanel.tsx"), "utf8");
+  assert.match(source, /new XMLHttpRequest\(\)/);
+  assert.match(source, /xhr\.upload\.onprogress/);
+  assert.match(source, /\/api\/sgpdata\/import\/uploads/);
+  assert.match(source, /JSON\.stringify\(\{ uploadId, mode \}\)/);
+  assert.doesNotMatch(source, /\/api\/sgpdata\/import\/preview/);
+});
+
+test("import hook restores the persistent job and polls only its detail endpoint", async () => {
+  const source = await readFile(join(root, "hooks", "useImportJob.ts"), "utf8");
+  assert.match(source, /localStorage\.getItem\(IMPORT_JOB_STORAGE_KEY\)/);
+  assert.match(source, /\/api\/sgpdata\/import\/jobs\/\$\{encodeURIComponent\(storedId\)\}/);
+  assert.match(source, /window\.setTimeout\(poll, 1500\)/);
+  assert.doesNotMatch(source, /setInterval/);
+});
+
+test("export download uses a direct anchor and never buffers a browser Blob", async () => {
+  const source = await readFile(join(root, "ExportJobPanel.tsx"), "utf8");
+  assert.match(source, /document\.createElement\("a"\)/);
+  assert.match(source, /\/download/);
+  assert.doesNotMatch(source, /response\.blob\(\)|createObjectURL/);
+});
+
+test("end-of-day presets include the final millisecond", async () => {
+  const source = await readFile(join(root, "ExportJobPanel.tsx"), "utf8");
+  assert.match(source, /23, 59, 59, 999/);
+});
