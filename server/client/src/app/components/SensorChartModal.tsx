@@ -941,9 +941,12 @@ interface Props {
 
 const AXIS_SERIES_COLORS: Record<DeviceAxisKey, string> = {
   ax: "#22d3ee",
-  ay: "#60a5fa",
-  az: "#fbbf24",
+  ay: "#a3e635",
+  az: "#c084fc",
 };
+
+const TEMPERATURE_TREND_STROKE_WIDTH = 1.35;
+const AXIS_TREND_STROKE_WIDTH = 1.25;
 
 type FftAxisDisplayItem = (typeof FFT_AXIS_DISPLAY_ORDER)[number];
 
@@ -2921,32 +2924,32 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       key: "temp",
       name: "Nhiệt độ",
       color: C.primary,
-      strokeWidth: 2,
+      strokeWidth: TEMPERATURE_TREND_STROKE_WIDTH,
       latestLabelFormatter: (value) => `${value.toFixed(2)}°C`,
     }],
     [C.primary],
   );
   const accelTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
     [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
   const vrmsTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
     [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
   const drmsTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: 1.8 },
-      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: 1.8 },
-      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: 1.8 },
+      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
     [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
