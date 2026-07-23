@@ -22,7 +22,7 @@ const uploadParamsSchema = z.object({ uploadId: z.string().min(1) });
 const listSchema = z.object({ limit: z.coerce.number().int().positive().max(100).optional() });
 const importJobSchema = z.object({
   uploadId: z.string().min(1),
-  mode: z.enum(['merge', 'idempotent']).default('merge'),
+  mode: z.enum(['merge', 'replace']).default('merge'),
 });
 const exportJobSchema = z.object({
   date_from: z.string().min(1),
@@ -47,7 +47,7 @@ function totalRecords(job: SgpDataImportJob): number {
 
 function publicImportPreview(job: SgpDataImportJob) {
   if (!job.preview) return undefined;
-  const { deviceMetadata: _deviceMetadata, placementConfigs: _placementConfigs, ...preview } = job.preview;
+  const { deviceMetadata: _deviceMetadata, placementConfigs: _placementConfigs, zones: _zones, ...preview } = job.preview;
   return preview;
 }
 

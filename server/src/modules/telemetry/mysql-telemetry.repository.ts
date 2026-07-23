@@ -973,6 +973,14 @@ export class MySqlTelemetryRepository implements TelemetryRepository {
     });
   }
 
+  async deleteHistoryRange(range: TelemetrySummaryRebuildRange): Promise<number> {
+    if (!this.mysql) return 0;
+    return await this.mysql.execute(
+      'DELETE FROM device_datas WHERE device_id = ? AND received_at >= ? AND received_at <= ?',
+      [range.deviceId, range.from, range.to],
+    );
+  }
+
   async rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): Promise<void> {
     if (!this.mysql || ranges.length === 0) return;
     const merged = new Map<string, { from: number; to: number }>();

@@ -179,6 +179,14 @@ export class SgpDataImportService {
     const job = await this.jobs.getByUploadId(uploadId);
     if (!job) throw new Error('sgpdata_upload_not_found');
     if (job.status !== 'preview_ready') throw new Error('sgpdata_upload_not_ready');
+    if (mode === 'replace') {
+      const range = job.preview?.dateRange;
+      const fromMs = range ? Date.parse(range.from) : Number.NaN;
+      const toMs = range ? Date.parse(range.to) : Number.NaN;
+      if (!range || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+        throw new Error('sgpdata_replace_range_required');
+      }
+    }
     job.mode = mode;
     job.status = 'queued';
     job.stage = 'queued';

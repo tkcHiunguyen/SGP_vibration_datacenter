@@ -10,7 +10,7 @@ type ZoneRow = {
   updated_at: string | Date;
 };
 
-type ZoneRecord = {
+export type ZoneRecord = {
   id: number;
   code: string;
   name: string;
@@ -18,6 +18,8 @@ type ZoneRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ZoneImportInput = Omit<ZoneRecord, 'id'>;
 
 type ZoneCreateInput = {
   code?: string;
@@ -118,6 +120,55 @@ export class ZoneService {
       descriptionFilter: 'all',
     });
     return result.items;
+  }
+
+  async listAll(): Promise<ZoneRecord[]> {
+    if (!this.mysql) {
+      return this.sortRows([...this.fallback.values()], 'code-asc');
+    }
+    const rows = await this.mysql.query<ZoneRow>(
+      `SELECT id, code, name, description, created_at, updated_at FROM zones ORDER BY code ASC, id ASC`,
+    );
+    return rows.map(toZoneRecord);
+  }
+
+  async importRecord(input: ZoneImportInput): Promise<'inserted' | 'updated'> {
+    const code = normalizeZoneCode(input.code);
+    const name = normalizeOptionalText(input.name);
+    if (!code || !name) {
+      throw new Error('zone_import_invalid');
+    }
+    const description = normalizeOptionalText(input.description);
+    const createdAt = toIsoTimestamp(input.createdAt);
+    const updatedAt = toIsoTimestamp(input.updatedAt);
+
+    if (!this.mysql) {
+      const existing = [...this.fallback.values()].find((zone) => zone.code === code);
+      const record: ZoneRecord = {
+        id: existing?.id ?? this.fallbackId++,
+        code,
+        name,
+        description,
+        createdAt,
+        updatedAt,
+      };
+      this.fallback.set(record.id, record);
+      return existing ? 'updated' : 'inserted';
+    }
+
+    const existing = await this.mysql.query<{ id: number | string }>(
+      'SELECT id FROM zones WHERE code = ? LIMIT 1',
+      [code],
+    );
+    await this.mysql.execute(
+      `INSERT INTO zones (code, name, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name), description = VALUES(description),
+         created_at = VALUES(created_at), updated_at = VALUES(updated_at)`,
+      [code, name, description ?? null, createdAt, updatedAt],
+    );
+    return existing.length > 0 ? 'updated' : 'inserted';
   }
 
   async listPage(options: ZoneListOptions = {}): Promise<ZoneListResult> {

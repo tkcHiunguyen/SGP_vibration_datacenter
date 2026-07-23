@@ -176,6 +176,10 @@ export class TelemetryService {
     return await this.repository.importHistoryBatch(points, mode);
   }
 
+  async deleteHistoryRange(range: TelemetrySummaryRebuildRange): Promise<number> {
+    return await this.repository.deleteHistoryRange(range);
+  }
+
   async rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): Promise<void> {
     await this.repository.rebuildHourlySummaries(ranges);
   }

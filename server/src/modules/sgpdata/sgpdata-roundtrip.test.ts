@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import type { DeviceService } from '../device/device.service.js';
 import type { SpectrumArchiveFrame, SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
 import type { TelemetryImportPoint } from '../telemetry/telemetry.repository.js';
 import type { TelemetryService } from '../telemetry/telemetry.service.js';
+import type { ZoneService } from '../zone/zone.service.js';
 import { SgpDataExportWorker } from './sgpdata-export.worker.js';
 import { InMemorySgpDataJobRepository } from './sgpdata-job.repository.js';
 import { SgpDataImportWorker } from './sgpdata-import.worker.js';
@@ -35,11 +36,13 @@ async function waitForImport(repository: InMemorySgpDataJobRepository, jobId: st
   throw new Error('import_timeout');
 }
 
-test('v2 export/import round-trip preserves devices, telemetry, placement and spectrum', async () => {
+test('v3 export/import round-trip preserves zones, devices, telemetry, placement and spectrum', async () => {
   const exportDir = await mkdtemp(join(tmpdir(), 'sgpdata-roundtrip-'));
   const metadata = {
     deviceId: 'ESP-ROUNDTRIP', uuid: 'uuid-roundtrip', name: 'Roundtrip device', site: 'SGP', zone: 'ZONE-1',
-    firmwareVersion: '1.2.3', notes: 'preserve me', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
+    firmwareVersion: '1.2.3', vibrationSetpoint: 11.5, accelerationSetpoint: 2.5,
+    displacementSetpoint: 0.4, temperatureSetpoint: 45, notes: 'preserve me',
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
   };
   const telemetry: TelemetryImportPoint[] = [
     { deviceId: metadata.deviceId, receivedAt: '2026-07-20T00:00:00.000Z', telemetryUuid: 'telemetry-1', payload: { messageId: 'message-1', temperature: 25.1 } },
@@ -58,6 +61,7 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   const importedSpectrum: SpectrumArchiveFrame[] = [];
   const importedPlacements: Array<{ deviceId: string; config: Record<string, unknown> }> = [];
   const importedDevices: unknown[] = [];
+  const importedZones: unknown[] = [];
   let requestedTelemetryBatchSize = 0;
   let requestedSpectrumBatchSize = 0;
   const deviceService = {
@@ -94,6 +98,10 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
     },
   } as unknown as SpectrumStorageService;
   const auditService = { record: () => undefined } as unknown as AuditService;
+  const zoneService = {
+    listAll: async () => [{ id: 1, code: 'ZONE-1', name: 'Zone 1', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+    importRecord: async (zone: unknown) => { importedZones.push(zone); return 'inserted' as const; },
+  } as unknown as ZoneService;
 
   const exportRepository = new InMemoryDataExportJobRepository();
   const now = new Date().toISOString();
@@ -104,7 +112,7 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   };
   await exportRepository.save(exportJob);
   const exportWorker = new SgpDataExportWorker(
-    exportRepository, deviceService, telemetryService, spectrumService, auditService, exportDir,
+    exportRepository, deviceService, telemetryService, spectrumService, zoneService, auditService, exportDir,
   );
   exportWorker.enqueue(exportJob.jobId);
   const exported = await waitForExport(exportRepository, exportJob.jobId);
@@ -117,6 +125,7 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
   assert.equal(preview.metadata.checksumValid, true);
   assert.equal(preview.metadata.measurementCount, telemetry.length);
   assert.equal(preview.metadata.spectrumCount, 1);
+  assert.equal(preview.metadata.zoneCount, 1);
   assert.equal(preview.deviceMetadata?.[0]?.notes, metadata.notes);
   assert.deepEqual(preview.placementConfigs?.[0], { deviceId: metadata.deviceId, config: placement });
   const importRepository = new InMemorySgpDataJobRepository();
@@ -134,12 +143,79 @@ test('v2 export/import round-trip preserves devices, telemetry, placement and sp
     events: [], createdAt: now, updatedAt: now,
   };
   await importRepository.save(importJob);
-  new SgpDataImportWorker(importRepository, deviceService, telemetryService, spectrumService, auditService).enqueue(importJob.jobId);
+  new SgpDataImportWorker(importRepository, deviceService, telemetryService, spectrumService, zoneService, auditService).enqueue(importJob.jobId);
   const imported = await waitForImport(importRepository, importJob.jobId);
 
   assert.equal(imported.status, 'completed');
   assert.equal(importedDevices.length, 1);
+  assert.equal(importedZones.length, 1);
+  assert.equal((importedDevices[0] as { zone?: string }).zone, 'ZONE-1');
+  const importedSetpoints = importedDevices[0] as {
+    vibrationSetpoint?: number;
+    accelerationSetpoint?: number;
+    displacementSetpoint?: number;
+    temperatureSetpoint?: number;
+  };
+  assert.deepEqual(
+    {
+      velocity: importedSetpoints.vibrationSetpoint,
+      acceleration: importedSetpoints.accelerationSetpoint,
+      displacement: importedSetpoints.displacementSetpoint,
+      temperature: importedSetpoints.temperatureSetpoint,
+    },
+    { velocity: 11.5, acceleration: 2.5, displacement: 0.4, temperature: 45 },
+  );
   assert.deepEqual(importedTelemetry.map((point) => point.telemetryUuid), ['telemetry-1', 'telemetry-2']);
   assert.deepEqual(importedPlacements[0], { deviceId: metadata.deviceId, config: placement });
   assert.equal(importedSpectrum[0]?.contentBase64, spectrumFrame.contentBase64);
+});
+
+test('export fails when streamed record counts do not match the manifest counts', async () => {
+  const exportDir = await mkdtemp(join(tmpdir(), 'sgpdata-count-mismatch-'));
+  try {
+    const metadata = { deviceId: 'ESP-MISMATCH', name: 'Mismatch device' };
+    const deviceService = {
+      list: () => [{ deviceId: metadata.deviceId, online: false, metadata }],
+      getMetadata: () => metadata,
+    } as unknown as DeviceService;
+    const telemetryService = {
+      countArchive: async () => 1,
+      exportHistoryBatches: async function* () { return; },
+    } as unknown as TelemetryService;
+    const spectrumService = {
+      readPlacementConfig: async () => null,
+      countArchiveFrames: async () => 1,
+      exportArchiveFrames: async function* () { return; },
+    } as unknown as SpectrumStorageService;
+    const auditService = { record: () => undefined } as unknown as AuditService;
+    const zoneService = { listAll: async () => [] } as unknown as ZoneService;
+    const repository = new InMemoryDataExportJobRepository();
+    const now = new Date().toISOString();
+    const job: DataExportJob = {
+      jobId: 'export-count-mismatch',
+      status: 'queued',
+      progress: 0,
+      stage: 'queued',
+      range: { from: '2026-07-20T00:00:00.000Z', to: '2026-07-20T23:59:59.999Z' },
+      createdAt: now,
+      updatedAt: now,
+    };
+    await repository.save(job);
+
+    new SgpDataExportWorker(
+      repository,
+      deviceService,
+      telemetryService,
+      spectrumService,
+      zoneService,
+      auditService,
+      exportDir,
+    ).enqueue(job.jobId);
+    const result = await waitForExport(repository, job.jobId);
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.error ?? '', /sgpdata_export_count_mismatch/);
+  } finally {
+    await rm(exportDir, { recursive: true, force: true });
+  }
 });

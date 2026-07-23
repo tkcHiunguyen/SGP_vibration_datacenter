@@ -19,6 +19,10 @@ type DeviceMetadataRow = {
   site: string | null;
   zone: string | null;
   firmware_version: string | null;
+  vibration_setpoint: number | string | null;
+  acceleration_setpoint: number | string | null;
+  displacement_setpoint: number | string | null;
+  temperature_setpoint: number | string | null;
   axis_label_ax: string | null;
   axis_label_ay: string | null;
   axis_label_az: string | null;
@@ -515,19 +519,24 @@ export class InMemoryDeviceRepository implements DeviceRepository {
       `
         INSERT INTO devices (
           device_id, uuid, name, site, zone, firmware_version,
+          vibration_setpoint, acceleration_setpoint, displacement_setpoint, temperature_setpoint,
           axis_label_ax, axis_label_ay, axis_label_az,
           notes,
           adxl_status, adxl_fault_reason, adxl_status_updated_at,
           adxl_capture_timeout_count, adxl_i2c_read_error_count,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           uuid = VALUES(uuid),
           name = VALUES(name),
           site = VALUES(site),
           zone = VALUES(zone),
           firmware_version = VALUES(firmware_version),
+          vibration_setpoint = VALUES(vibration_setpoint),
+          acceleration_setpoint = VALUES(acceleration_setpoint),
+          displacement_setpoint = VALUES(displacement_setpoint),
+          temperature_setpoint = VALUES(temperature_setpoint),
           axis_label_ax = VALUES(axis_label_ax),
           axis_label_ay = VALUES(axis_label_ay),
           axis_label_az = VALUES(axis_label_az),
@@ -547,6 +556,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata.site ?? null,
         metadata.zone ?? null,
         metadata.firmwareVersion ?? null,
+        metadata.vibrationSetpoint,
+        metadata.accelerationSetpoint ?? 10,
+        metadata.displacementSetpoint ?? 10,
+        metadata.temperatureSetpoint ?? 10,
         metadata.axisLabels?.ax ?? null,
         metadata.axisLabels?.ay ?? null,
         metadata.axisLabels?.az ?? null,
@@ -755,6 +768,7 @@ export class InMemoryDeviceRepository implements DeviceRepository {
       `
         SELECT
           device_id, uuid, name, site, zone, firmware_version,
+          vibration_setpoint, acceleration_setpoint, displacement_setpoint, temperature_setpoint,
           axis_label_ax, axis_label_ay, axis_label_az,
           notes,
           adxl_status, adxl_fault_reason, adxl_status_updated_at,
@@ -772,6 +786,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         site: row.site ?? undefined,
         zone: row.zone ?? undefined,
         firmwareVersion: row.firmware_version ?? undefined,
+        vibrationSetpoint: Number(row.vibration_setpoint ?? 10),
+        accelerationSetpoint: Number(row.acceleration_setpoint ?? 10),
+        displacementSetpoint: Number(row.displacement_setpoint ?? 10),
+        temperatureSetpoint: Number(row.temperature_setpoint ?? 10),
         axisLabels: createAxisLabels(row),
         notes: row.notes ?? undefined,
         adxlHealth: createAdxlHealth(row),
@@ -857,6 +875,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         deviceId,
         uuid,
         name,
+        vibrationSetpoint: 10,
+        accelerationSetpoint: 10,
+        displacementSetpoint: 10,
+        temperatureSetpoint: 10,
         createdAt,
         updatedAt,
       });
@@ -866,10 +888,11 @@ export class InMemoryDeviceRepository implements DeviceRepository {
       `
         INSERT INTO devices (
           device_id, uuid, name, site, zone, firmware_version,
+          vibration_setpoint, acceleration_setpoint, displacement_setpoint, temperature_setpoint,
           axis_label_ax, axis_label_ay, axis_label_az,
           notes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           updated_at = VALUES(updated_at)
       `,
@@ -880,6 +903,10 @@ export class InMemoryDeviceRepository implements DeviceRepository {
         metadata?.site ?? null,
         metadata?.zone ?? null,
         metadata?.firmwareVersion ?? null,
+        metadata?.vibrationSetpoint ?? 10,
+        metadata?.accelerationSetpoint ?? 10,
+        metadata?.displacementSetpoint ?? 10,
+        metadata?.temperatureSetpoint ?? 10,
         metadata?.axisLabels?.ax ?? null,
         metadata?.axisLabels?.ay ?? null,
         metadata?.axisLabels?.az ?? null,

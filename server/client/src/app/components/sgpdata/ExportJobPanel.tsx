@@ -134,6 +134,8 @@ export function ExportJobPanel() {
         ))}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+        <Scope icon={<Database size={14} />} title="Danh mục" value="Khu vực và thiết bị" />
+        <Scope icon={<Database size={14} />} title="Cấu hình" value="Ngưỡng và vị trí" />
         <Scope icon={<Database size={14} />} title="Telemetry" value="Xuất theo cursor/batch" />
         <Scope icon={<HardDriveDownload size={14} />} title="Spectrum" value="Đọc từng frame" />
         <Scope icon={<ShieldCheck size={14} />} title="Integrity" value="SHA-256 incremental" />

@@ -32,7 +32,10 @@ export interface Sensor {
   firmwareVersion: string;
   firmware: string;
   ipAddress: string;
-  threshold: number;
+  accelerationSetpoint: number;
+  velocitySetpoint: number;
+  displacementSetpoint: number;
+  temperatureSetpoint: number;
   installDate: string;
   samplingRate: string;
   connectedAt: string;
@@ -51,6 +54,10 @@ interface DeviceMetadata {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  vibrationSetpoint?: number;
+  accelerationSetpoint?: number;
+  displacementSetpoint?: number;
+  temperatureSetpoint?: number;
   axisLabels?: DeviceAxisLabels;
   adxlHealth?: DeviceAdxlHealth;
 }
@@ -164,20 +171,6 @@ function formatUptimeSeconds(seconds?: number): string {
   return `${d}d ${h}h ${m}m`;
 }
 
-function deriveStatus(device: DeviceListItem): SensorStatus {
-  if (!device.online) {
-    return "normal";
-  }
-
-  const signal = device.heartbeat?.signal;
-  // Rule: mark abnormal only when RSSI is weaker than -85 dBm.
-  if (typeof signal === "number" && signal < -85) {
-    return "abnormal";
-  }
-
-  return "normal";
-}
-
 function deriveInstallDate(device: DeviceListItem): string {
   const source = device.connectedAt || device.lastHeartbeatAt;
   if (!source) {
@@ -208,11 +201,14 @@ function normalizeAxisLabels(axisLabels?: DeviceAxisLabels): DeviceAxisLabels | 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
+export function mapDevicesToSensors(
+  devices: DeviceListItem[],
+  activeAlertDeviceIds: ReadonlySet<string> = new Set(),
+): Sensor[] {
   return devices.map((device) => {
     const id = device.deviceId;
     const online = Boolean(device.online);
-    const status = deriveStatus(device);
+    const status: SensorStatus = activeAlertDeviceIds.has(id) ? "abnormal" : "normal";
     const name = device.metadata?.name?.trim() || id;
     const zoneCode = (device.metadata?.zone || "").trim();
     const zone = zoneCode || "--";
@@ -234,7 +230,10 @@ export function mapDevicesToSensors(devices: DeviceListItem[]): Sensor[] {
       firmwareVersion,
       firmware: normalizeFirmware(device),
       ipAddress: device.clientIp || "N/A",
-      threshold: status === "abnormal" ? 1.5 : 1.2,
+      accelerationSetpoint: device.metadata?.accelerationSetpoint ?? 10,
+      velocitySetpoint: device.metadata?.vibrationSetpoint ?? 10,
+      displacementSetpoint: device.metadata?.displacementSetpoint ?? 10,
+      temperatureSetpoint: device.metadata?.temperatureSetpoint ?? 10,
       installDate: deriveInstallDate(device),
       samplingRate: "1 kHz",
       connectedAt: formatDateTime(device.connectedAt),

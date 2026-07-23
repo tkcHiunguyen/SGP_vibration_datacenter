@@ -25,6 +25,7 @@ import { registerCoreRoutes } from './core.routes.js';
 import type { SgpDataExportService } from '../sgpdata/sgpdata-export.service.js';
 import type { SgpDataImportService } from '../sgpdata/sgpdata-import.service.js';
 import { registerSgpDataRoutes } from '../sgpdata/sgpdata.routes.js';
+import type { DeviceThresholdAnalysisService } from '../analysis/device-threshold-analysis.service.js';
 
 type RegisterRoutesDeps = {
   app: FastifyInstance;
@@ -40,6 +41,7 @@ type RegisterRoutesDeps = {
   spectrumStorageService: SpectrumStorageService;
   sgpDataImportService: SgpDataImportService;
   sgpDataExportService: SgpDataExportService;
+  deviceThresholdAnalysisService: DeviceThresholdAnalysisService;
   persistenceStatus: MySqlPersistenceStatus;
 };
 
@@ -57,6 +59,7 @@ export function registerRoutes({
   spectrumStorageService,
   sgpDataImportService,
   sgpDataExportService,
+  deviceThresholdAnalysisService,
   persistenceStatus,
 }: RegisterRoutesDeps): void {
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
@@ -100,6 +103,10 @@ export function registerRoutes({
     site: z.string().optional(),
     zone: z.string().optional(),
     firmwareVersion: z.string().optional(),
+    vibrationSetpoint: z.number().finite().positive().optional(),
+    accelerationSetpoint: z.number().finite().positive().optional(),
+    displacementSetpoint: z.number().finite().positive().optional(),
+    temperatureSetpoint: z.number().finite().positive().optional(),
     axisLabels: deviceAxisLabelsSchema,
     notes: z.string().optional(),
   });
@@ -110,8 +117,17 @@ export function registerRoutes({
     site: z.string().optional(),
     zone: z.string().optional(),
     firmwareVersion: z.string().optional(),
+    vibrationSetpoint: z.number().finite().positive().optional(),
+    accelerationSetpoint: z.number().finite().positive().optional(),
+    displacementSetpoint: z.number().finite().positive().optional(),
+    temperatureSetpoint: z.number().finite().positive().optional(),
     axisLabels: deviceAxisLabelsSchema,
     notes: z.string().optional(),
+  });
+  const thresholdAnalysisStartSchema = z.object({
+    days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30),
+    includeSim: z.boolean().default(false),
+    deviceIds: z.array(z.string().min(1)).max(500).optional(),
   });
 
   const placementConfigSchema = z.object({}).passthrough();
@@ -192,6 +208,8 @@ export function registerRoutes({
   const spectrumFrameQuerySchema = z.object({
     at: z.string().optional(),
     telemetryUuid: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
   });
 
   const zoneListQuerySchema = z.object({
@@ -232,7 +250,7 @@ export function registerRoutes({
 
   const alertRuleCreateSchema = z.object({
     name: z.string().min(1),
-    metric: z.enum(['temperature', 'vibration']),
+    metric: z.enum(['temperature', 'acceleration', 'velocity', 'displacement', 'vibration']),
     threshold: z.number(),
     severity: z.enum(['warning', 'critical']),
     debounceCount: z.number().int().positive().optional(),
@@ -913,6 +931,35 @@ export function registerRoutes({
     }
   });
 
+  app.post('/api/analysis/threshold-jobs', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+    const input = thresholdAnalysisStartSchema.parse(request.body ?? {});
+    try {
+      const job = deviceThresholdAnalysisService.start(input);
+      return reply.code(202).send({ ok: true, data: job });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'no_analysis_devices') {
+        return reply.code(400).send({ ok: false, error: message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/api/analysis/threshold-jobs/:jobId', async (request, reply) => {
+    if (!requireRole(request, reply, 'viewer')) {
+      return;
+    }
+    const { jobId } = z.object({ jobId: z.string().uuid() }).parse(request.params);
+    const job = deviceThresholdAnalysisService.get(jobId);
+    if (!job) {
+      return reply.code(404).send({ ok: false, error: 'analysis_job_not_found' });
+    }
+    return { ok: true, data: job };
+  });
+
   app.post('/api/display-clients/:clientId/screenshot', async (request, reply) => {
     if (!requireRole(request, reply, 'viewer')) {
       app.log.warn({ statusCode: reply.statusCode }, 'Display screenshot upload unauthorized');
@@ -1197,10 +1244,22 @@ export function registerRoutes({
 
     const requestedAt = query.at?.trim();
     const telemetryUuid = query.telemetryUuid?.trim();
+    const windowFrom = query.from?.trim();
+    const windowTo = query.to?.trim();
     if (requestedAt) {
       const parsed = Date.parse(requestedAt);
       if (Number.isNaN(parsed)) {
         return reply.code(400).send({ ok: false, error: 'invalid_timestamp' });
+      }
+    }
+    if (Boolean(windowFrom) !== Boolean(windowTo)) {
+      return reply.code(400).send({ ok: false, error: 'invalid_spectrum_window' });
+    }
+    if (windowFrom && windowTo) {
+      const fromMs = Date.parse(windowFrom);
+      const toMs = Date.parse(windowTo);
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+        return reply.code(400).send({ ok: false, error: 'invalid_spectrum_window' });
       }
     }
 
@@ -1208,6 +1267,7 @@ export function registerRoutes({
       deviceId,
       requestedAt || undefined,
       telemetryUuid || undefined,
+      windowFrom && windowTo ? { from: windowFrom, to: windowTo } : undefined,
     );
     return {
       ok: true,

@@ -36,6 +36,7 @@ import { SgpDataImportWorker } from './modules/sgpdata/sgpdata-import.worker.js'
 import { SgpDataImportService } from './modules/sgpdata/sgpdata-import.service.js';
 import { SgpDataExportWorker } from './modules/sgpdata/sgpdata-export.worker.js';
 import { SgpDataExportService } from './modules/sgpdata/sgpdata-export.service.js';
+import { DeviceThresholdAnalysisService } from './modules/analysis/device-threshold-analysis.service.js';
 
 const serviceName = 'sgp-vibration-datacenter-server';
 const isRunningViaPnpm = (process.env.npm_execpath || '').includes('pnpm');
@@ -132,13 +133,25 @@ const deviceService = new DeviceService(deviceRepository, {
   resolveSocketZone: (zone) => zoneService.resolveExistingCode(zone),
 });
 const telemetryService = new TelemetryService(telemetryRepository, deviceService);
+const deviceThresholdAnalysisService = new DeviceThresholdAnalysisService(deviceService, telemetryService);
 const displayScreenshotService = new DisplayScreenshotService();
 const spectrumStorageService = new SpectrumStorageService(mysqlAccess, {
   baseDir: env.SPECTRUM_STORAGE_DIR,
   frameFlushMs: env.SPECTRUM_FRAME_FLUSH_MS,
   matchWindowMs: env.SPECTRUM_MATCH_WINDOW_MS,
 });
-const alertService = new AlertService(alertRepository);
+const alertService = new AlertService(
+  alertRepository,
+  (deviceId) => {
+    const metadata = deviceService.getMetadata(deviceId);
+    return {
+      acceleration: metadata?.accelerationSetpoint ?? 10,
+      velocity: metadata?.vibrationSetpoint ?? 10,
+      displacement: metadata?.displacementSetpoint ?? 10,
+      temperature: metadata?.temperatureSetpoint ?? 10,
+    };
+  },
+);
 const auditService = new AuditService(auditRepository);
 const commandServiceWithTimeout = new CommandService(
   deviceService,
@@ -152,6 +165,7 @@ const sgpDataImportWorker = new SgpDataImportWorker(
   deviceService,
   telemetryService,
   spectrumStorageService,
+  zoneService,
   auditService,
   { workerRunId: serverRuntime?.runId },
 );
@@ -161,6 +175,7 @@ const sgpDataExportWorker = new SgpDataExportWorker(
   deviceService,
   telemetryService,
   spectrumStorageService,
+  zoneService,
   auditService,
   sgpDataExportDir,
   { workerRunId: serverRuntime?.runId },
@@ -194,6 +209,7 @@ for (const listener of listeners) {
     spectrumStorageService,
     sgpDataImportService,
     sgpDataExportService,
+    deviceThresholdAnalysisService,
     persistenceStatus: mysqlRuntime.status,
   });
 }

@@ -232,6 +232,39 @@ test('updateStrict persists per-device axis labels and trims empty labels', asyn
   assert.deepEqual(repository.getMetadata('ESP-AXIS')?.axisLabels, { ax: 'Motor ngang', az: 'Motor dọc' });
 });
 
+test('devices default all metric setpoints to 10 and can update them independently', async () => {
+  const repository = new FakeDeviceRepository();
+  const service = new DeviceService(repository);
+
+  const created = await service.registerStrict({ deviceId: 'ESP-SETPOINT' });
+  assert.deepEqual(
+    {
+      acceleration: created.accelerationSetpoint,
+      velocity: created.vibrationSetpoint,
+      displacement: created.displacementSetpoint,
+      temperature: created.temperatureSetpoint,
+    },
+    { acceleration: 10, velocity: 10, displacement: 10, temperature: 10 },
+  );
+
+  const updated = await service.updateStrict('ESP-SETPOINT', {
+    accelerationSetpoint: 2.5,
+    vibrationSetpoint: 12.5,
+    displacementSetpoint: 0.4,
+    temperatureSetpoint: 45,
+  });
+  assert.deepEqual(
+    {
+      acceleration: updated?.accelerationSetpoint,
+      velocity: updated?.vibrationSetpoint,
+      displacement: updated?.displacementSetpoint,
+      temperature: updated?.temperatureSetpoint,
+    },
+    { acceleration: 2.5, velocity: 12.5, displacement: 0.4, temperature: 45 },
+  );
+  assert.equal(repository.getMetadata('ESP-SETPOINT')?.displacementSetpoint, 0.4);
+});
+
 test('updateStrict bubbles persistence failures instead of reporting fake success', async () => {
   const repository = new FakeDeviceRepository();
   const service = new DeviceService(repository);
@@ -324,6 +357,10 @@ test('repository loads and writes per-device axis label columns', async () => {
           site: null,
           zone: null,
           firmware_version: null,
+          vibration_setpoint: 8.5,
+          acceleration_setpoint: 2.5,
+          displacement_setpoint: 0.4,
+          temperature_setpoint: 45,
           axis_label_ax: 'Motor ngang',
           axis_label_ay: null,
           axis_label_az: 'Motor dọc',
@@ -351,6 +388,10 @@ test('repository loads and writes per-device axis label columns', async () => {
     deviceId: 'ESP-AXIS-SQL',
     uuid: 'axis-sql-uuid',
     name: 'Axis SQL',
+    vibrationSetpoint: 12.5,
+    accelerationSetpoint: 3.5,
+    displacementSetpoint: 0.5,
+    temperatureSetpoint: 50,
     axisLabels: { ax: 'Ngang', ay: 'Tâm', az: 'Dọc' },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-03T00:00:00.000Z',
@@ -361,7 +402,9 @@ test('repository loads and writes per-device axis label columns', async () => {
   assert.equal(upsert.sql.includes('axis_label_ax'), true);
   assert.equal(upsert.sql.includes('axis_label_ay'), true);
   assert.equal(upsert.sql.includes('axis_label_az'), true);
-  assert.deepEqual(upsert.params.slice(6, 9), ['Ngang', 'Tâm', 'Dọc']);
+  assert.equal(upsert.params[6], 12.5);
+  assert.deepEqual(upsert.params.slice(7, 10), [3.5, 0.5, 50]);
+  assert.deepEqual(upsert.params.slice(10, 13), ['Ngang', 'Tâm', 'Dọc']);
 });
 
 test('repository loads device rows without legacy archive or sensor version columns', async () => {

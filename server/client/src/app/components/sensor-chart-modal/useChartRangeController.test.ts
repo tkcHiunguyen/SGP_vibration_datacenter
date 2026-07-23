@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { DeviceTelemetryPoint } from "../../data/sensors";
-import { buildPlottedTrendSeries, trendSegmentKey, type TrendRow } from "./chart-parts";
-import { createRelativeChartRange } from "./chart-range-controller";
-import { mergeFetchedRangeWithRealtime, mergeRealtimePoints } from "./useChartRangeController";
+import { buildPlottedTrendSeries, parseSpectrumHoverTarget, trendSegmentKey, type TrendRow } from "./chart-parts";
+import { createCalendarDayChartRange, createRelativeChartRange } from "./chart-range-controller";
+import {
+  mergeFetchedRangeWithRealtime,
+  mergeRealtimePoints,
+  resolveRangeForDeviceTransition,
+} from "./useChartRangeController";
 
 const RANGE_END = Date.parse("2026-07-21T12:10:00.000Z");
 
@@ -62,4 +66,41 @@ test("a delayed realtime event received during a fetch survives the fetched resp
   assert.equal(merged.length, 1);
   assert.equal(merged[0]?.messageId, delayedPoint.messageId);
   assert.ok(merged[0]?.bucketStartedAt);
+});
+
+test("switching devices keeps the selected calendar day", () => {
+  const defaultRange = createRelativeChartRange("1d", RANGE_END);
+  const selectedDay = createCalendarDayChartRange("2026-07-20");
+  assert.ok(selectedDay);
+
+  const loadedRange = resolveRangeForDeviceTransition(
+    { activeRange: selectedDay, pendingRange: null },
+    "1d",
+    "ESP-1",
+    "ESP-2",
+  );
+  const loadingRange = resolveRangeForDeviceTransition(
+    { activeRange: defaultRange, pendingRange: selectedDay },
+    "1d",
+    "ESP-1",
+    "ESP-2",
+  );
+
+  assert.equal(loadedRange, selectedDay);
+  assert.equal(loadingRange, selectedDay);
+  assert.equal(loadedRange.kind, "calendar-day");
+  assert.equal(loadedRange.date, "2026-07-20");
+});
+
+test("spectrum hover targets preserve the telemetry bucket window", () => {
+  assert.deepEqual(parseSpectrumHoverTarget({
+    timestampMs: 30_000,
+    coverageStartMs: 0,
+    coverageEndMs: 60_000,
+  }), {
+    timestampMs: 30_000,
+    telemetryUuid: undefined,
+    coverageStartMs: 0,
+    coverageEndMs: 60_000,
+  });
 });

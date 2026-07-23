@@ -12,6 +12,7 @@ import {
   Radio,
   Save,
   Server,
+  Thermometer,
   Trash2,
   Wifi,
   WifiOff,
@@ -563,6 +564,10 @@ export function DeviceInfoModal({
       items: [
         { icon: <Cpu size={14} />, label: "Firmware Version", value: sensor.firmwareVersion },
         { icon: <Radio size={14} />, label: "Signal", value: sensor.signal },
+        { icon: <Activity size={14} />, label: "Ngưỡng A", value: `${sensor.accelerationSetpoint} m/s²` },
+        { icon: <Activity size={14} />, label: "Ngưỡng V", value: `${sensor.velocitySetpoint} mm/s` },
+        { icon: <Activity size={14} />, label: "Ngưỡng D", value: `${sensor.displacementSetpoint} mm` },
+        { icon: <Thermometer size={14} />, label: "Ngưỡng Temp", value: `${sensor.temperatureSetpoint} °C` },
       ],
     },
     {

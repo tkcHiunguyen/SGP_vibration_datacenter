@@ -6,6 +6,7 @@ import type { DeviceService } from '../device/device.service.js';
 import type { SpectrumArchiveFrame, SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
 import type { TelemetryImportPoint, TelemetrySummaryRebuildRange } from '../telemetry/telemetry.repository.js';
 import type { TelemetryService } from '../telemetry/telemetry.service.js';
+import type { ZoneService } from '../zone/zone.service.js';
 import type { SgpDataJobRepository } from './sgpdata-job.repository.js';
 import { iterateSgpDataEntries, sha256File } from './sgpdata-parser.js';
 import type {
@@ -14,6 +15,7 @@ import type {
   SgpDataImportStage,
   SgpDataSpectrumFrame,
   SgpDataTelemetryPoint,
+  SgpDataZone,
 } from './sgpdata.types.js';
 
 const TELEMETRY_BATCH_SIZE = 2_000;
@@ -47,6 +49,10 @@ function normalizeDevice(deviceId: string, device?: SgpDataDevice) {
     site: optionalText(device?.site),
     zone: optionalText(device?.zone),
     firmwareVersion: optionalText(device?.firmwareVersion),
+    vibrationSetpoint: device?.vibrationSetpoint,
+    accelerationSetpoint: device?.accelerationSetpoint,
+    displacementSetpoint: device?.displacementSetpoint,
+    temperatureSetpoint: device?.temperatureSetpoint,
     axisLabels: normalizeAxisLabels(device?.axisLabels),
     notes: optionalText(device?.notes),
     createdAt: optionalText(device?.createdAt),
@@ -111,6 +117,7 @@ export class SgpDataImportWorker {
     private readonly deviceService: DeviceService,
     private readonly telemetryService: TelemetryService,
     private readonly spectrumStorageService: SpectrumStorageService,
+    private readonly zoneService: ZoneService,
     private readonly auditService: AuditService,
     private readonly options: WorkerOptions = {},
   ) {}
@@ -146,8 +153,14 @@ export class SgpDataImportWorker {
       await this.setStage(job, 'validating', 'Đang xác minh file trước khi import');
       if (await sha256File(job.filePath) !== job.fileSha256) throw new Error('sgpdata_upload_changed');
 
+      await this.importZones(job);
       const importableDeviceIds = await this.importDevicesAndPlacementConfigs(job);
       const summaryRanges = await this.importTelemetryAndSpectrum(job, importableDeviceIds);
+      if (job.mode === 'replace' && job.preview?.dateRange) {
+        for (const deviceId of importableDeviceIds) {
+          summaryRanges.set(deviceId, { deviceId, ...job.preview.dateRange });
+        }
+      }
 
       await this.setStage(job, 'rebuilding_summaries', 'Đang xây lại dữ liệu tổng hợp cho biểu đồ');
       await this.telemetryService.rebuildHourlySummaries([...summaryRanges.values()]);
@@ -194,6 +207,23 @@ export class SgpDataImportWorker {
     }
   }
 
+  private async importZones(job: SgpDataImportJob): Promise<void> {
+    const zones: SgpDataZone[] = [...(job.preview?.zones ?? [])];
+    if (!job.preview?.zones) {
+      for await (const entry of iterateSgpDataEntries(job.filePath)) {
+        if (entry.type === 'zone') zones.push(entry.data);
+      }
+    }
+    if (zones.length === 0) return;
+    await this.setStage(job, 'importing_zones', 'Đang nhập danh mục khu vực');
+    for (const zone of zones) {
+      const outcome = await this.zoneService.importRecord(zone);
+      job.mutations[outcome] += 1;
+    }
+    addEvent(job, 'importing_zones', `Đã xử lý ${zones.length} khu vực`);
+    await this.jobs.update(job);
+  }
+
   private async importDevicesAndPlacementConfigs(job: SgpDataImportJob): Promise<Set<string>> {
     await this.setStage(job, 'importing_devices', 'Đang nhập thông tin thiết bị');
     const previewMetadata = job.preview?.deviceMetadata;
@@ -216,34 +246,62 @@ export class SgpDataImportWorker {
       job.currentDeviceId = deviceId;
       job.devices[deviceId].status = 'running';
       const existing = this.deviceService.getMetadata(deviceId);
-      if (job.mode === 'idempotent' && existing) {
-        job.mutations.skipped += 1;
+      try {
+        const normalized = normalizeDevice(deviceId, archived.get(deviceId));
+        if (job.mode === 'replace') {
+          await this.deviceService.replaceImportedMetadataStrict(normalized);
+        } else {
+          await this.deviceService.importMetadataStrict(normalized);
+        }
+        existing ? job.mutations.updated += 1 : job.mutations.inserted += 1;
         importable.add(deviceId);
-      } else {
+      } catch {
         try {
-          await this.deviceService.importMetadataStrict(normalizeDevice(deviceId, archived.get(deviceId)));
+          const fallback = { ...normalizeDevice(deviceId, archived.get(deviceId)), uuid: undefined, zone: undefined };
+          if (job.mode === 'replace') {
+            await this.deviceService.replaceImportedMetadataStrict(fallback);
+          } else {
+            await this.deviceService.importMetadataStrict(fallback);
+          }
           existing ? job.mutations.updated += 1 : job.mutations.inserted += 1;
           importable.add(deviceId);
         } catch {
-          try {
-            await this.deviceService.importMetadataStrict({
-              ...normalizeDevice(deviceId, archived.get(deviceId)),
-              uuid: undefined,
-              zone: undefined,
-            });
-            existing ? job.mutations.updated += 1 : job.mutations.inserted += 1;
-            importable.add(deviceId);
-          } catch {
-            job.mutations.failed += 1;
-            job.devices[deviceId].status = 'failed';
-          }
+          job.mutations.failed += 1;
+          job.devices[deviceId].status = 'failed';
         }
       }
       job.processed.devices += 1;
       await this.persistProgress(job, job.processed.devices, job.totals.devices, `Đã xử lý thiết bị ${deviceId}`);
     }
+    if (job.mode === 'replace') {
+      await this.replaceExistingData(job, importable);
+    }
     await this.importPlacementConfigs(job, importable, placementConfigs);
     return importable;
+  }
+
+  private async replaceExistingData(job: SgpDataImportJob, deviceIds: Set<string>): Promise<void> {
+    const range = job.preview?.dateRange;
+    const fromMs = range ? Date.parse(range.from) : Number.NaN;
+    const toMs = range ? Date.parse(range.to) : Number.NaN;
+    if (!range || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+      throw new Error('sgpdata_replace_range_required');
+    }
+    await this.setStage(job, 'replacing_data', 'Đang xóa dữ liệu cũ trong phạm vi file');
+    for (const deviceId of deviceIds) {
+      job.currentDeviceId = deviceId;
+      const [telemetryDeleted, spectrumDeleted] = await Promise.all([
+        this.telemetryService.deleteHistoryRange({ deviceId, ...range }),
+        this.spectrumStorageService.purgeArchiveRange(deviceId, range.from, range.to),
+      ]);
+      await this.spectrumStorageService.deletePlacementConfig(deviceId);
+      addEvent(
+        job,
+        'replacing_data',
+        `Đã xóa ${telemetryDeleted} telemetry và ${spectrumDeleted.framesDeleted} frame FFT cũ của ${deviceId}`,
+      );
+    }
+    await this.jobs.update(job);
   }
 
   private async importTelemetryAndSpectrum(
@@ -261,7 +319,7 @@ export class SgpDataImportWorker {
       if (telemetryBatch.length === 0) return;
       const current = telemetryBatch;
       telemetryBatch = [];
-      const result = await this.telemetryService.importHistoryBatch(current, job.mode);
+      const result = await this.telemetryService.importHistoryBatch(current, 'merge');
       job.mutations.inserted += result.inserted;
       job.mutations.updated += result.updated;
       job.mutations.skipped += result.skipped;
@@ -294,7 +352,7 @@ export class SgpDataImportWorker {
       const current = spectrumBatch;
       spectrumBatch = [];
       const outcomes = await Promise.all(current.map(async ({ frame }) => (
-        frame ? await this.spectrumStorageService.importArchiveFrame(frame, job.mode) : 'skipped' as const
+        frame ? await this.spectrumStorageService.importArchiveFrame(frame, 'merge') : 'skipped' as const
       )));
       for (let index = 0; index < current.length; index += 1) {
         const candidate = current[index]!;
@@ -381,12 +439,8 @@ export class SgpDataImportWorker {
         job.mutations.skipped += 1;
       } else {
         const existing = await this.spectrumStorageService.readPlacementConfig(deviceId);
-        if (job.mode === 'idempotent' && existing) {
-          job.mutations.skipped += 1;
-        } else {
-          await this.spectrumStorageService.writePlacementConfig(deviceId, config);
-          existing ? job.mutations.updated += 1 : job.mutations.inserted += 1;
-        }
+        await this.spectrumStorageService.writePlacementConfig(deviceId, config);
+        existing ? job.mutations.updated += 1 : job.mutations.inserted += 1;
       }
       job.processed.placementConfigs += 1;
       await this.persistProgress(

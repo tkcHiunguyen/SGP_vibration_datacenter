@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types.js';
 
 const AXIS_LABEL_KEYS = ['ax', 'ay', 'az'] as const;
+const DEFAULT_VIBRATION_SETPOINT = 10;
 
 type RegisterDeviceInput = {
   deviceId: string;
@@ -20,6 +21,10 @@ type RegisterDeviceInput = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  vibrationSetpoint?: number;
+  accelerationSetpoint?: number;
+  displacementSetpoint?: number;
+  temperatureSetpoint?: number;
   axisLabels?: DeviceAxisLabels;
   notes?: string;
 };
@@ -99,6 +104,10 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
+      vibrationSetpoint: input.vibrationSetpoint ?? existing?.vibrationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      accelerationSetpoint: input.accelerationSetpoint ?? existing?.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      displacementSetpoint: input.displacementSetpoint ?? existing?.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      temperatureSetpoint: input.temperatureSetpoint ?? existing?.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
       axisLabels: this.resolveAxisLabels(input, existing?.axisLabels),
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
@@ -120,6 +129,10 @@ export class DeviceService {
       site: input.site ?? existing?.site,
       zone: input.zone ?? existing?.zone,
       firmwareVersion: input.firmwareVersion ?? existing?.firmwareVersion,
+      vibrationSetpoint: input.vibrationSetpoint ?? existing?.vibrationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      accelerationSetpoint: input.accelerationSetpoint ?? existing?.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      displacementSetpoint: input.displacementSetpoint ?? existing?.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      temperatureSetpoint: input.temperatureSetpoint ?? existing?.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
       axisLabels: this.resolveAxisLabels(input, existing?.axisLabels),
       notes: input.notes ?? existing?.notes,
       createdAt: existing?.createdAt ?? now,
@@ -142,10 +155,36 @@ export class DeviceService {
       site: this.normalizeOptionalText(input.site) ?? existing?.site,
       zone: hasZone ? this.normalizeOptionalText(input.zone) : existing?.zone,
       firmwareVersion: this.normalizeOptionalText(input.firmwareVersion) ?? existing?.firmwareVersion,
+      vibrationSetpoint: input.vibrationSetpoint ?? existing?.vibrationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      accelerationSetpoint: input.accelerationSetpoint ?? existing?.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      displacementSetpoint: input.displacementSetpoint ?? existing?.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      temperatureSetpoint: input.temperatureSetpoint ?? existing?.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
       axisLabels:
         input.axisLabels === undefined ? existing?.axisLabels : this.normalizeAxisLabels(input.axisLabels),
       notes: this.normalizeOptionalText(input.notes) ?? existing?.notes,
       createdAt: this.normalizeOptionalIso(input.createdAt) ?? existing?.createdAt ?? now,
+      updatedAt: this.normalizeOptionalIso(input.updatedAt) ?? now,
+    };
+    await this.repository.upsertMetadata(metadata);
+    return metadata;
+  }
+
+  async replaceImportedMetadataStrict(input: ImportDeviceMetadataInput): Promise<DeviceMetadata> {
+    const now = new Date().toISOString();
+    const metadata: DeviceMetadata = {
+      deviceId: input.deviceId,
+      uuid: this.normalizeOptionalText(input.uuid) ?? randomUUID(),
+      name: this.normalizeOptionalText(input.name) ?? input.deviceId,
+      site: this.normalizeOptionalText(input.site),
+      zone: this.normalizeOptionalText(input.zone),
+      firmwareVersion: this.normalizeOptionalText(input.firmwareVersion),
+      vibrationSetpoint: input.vibrationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      accelerationSetpoint: input.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      displacementSetpoint: input.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      temperatureSetpoint: input.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT,
+      axisLabels: this.normalizeAxisLabels(input.axisLabels),
+      notes: this.normalizeOptionalText(input.notes),
+      createdAt: this.normalizeOptionalIso(input.createdAt) ?? now,
       updatedAt: this.normalizeOptionalIso(input.updatedAt) ?? now,
     };
     await this.repository.upsertMetadata(metadata);
@@ -178,6 +217,18 @@ export class DeviceService {
     }
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'vibrationSetpoint')) {
+      metadata.vibrationSetpoint = input.vibrationSetpoint ?? existing.vibrationSetpoint;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'accelerationSetpoint')) {
+      metadata.accelerationSetpoint = input.accelerationSetpoint ?? existing.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'displacementSetpoint')) {
+      metadata.displacementSetpoint = input.displacementSetpoint ?? existing.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'temperatureSetpoint')) {
+      metadata.temperatureSetpoint = input.temperatureSetpoint ?? existing.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
     }
     if (Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
       metadata.axisLabels = this.normalizeAxisLabels(input.axisLabels);
@@ -220,6 +271,18 @@ export class DeviceService {
     }
     if (Object.prototype.hasOwnProperty.call(input, 'firmwareVersion')) {
       metadata.firmwareVersion = this.normalizeOptionalText(input.firmwareVersion);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'vibrationSetpoint')) {
+      metadata.vibrationSetpoint = input.vibrationSetpoint ?? existing.vibrationSetpoint;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'accelerationSetpoint')) {
+      metadata.accelerationSetpoint = input.accelerationSetpoint ?? existing.accelerationSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'displacementSetpoint')) {
+      metadata.displacementSetpoint = input.displacementSetpoint ?? existing.displacementSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'temperatureSetpoint')) {
+      metadata.temperatureSetpoint = input.temperatureSetpoint ?? existing.temperatureSetpoint ?? DEFAULT_VIBRATION_SETPOINT;
     }
     if (Object.prototype.hasOwnProperty.call(input, 'axisLabels')) {
       metadata.axisLabels = this.normalizeAxisLabels(input.axisLabels);

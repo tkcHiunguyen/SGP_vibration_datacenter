@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS devices (
   site VARCHAR(128) NULL,
   zone VARCHAR(64) NULL,
   firmware_version VARCHAR(128) NULL,
+  vibration_setpoint DOUBLE NOT NULL DEFAULT 10,
+  acceleration_setpoint DOUBLE NOT NULL DEFAULT 10,
+  displacement_setpoint DOUBLE NOT NULL DEFAULT 10,
+  temperature_setpoint DOUBLE NOT NULL DEFAULT 10,
   axis_label_ax VARCHAR(64) NULL,
   axis_label_ay VARCHAR(64) NULL,
   axis_label_az VARCHAR(64) NULL,
@@ -359,6 +363,62 @@ PREPARE add_devices_axis_label_az_stmt FROM @add_devices_axis_label_az_sql;
 EXECUTE add_devices_axis_label_az_stmt;
 DEALLOCATE PREPARE add_devices_axis_label_az_stmt;
 
+SET @has_devices_vibration_setpoint := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'vibration_setpoint'
+);
+SET @add_devices_vibration_setpoint_sql := IF(
+  @has_devices_vibration_setpoint = 0,
+  'ALTER TABLE devices ADD COLUMN vibration_setpoint DOUBLE NOT NULL DEFAULT 10 AFTER firmware_version',
+  'SELECT 1'
+);
+PREPARE add_devices_vibration_setpoint_stmt FROM @add_devices_vibration_setpoint_sql;
+EXECUTE add_devices_vibration_setpoint_stmt;
+DEALLOCATE PREPARE add_devices_vibration_setpoint_stmt;
+
+SET @has_devices_acceleration_setpoint := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'acceleration_setpoint'
+);
+SET @add_devices_acceleration_setpoint_sql := IF(
+  @has_devices_acceleration_setpoint = 0,
+  'ALTER TABLE devices ADD COLUMN acceleration_setpoint DOUBLE NOT NULL DEFAULT 10 AFTER vibration_setpoint',
+  'SELECT 1'
+);
+PREPARE add_devices_acceleration_setpoint_stmt FROM @add_devices_acceleration_setpoint_sql;
+EXECUTE add_devices_acceleration_setpoint_stmt;
+DEALLOCATE PREPARE add_devices_acceleration_setpoint_stmt;
+
+SET @has_devices_displacement_setpoint := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'displacement_setpoint'
+);
+SET @add_devices_displacement_setpoint_sql := IF(
+  @has_devices_displacement_setpoint = 0,
+  'ALTER TABLE devices ADD COLUMN displacement_setpoint DOUBLE NOT NULL DEFAULT 10 AFTER acceleration_setpoint',
+  'SELECT 1'
+);
+PREPARE add_devices_displacement_setpoint_stmt FROM @add_devices_displacement_setpoint_sql;
+EXECUTE add_devices_displacement_setpoint_stmt;
+DEALLOCATE PREPARE add_devices_displacement_setpoint_stmt;
+
+SET @has_devices_temperature_setpoint := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'devices' AND column_name = 'temperature_setpoint'
+);
+SET @add_devices_temperature_setpoint_sql := IF(
+  @has_devices_temperature_setpoint = 0,
+  'ALTER TABLE devices ADD COLUMN temperature_setpoint DOUBLE NOT NULL DEFAULT 10 AFTER displacement_setpoint',
+  'SELECT 1'
+);
+PREPARE add_devices_temperature_setpoint_stmt FROM @add_devices_temperature_setpoint_sql;
+EXECUTE add_devices_temperature_setpoint_stmt;
+DEALLOCATE PREPARE add_devices_temperature_setpoint_stmt;
+
 SET @has_idx_devices_archived_at := (
   SELECT COUNT(*)
   FROM information_schema.statistics
@@ -531,6 +591,54 @@ CREATE TABLE IF NOT EXISTS alerts (
     ON UPDATE CASCADE
     ON DELETE RESTRICT
 );
+
+INSERT INTO alert_rules (
+  rule_id, name, metric, threshold, severity, debounce_count, cooldown_ms,
+  suppression_window_ms, flapping_window_ms, flapping_threshold, enabled,
+  time_window_start_hour, time_window_end_hour, time_window_timezone,
+  created_at, updated_at
+)
+VALUES
+  ('device-acceleration-setpoint', 'Device Acceleration Setpoint', 'acceleration', 10, 'warning', 1, 0, 0, 180000, 3, 1, NULL, NULL, NULL, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)),
+  ('device-vibration-setpoint', 'Device Velocity Setpoint', 'velocity', 10, 'warning', 1, 0, 0, 180000, 3, 1, NULL, NULL, NULL, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)),
+  ('device-displacement-setpoint', 'Device Displacement Setpoint', 'displacement', 10, 'warning', 1, 0, 0, 180000, 3, 1, NULL, NULL, NULL, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)),
+  ('device-temperature-setpoint', 'Device Temperature Setpoint', 'temperature', 10, 'warning', 1, 0, 0, 180000, 3, 1, NULL, NULL, NULL, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  metric = VALUES(metric),
+  threshold = VALUES(threshold),
+  severity = VALUES(severity),
+  debounce_count = VALUES(debounce_count),
+  cooldown_ms = VALUES(cooldown_ms),
+  suppression_window_ms = VALUES(suppression_window_ms),
+  enabled = VALUES(enabled),
+  updated_at = VALUES(updated_at);
+
+UPDATE alerts
+SET status = 'resolved',
+    resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP(3)),
+    resolved_by = COALESCE(resolved_by, 'system'),
+    resolution_note = COALESCE(resolution_note, 'Legacy global alert rule removed'),
+    updated_at = CURRENT_TIMESTAMP(3)
+WHERE rule_id IN ('temperature-warning', 'temperature-critical', 'vibration-warning', 'vibration-critical')
+  AND status <> 'resolved';
+
+UPDATE alerts
+SET rule_id = 'device-temperature-setpoint',
+    rule_name = 'Device Temperature Setpoint',
+    metric = 'temperature'
+WHERE rule_id IN ('temperature-warning', 'temperature-critical')
+   OR (rule_id = 'device-vibration-setpoint' AND metric = 'temperature');
+
+UPDATE alerts
+SET rule_id = 'device-vibration-setpoint',
+    rule_name = 'Device Velocity Setpoint',
+    metric = 'velocity'
+WHERE rule_id IN ('vibration-warning', 'vibration-critical')
+   OR (rule_id = 'device-vibration-setpoint' AND metric = 'vibration');
+
+DELETE FROM alert_rules
+WHERE rule_id IN ('temperature-warning', 'temperature-critical', 'vibration-warning', 'vibration-critical');
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   audit_id VARCHAR(191) PRIMARY KEY,

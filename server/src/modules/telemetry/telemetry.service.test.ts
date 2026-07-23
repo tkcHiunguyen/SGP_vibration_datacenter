@@ -25,6 +25,7 @@ class FakeTelemetryRepository implements TelemetryRepository {
   async *exportHistoryBatches() { yield []; }
   async importHistory() { return { inserted: 0, updated: 0, skipped: 0 }; }
   async importHistoryBatch() { return { inserted: 0, updated: 0, skipped: 0 }; }
+  async deleteHistoryRange() { return 0; }
   async rebuildHourlySummaries() {}
   async applyRetention() { return null; }
 }

@@ -215,6 +215,18 @@ function toErrorMessage(error: unknown): string {
   return "telemetry_range_failed";
 }
 
+export function resolveRangeForDeviceTransition(
+  state: Pick<ChartRangeState, "activeRange" | "pendingRange">,
+  initialPreset: ChartRangePreset,
+  previousDeviceId: string | null | undefined,
+  nextDeviceId: string | null,
+): ChartRange {
+  if (previousDeviceId !== undefined && previousDeviceId !== nextDeviceId) {
+    return state.pendingRange ?? state.activeRange;
+  }
+  return createRelativeChartRange(initialPreset);
+}
+
 export function useChartRangeController({
   deviceId,
   initialPreset,
@@ -222,7 +234,7 @@ export function useChartRangeController({
   fetchRange,
 }: UseChartRangeControllerOptions) {
   const normalizedDeviceId = deviceId?.trim() || null;
-  const initialRange = useMemo(() => createRelativeChartRange(initialPreset), [initialPreset, normalizedDeviceId]);
+  const initialRange = useMemo(() => createRelativeChartRange(initialPreset), [initialPreset]);
   const [state, dispatch] = useReducer(
     chartRangeReducer,
     initialRange,
@@ -240,6 +252,7 @@ export function useChartRangeController({
   const [activeQueryKey, setActiveQueryKey] = useState("");
   const requestRef = useRef(new LatestChartRangeRequest());
   const stateRef = useRef(state);
+  const previousDeviceIdRef = useRef<string | null | undefined>(undefined);
   const realtimeArrivalsRef = useRef(new Map<string, RealtimeArrival>());
   const prefetchCleanupRef = useRef<(() => void) | null>(null);
 
@@ -348,7 +361,13 @@ export function useChartRangeController({
     requestRef.current.cancel();
     prefetchCleanupRef.current?.();
     prefetchCleanupRef.current = null;
-    const nextRange = createRelativeChartRange(initialPreset);
+    const nextRange = resolveRangeForDeviceTransition(
+      stateRef.current,
+      initialPreset,
+      previousDeviceIdRef.current,
+      normalizedDeviceId,
+    );
+    previousDeviceIdRef.current = normalizedDeviceId;
     dispatch({ type: "reset", range: nextRange });
     realtimeArrivalsRef.current.clear();
     setData([]);

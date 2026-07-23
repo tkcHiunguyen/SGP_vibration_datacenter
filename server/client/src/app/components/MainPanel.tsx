@@ -23,6 +23,12 @@ const SettingsPage = lazy(() =>
   })),
 );
 
+const ThresholdAnalysisPage = lazy(() =>
+  import("./ThresholdAnalysisPage").then((module) => ({
+    default: module.ThresholdAnalysisPage,
+  })),
+);
+
 type TelemetryHistoryRequestOptions = {
   limit?: number;
   from?: string;
@@ -93,6 +99,16 @@ export function MainPanel({
         <div className="dc-page-scroll" style={{ scrollbarColor: `${C.scrollbar} transparent` }}>
           <Suspense fallback={panelFallback}>
             <OtaManagement />
+          </Suspense>
+        </div>
+      ) : activeNav === "Phân tích" ? (
+        <div className="dc-page-scroll" style={{ scrollbarColor: `${C.scrollbar} transparent` }}>
+          <Suspense fallback={panelFallback}>
+            <ThresholdAnalysisPage
+              sensors={sensors}
+              onNotify={onNotify}
+              onSensorUpdated={onSensorUpdated}
+            />
           </Suspense>
         </div>
       ) : activeNav === "Cài đặt" ? (

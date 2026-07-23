@@ -1,5 +1,5 @@
 import React, { startTransition, useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
-import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw, PanelRightClose } from "lucide-react";
+import { X, Thermometer, BarChart3, Activity, Trash2, Settings, Clock3, CalendarDays, ChevronDown, ArrowLeft, ArrowRight, Box, Play, Square, Minus, Plus, PencilLine, RotateCcw, PanelRightClose, Gauge, Ruler, Database, Save } from "lucide-react";
 import type { DeviceAxisKey, DeviceSpectrumPoint, DeviceTelemetryPoint, Sensor, SpectrumAxis } from "../data/sensors";
 import { parseTelemetryHistoryPayload } from "../data/telemetry-history";
 import { useTheme } from "../context/ThemeContext";
@@ -1002,6 +1002,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   const [dataSettingsOpen, setDataSettingsOpen] = useState(false);
   const [dataSettingsMounted, setDataSettingsMounted] = useState(false);
   const [dataSettingsClosing, setDataSettingsClosing] = useState(false);
+  const [setpointDrafts, setSetpointDrafts] = useState({ acceleration: "10", velocity: "10", displacement: "10", temperature: "10" });
+  const [setpointSaving, setSetpointSaving] = useState(false);
+  const [setpointError, setSetpointError] = useState("");
   const [dataSummary, setDataSummary] = useState<DeviceDataSummary | null>(null);
   const [dataSummaryLoading, setDataSummaryLoading] = useState(false);
   const [dataSummaryError, setDataSummaryError] = useState("");
@@ -1368,7 +1371,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   }, [axisRenameDraft, axisRenameSaving, axisRenameTarget, chartAxisLabels, motorAxisLabels, onNotify, onSensorUpdated, placementAxisKeyMapping, sensor, vibrationAxisLabels]);
 
   const openDataSettings = useCallback(() => {
-    if (clearingDeviceData) {
+    if (clearingDeviceData || setpointSaving) {
       return;
     }
     setSettingsTooltipVisible(false);
@@ -1379,10 +1382,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     setDataSettingsClosing(false);
     setDataSettingsOpen(true);
     setDataSettingsMounted(true);
-  }, [clearingDeviceData]);
+  }, [clearingDeviceData, setpointSaving]);
 
   const closeDataSettings = useCallback(() => {
-    if (clearingDeviceData) {
+    if (clearingDeviceData || setpointSaving) {
       return;
     }
     if (!dataSettingsMounted || dataSettingsClosing) {
@@ -1399,7 +1402,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       setDataSettingsClosing(false);
       setDataSettingsMounted(false);
     }, DATA_SETTINGS_MODAL_CLOSE_MS);
-  }, [clearingDeviceData, dataSettingsClosing, dataSettingsMounted]);
+  }, [clearingDeviceData, dataSettingsClosing, dataSettingsMounted, setpointSaving]);
 
   const stopPlayback = useCallback(() => {
     clearPlaybackTimer();
@@ -1495,6 +1498,58 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     [sensor],
   );
 
+  async function saveSetpoints(): Promise<void> {
+    if (!sensor || setpointSaving) {
+      return;
+    }
+    const acceleration = asFiniteNumber(setpointDrafts.acceleration);
+    const velocity = asFiniteNumber(setpointDrafts.velocity);
+    const displacement = asFiniteNumber(setpointDrafts.displacement);
+    const temperature = asFiniteNumber(setpointDrafts.temperature);
+    if (
+      acceleration === undefined || acceleration <= 0
+      || velocity === undefined || velocity <= 0
+      || displacement === undefined || displacement <= 0
+      || temperature === undefined || temperature <= 0
+    ) {
+      setSetpointError("Mỗi ngưỡng phải là số lớn hơn 0.");
+      return;
+    }
+
+    setSetpointSaving(true);
+    setSetpointError("");
+    try {
+      const response = await fetch(`/api/devices/${encodeURIComponent(sensor.id)}`, {
+        method: "PUT",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accelerationSetpoint: acceleration,
+          vibrationSetpoint: velocity,
+          displacementSetpoint: displacement,
+          temperatureSetpoint: temperature,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(safeString(asRecord(body).error || "device_setpoint_update_failed"));
+      }
+      onSensorUpdated?.({
+        ...sensor,
+        accelerationSetpoint: acceleration,
+        velocitySetpoint: velocity,
+        displacementSetpoint: displacement,
+        temperatureSetpoint: temperature,
+      });
+      onNotify?.({ type: "success", title: "Đã lưu ngưỡng", text: `${sensor.name}: A, V, D và Temp đã được cập nhật.` });
+    } catch (error) {
+      const message = `Không lưu được ngưỡng: ${safeString(error)}`;
+      setSetpointError(message);
+      onNotify?.({ type: "warning", title: "Lưu ngưỡng thất bại", text: message });
+    } finally {
+      setSetpointSaving(false);
+    }
+  }
+
   const clearDeviceData = useCallback(async () => {
     if (!sensor || clearingDeviceData) {
       return;
@@ -1531,6 +1586,25 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   useEffect(() => {
     setDataClearJob(null);
   }, [sensor?.id]);
+
+  useEffect(() => {
+    if (!sensor) {
+      return;
+    }
+    setSetpointDrafts({
+      acceleration: String(sensor.accelerationSetpoint),
+      velocity: String(sensor.velocitySetpoint),
+      displacement: String(sensor.displacementSetpoint),
+      temperature: String(sensor.temperatureSetpoint),
+    });
+    setSetpointError("");
+  }, [
+    sensor?.accelerationSetpoint,
+    sensor?.displacementSetpoint,
+    sensor?.id,
+    sensor?.temperatureSetpoint,
+    sensor?.velocitySetpoint,
+  ]);
 
   useEffect(() => {
     if (!sensor) {
@@ -1933,13 +2007,24 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   );
 
   const requestSpectrumFrameAt = useCallback(
-    async (timestampMs: number, telemetryUuid?: string, options?: { force?: boolean }) => {
+    async (
+      timestampMs: number,
+      telemetryUuid?: string,
+      options?: { force?: boolean; coverageStartMs?: number; coverageEndMs?: number },
+    ) => {
       if (!sensor) {
         return;
       }
 
       const requestAt = Math.floor(timestampMs);
-      const cacheKey = `${sensor.id}:${telemetryUuid || requestAt}`;
+      const coverageStartMs = options?.coverageStartMs;
+      const coverageEndMs = options?.coverageEndMs;
+      const hasCoverageWindow = typeof coverageStartMs === "number"
+        && Number.isFinite(coverageStartMs)
+        && typeof coverageEndMs === "number"
+        && Number.isFinite(coverageEndMs)
+        && coverageEndMs > coverageStartMs;
+      const cacheKey = `${sensor.id}:${telemetryUuid || `${requestAt}:${hasCoverageWindow ? `${coverageStartMs}:${coverageEndMs}` : "point"}`}`;
       const cached = spectrumFrameCacheRef.current.get(cacheKey);
       if (cached && !options?.force) {
         setHoverSpectrumPoints(cached);
@@ -1971,6 +2056,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
         });
         if (telemetryUuid) {
           query.set("telemetryUuid", telemetryUuid);
+        }
+        if (hasCoverageWindow) {
+          query.set("from", new Date(coverageStartMs).toISOString());
+          query.set("to", new Date(coverageEndMs).toISOString());
         }
         const response = await fetch(
           `/api/devices/${encodeURIComponent(sensor.id)}/spectrum-frame?${query.toString()}`,
@@ -2091,7 +2180,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       spectrumAbortRef.current?.abort();
       setHoverSpectrumLoading(true);
       setHoverSpectrumDebouncing(false);
-      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid);
+      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid, {
+        coverageStartMs: target.coverageStartMs,
+        coverageEndMs: target.coverageEndMs,
+      });
     },
     [findNearestTelemetrySnapshot, requestSpectrumFrameAt, spectrumPinnedTarget],
   );
@@ -2127,7 +2219,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       setHoverTelemetrySnapshot(nearestSnapshot);
       setHoverSpectrumPoints(EMPTY_SPECTRUM_POINTS);
       setHoverSpectrumLoading(false);
-      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid, { force: true });
+      void requestSpectrumFrameAt(targetTimestampMs, targetTelemetryUuid, {
+        force: true,
+        coverageStartMs: target.coverageStartMs,
+        coverageEndMs: target.coverageEndMs,
+      });
     },
     [findNearestTelemetrySnapshot, requestSpectrumFrameAt],
   );
@@ -2854,7 +2950,12 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     [displayTelemetryData, trendVisibleWindow.endMs, trendVisibleWindow.startMs],
   );
   const visibleTelemetryHoverPoints = useMemo(
-    () => visibleTelemetryData.map((row) => ({ ts: row.ts, telemetryUuid: row.telemetryUuid })),
+    () => visibleTelemetryData.map((row) => ({
+      ts: row.ts,
+      telemetryUuid: row.telemetryUuid,
+      coverageStartMs: row.coverageStartMs,
+      coverageEndMs: row.coverageEndMs,
+    })),
     [visibleTelemetryData],
   );
 
@@ -3150,6 +3251,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
   if (!sensor) return null;
 
+  const zoneLabel = sensor.zoneCode.trim() || (sensor.zone !== "--" ? sensor.zone.trim() : "") || "Chưa gán";
+  const chartDeviceLabel = `${sensor.name} - ${zoneLabel}`;
   const chartTextStyle = { fill: wallboard ? "#c5d5e8" : C.textMuted, fontSize: wallboard ? 22 : 10 };
   const gridColor = C.border + "44";
   const fftRenderByAxis = {
@@ -3319,6 +3422,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       icon: <Thermometer size={13} strokeWidth={2} />,
       series: tempTrendSeries,
       yDomain: tempDomain,
+      setpoint: sensor.temperatureSetpoint,
     },
     {
       key: "acceleration",
@@ -3326,6 +3430,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       icon: <Activity size={13} strokeWidth={2} />,
       series: accelTrendSeries,
       yDomain: accelTrendYDomain,
+      setpoint: sensor.accelerationSetpoint,
       onYAxisZoom: handleAccelYAxisZoom,
       showTelemetryStatus: true,
     },
@@ -3335,6 +3440,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       icon: <Activity size={13} strokeWidth={2} />,
       series: vrmsTrendSeries,
       yDomain: vrmsTrendYDomain,
+      setpoint: sensor.velocitySetpoint,
       onYAxisZoom: handleVrmsYAxisZoom,
     },
     {
@@ -3343,6 +3449,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       icon: <Activity size={13} strokeWidth={2} />,
       series: drmsTrendSeries,
       yDomain: drmsTrendYDomain,
+      setpoint: sensor.displacementSetpoint,
       onYAxisZoom: handleDrmsYAxisZoom,
     },
   ] satisfies Array<{
@@ -3351,6 +3458,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
     icon: React.ReactNode;
     series: TrendSeriesConfig[];
     yDomain: [number, number];
+    setpoint: number;
     onYAxisZoom?: (next: { deltaY: number }) => void;
     showTelemetryStatus?: boolean;
   }>;
@@ -3398,7 +3506,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, minWidth: 0, minHeight: 32 }}>
               <span
                 className="dc-chart-modal-device-title"
-                title={sensor.name}
+                title={chartDeviceLabel}
 	                style={{
 	                  color: C.textBright,
 	                  fontSize: "0.84rem",
@@ -3410,7 +3518,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	                  whiteSpace: "nowrap",
 	                }}
 	              >
-	                {sensor.name}
+	                {chartDeviceLabel}
 	              </span>
 	              <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
                 <button
@@ -3418,7 +3526,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   type="button"
                   aria-label="Tùy chọn"
                   onClick={openDataSettings}
-                  disabled={clearingDeviceData}
+                  disabled={clearingDeviceData || setpointSaving}
                   style={{
                     width: 32,
                     height: 32,
@@ -3429,12 +3537,12 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    cursor: clearingDeviceData ? "not-allowed" : "pointer",
-                    opacity: clearingDeviceData ? 0.55 : 1,
+                    cursor: clearingDeviceData || setpointSaving ? "not-allowed" : "pointer",
+                    opacity: clearingDeviceData || setpointSaving ? 0.55 : 1,
                     transition: "all 0.14s ease",
                   }}
                   onMouseEnter={(event) => {
-                    if (clearingDeviceData) {
+                    if (clearingDeviceData || setpointSaving) {
                       return;
                     }
                     setSettingsTooltipVisible(true);
@@ -3449,7 +3557,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     event.currentTarget.style.color = C.textMuted;
                   }}
                   onFocus={() => {
-                    if (!clearingDeviceData) {
+                    if (!clearingDeviceData && !setpointSaving) {
                       setSettingsTooltipVisible(true);
                     }
                   }}
@@ -3464,7 +3572,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     left: 0,
                     top: "calc(100% + 9px)",
                     transform: settingsTooltipVisible ? "translate(0, 0)" : "translate(0, -3px)",
-                    opacity: settingsTooltipVisible && !clearingDeviceData ? 1 : 0,
+                    opacity: settingsTooltipVisible && !clearingDeviceData && !setpointSaving ? 1 : 0,
                     pointerEvents: "none",
                     padding: "2px 7px",
                     borderRadius: 6,
@@ -4287,6 +4395,87 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               pointer-events: none;
               will-change: transform, opacity;
             }
+            .data-settings-section {
+              border: 1px solid ${C.border};
+              border-radius: 14px;
+              background: linear-gradient(145deg, ${C.surface}, ${C.card});
+              padding: 14px;
+              box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+            }
+            .data-settings-section-heading {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              margin-bottom: 13px;
+            }
+            .data-settings-setpoint-grid {
+              display: grid;
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 10px;
+            }
+            .data-settings-setpoint-card {
+              --setpoint-accent: ${C.primary};
+              position: relative;
+              display: grid;
+              gap: 11px;
+              overflow: hidden;
+              padding: 12px;
+              border: 1px solid ${C.border};
+              border-radius: 12px;
+              background: ${C.card};
+              transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+            }
+            .data-settings-setpoint-card::before {
+              content: "";
+              position: absolute;
+              inset: 0 auto 0 0;
+              width: 3px;
+              background: var(--setpoint-accent);
+              box-shadow: 0 0 16px var(--setpoint-accent);
+              opacity: 0.85;
+            }
+            .data-settings-setpoint-card:hover,
+            .data-settings-setpoint-card:focus-within {
+              border-color: var(--setpoint-accent);
+              transform: translateY(-1px);
+              box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+            }
+            .data-settings-setpoint-input {
+              min-height: 44px;
+              border-color: ${C.border} !important;
+              transition: border-color 150ms ease, box-shadow 150ms ease;
+            }
+            .data-settings-setpoint-card:focus-within .data-settings-setpoint-input {
+              border-color: var(--setpoint-accent) !important;
+              box-shadow: 0 0 0 2px color-mix(in srgb, var(--setpoint-accent) 18%, transparent);
+            }
+            .data-settings-footer-row {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 10px;
+              width: 100%;
+            }
+            @media (max-width: 900px) {
+              .data-settings-setpoint-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+              }
+            }
+            @media (max-width: 560px) {
+              .data-settings-section {
+                padding: 12px;
+              }
+              .data-settings-setpoint-grid {
+                grid-template-columns: 1fr;
+              }
+              .data-settings-footer-row {
+                align-items: stretch;
+                flex-direction: column-reverse;
+              }
+              .data-settings-footer-save {
+                width: 100%;
+              }
+            }
             @keyframes clearDataConfirmBackdropIn {
               from { opacity: 0; }
               to { opacity: 1; }
@@ -4380,6 +4569,9 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       missingDataBands={trendMissingDataBands}
                       timeDomain={trendTimeDomain}
                       yDomain={chart.yDomain}
+                      referenceLine={{
+                        value: chart.setpoint,
+                      }}
                       hoverTarget={trendHoverTarget}
                       pinnedTarget={spectrumPinnedTarget}
                       playheadTimestampMs={playbackCursorTs}
@@ -5216,48 +5408,192 @@ export const SensorChartModal = React.memo(function SensorChartModal({
       <Modal
         open={dataSettingsMounted}
         onClose={closeDataSettings}
-        title="Tùy chọn dữ liệu"
-        description={`Thiết bị ${sensor?.name || sensor?.id}`}
-        width={520}
+        title="Cài đặt thiết bị"
+        description={chartDeviceLabel}
+        width={980}
         zIndex={94}
-        disableClose={clearingDeviceData}
+        disableClose={clearingDeviceData || setpointSaving}
         backdropClassName={`data-settings-modal-backdrop ${dataSettingsClosing ? "modal-closing" : "modal-open"}`}
         cardClassName={`data-settings-modal-card ${dataSettingsClosing ? "modal-closing" : "modal-open"}`}
         footer={(
-          <>
-	          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-	            <ConsoleButton
-	              variant="neutral"
-	              size="sm"
-	              onClick={() => {
-	                void loadDeviceDataSummary();
-	              }}
-	              disabled={dataSummaryLoading || clearingDeviceData}
-	            >
-	              {dataSummaryLoading ? "Đang tải..." : "Làm mới"}
-	            </ConsoleButton>
-		            <ConsoleButton
-		              variant="danger"
-		              size="sm"
-		              onClick={openClearDataConfirm}
-		              disabled={clearingDeviceData}
-		            >
-	              <Trash2 size={14} strokeWidth={2.1} />
-	              {clearingDeviceData ? `Đang xoá ${Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}%` : "Xoá dữ liệu"}
-	            </ConsoleButton>
-	          </div>
-                  {dataClearJob && (safeString(dataClearJob.status) === "queued" || safeString(dataClearJob.status) === "running") ? (
-                    <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>
-                      Job xoá: {Math.round(asFiniteNumber(dataClearJob.progress) ?? 0)}% · telemetry {Math.round(asFiniteNumber(dataClearJob.telemetryDeleted) ?? 0)}
-                    </div>
-                  ) : null}
-          </>
+	          <div style={{ display: "grid", gap: 8, width: "100%" }}>
+              <div className="data-settings-footer-row">
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <ConsoleButton
+                    variant="neutral"
+                    size="sm"
+                    onClick={() => {
+                      void loadDeviceDataSummary();
+                    }}
+                    disabled={dataSummaryLoading || clearingDeviceData || setpointSaving}
+                  >
+                    <RotateCcw size={13} strokeWidth={2.2} />
+                    {dataSummaryLoading ? "Đang tải..." : "Làm mới"}
+                  </ConsoleButton>
+                  <ConsoleButton
+                    variant="danger"
+                    size="sm"
+                    onClick={openClearDataConfirm}
+                    disabled={clearingDeviceData || setpointSaving}
+                  >
+                    <Trash2 size={14} strokeWidth={2.1} />
+                    {clearingDeviceData ? `Đang xoá ${Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}%` : "Xoá dữ liệu"}
+                  </ConsoleButton>
+                </div>
+                <ConsoleButton
+                  className="data-settings-footer-save"
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void saveSetpoints()}
+                  disabled={setpointSaving || clearingDeviceData}
+                >
+                  <Save size={14} strokeWidth={2.2} />
+                  {setpointSaving ? "Đang lưu..." : "Lưu ngưỡng"}
+                </ConsoleButton>
+              </div>
+              {dataClearJob && (safeString(dataClearJob.status) === "queued" || safeString(dataClearJob.status) === "running") ? (
+                <div style={{ fontSize: 12, color: C.textMuted }}>
+                  Job xoá: {Math.round(asFiniteNumber(dataClearJob.progress) ?? 0)}% · telemetry {Math.round(asFiniteNumber(dataClearJob.telemetryDeleted) ?? 0)}
+                </div>
+              ) : null}
+            </div>
 	        )}
 	      >
+	        <div style={{ display: "grid", gap: 12 }}>
+            <section className="data-settings-section">
+              <div className="data-settings-section-heading">
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    color: C.primary,
+                    background: C.primaryBg,
+                    border: `1px solid ${C.primary}55`,
+                  }}
+                >
+                  <Settings size={17} strokeWidth={2.2} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 850 }}>Ngưỡng cảnh báo</div>
+                  <div style={{ color: C.textMuted, fontSize: "0.66rem", marginTop: 3 }}>Cảnh báo khi giá trị mới nhất vượt ngưỡng; A, V và D lấy trục lớn nhất.</div>
+                </div>
+                <span
+                  style={{
+                    color: C.primary,
+                    background: C.primaryBg,
+                    border: `1px solid ${C.primary}44`,
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    fontSize: "0.58rem",
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  4 ngưỡng riêng
+                </span>
+              </div>
+              <div className="data-settings-setpoint-grid">
+                {([
+                  { key: "acceleration", code: "A", label: "Gia tốc", unit: "m/s²", accent: "#38bdf8", icon: <Activity size={15} strokeWidth={2.2} /> },
+                  { key: "velocity", code: "V", label: "Vận tốc RMS", unit: "mm/s", accent: "#34d399", icon: <Gauge size={15} strokeWidth={2.2} /> },
+                  { key: "displacement", code: "D", label: "Biên độ RMS", unit: "mm", accent: "#fbbf24", icon: <Ruler size={15} strokeWidth={2.2} /> },
+                  { key: "temperature", code: "TEMP", label: "Nhiệt độ", unit: "°C", accent: "#fb7185", icon: <Thermometer size={15} strokeWidth={2.2} /> },
+                ] as const).map((field) => (
+                  <div
+                    key={field.key}
+                    className="data-settings-setpoint-card"
+                    style={{ "--setpoint-accent": field.accent } as React.CSSProperties}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 9,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          color: field.accent,
+                          background: `${field.accent}18`,
+                          border: `1px solid ${field.accent}33`,
+                        }}
+                      >
+                        {field.icon}
+                      </span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 800 }}>{field.label}</div>
+                        <div style={{ color: C.textMuted, fontSize: "0.58rem", marginTop: 2 }}>Ngưỡng cảnh báo</div>
+                      </div>
+                      <span style={{ color: field.accent, fontSize: "0.58rem", fontWeight: 900, letterSpacing: "0.05em" }}>{field.code}</span>
+                    </div>
+                    <FormFieldShell className="data-settings-setpoint-input">
+                      <FormInput
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        aria-label={`Ngưỡng ${field.label}`}
+                        value={setpointDrafts[field.key]}
+                        onChange={(event) => {
+                          setSetpointDrafts((current) => ({ ...current, [field.key]: event.target.value }));
+                          setSetpointError("");
+                        }}
+                        disabled={setpointSaving}
+                        style={{ fontSize: "0.92rem", fontWeight: 850, fontVariantNumeric: "tabular-nums" }}
+                      />
+                      <span
+                        style={{
+                          color: field.accent,
+                          background: `${field.accent}12`,
+                          borderRadius: 6,
+                          padding: "3px 6px",
+                          fontSize: "0.64rem",
+                          fontWeight: 800,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {field.unit}
+                      </span>
+                    </FormFieldShell>
+                  </div>
+                ))}
+              </div>
+              {setpointError ? <div role="alert" style={{ color: C.danger, fontSize: "0.7rem", marginTop: 10 }}>{setpointError}</div> : null}
+            </section>
+
+
+            <section className="data-settings-section">
+              <div className="data-settings-section-heading">
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    color: C.textBase,
+                    background: C.input,
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  <Database size={16} strokeWidth={2.1} />
+                </div>
+                <div>
+                  <div style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 850 }}>Dữ liệu lưu trữ</div>
+                  <div style={{ color: C.textMuted, fontSize: "0.64rem", marginTop: 3 }}>Dung lượng telemetry và phổ tần của thiết bị.</div>
+                </div>
+              </div>
 	        {dataSummaryLoading ? (
 	          <div
 	            style={{
-	              minHeight: 150,
+	              minHeight: 110,
 	              display: "flex",
 	              alignItems: "center",
 	              justifyContent: "center",
@@ -5382,6 +5718,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	        ) : (
 	          <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>Chưa có dữ liệu thống kê.</div>
 	        )}
+            </section>
+          </div>
 	      </Modal>
 
       <Modal

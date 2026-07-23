@@ -6,6 +6,7 @@ import type {
   AlertStatus,
   AlertTimeWindow,
   TelemetryMessage,
+  TelemetryPayload,
 } from '../../shared/types.js';
 import type { AlertRepository } from './alert.repository.js';
 
@@ -30,65 +31,88 @@ type RuleEvaluationState = {
   recentTriggeredAt: string[];
 };
 
-const DEFAULT_ALERT_RULES: Array<Omit<AlertRule, 'createdAt' | 'updatedAt'>> = [
+export const DEVICE_ACCELERATION_RULE_ID = 'device-acceleration-setpoint';
+export const DEVICE_VIBRATION_RULE_ID = 'device-vibration-setpoint';
+export const DEVICE_DISPLACEMENT_RULE_ID = 'device-displacement-setpoint';
+export const DEVICE_TEMPERATURE_RULE_ID = 'device-temperature-setpoint';
+export const DEFAULT_VIBRATION_SETPOINT = 10;
+
+export type DeviceMetricSetpoints = {
+  acceleration: number;
+  velocity: number;
+  displacement: number;
+  temperature: number;
+};
+
+type MetricDefinition = {
+  ruleId: string;
+  name: string;
+  metric: Exclude<AlertMetric, 'vibration'>;
+  setpoint: keyof DeviceMetricSetpoints;
+  read: (payload: TelemetryPayload) => number | undefined;
+};
+
+function finite(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function maxAbs(...values: unknown[]): number | undefined {
+  const numbers = values.map(finite).filter((value): value is number => value !== undefined);
+  return numbers.length > 0 ? Math.max(...numbers.map(Math.abs)) : undefined;
+}
+
+const METRICS: MetricDefinition[] = [
   {
-    ruleId: 'temperature-warning',
-    name: 'Temperature Warning',
+    ruleId: DEVICE_ACCELERATION_RULE_ID,
+    name: 'Device Acceleration Setpoint',
+    metric: 'acceleration',
+    setpoint: 'acceleration',
+    read: (payload) => maxAbs(payload.ax, payload.ay, payload.az),
+  },
+  {
+    ruleId: DEVICE_VIBRATION_RULE_ID,
+    name: 'Device Velocity Setpoint',
+    metric: 'velocity',
+    setpoint: 'velocity',
+    read: (payload) => maxAbs(
+      payload.vrms_x_mms ?? payload.vx_rms_mms,
+      payload.vrms_y_mms ?? payload.vy_rms_mms,
+      payload.vrms_z_mms ?? payload.vz_rms_mms,
+    ) ?? finite(payload.vibration),
+  },
+  {
+    ruleId: DEVICE_DISPLACEMENT_RULE_ID,
+    name: 'Device Displacement Setpoint',
+    metric: 'displacement',
+    setpoint: 'displacement',
+    read: (payload) => {
+      const micrometers = maxAbs(payload.drms_x_um, payload.drms_y_um, payload.drms_z_um);
+      return micrometers === undefined ? undefined : micrometers / 1000;
+    },
+  },
+  {
+    ruleId: DEVICE_TEMPERATURE_RULE_ID,
+    name: 'Device Temperature Setpoint',
     metric: 'temperature',
-    threshold: 35,
-    severity: 'warning',
-    debounceCount: 2,
-    cooldownMs: 30_000,
-    suppressionWindowMs: 45_000,
-    flappingWindowMs: 180_000,
-    flappingThreshold: 3,
-    enabled: true,
-  },
-  {
-    ruleId: 'temperature-critical',
-    name: 'Temperature Critical',
-    metric: 'temperature',
-    threshold: 42,
-    severity: 'critical',
-    debounceCount: 2,
-    cooldownMs: 15_000,
-    suppressionWindowMs: 30_000,
-    flappingWindowMs: 120_000,
-    flappingThreshold: 3,
-    enabled: true,
-  },
-  {
-    ruleId: 'vibration-warning',
-    name: 'Vibration Warning',
-    metric: 'vibration',
-    threshold: 0.55,
-    severity: 'warning',
-    debounceCount: 3,
-    cooldownMs: 30_000,
-    suppressionWindowMs: 45_000,
-    flappingWindowMs: 180_000,
-    flappingThreshold: 3,
-    enabled: true,
-  },
-  {
-    ruleId: 'vibration-critical',
-    name: 'Vibration Critical',
-    metric: 'vibration',
-    threshold: 0.75,
-    severity: 'critical',
-    debounceCount: 2,
-    cooldownMs: 15_000,
-    suppressionWindowMs: 30_000,
-    flappingWindowMs: 120_000,
-    flappingThreshold: 3,
-    enabled: true,
+    setpoint: 'temperature',
+    read: (payload) => finite(payload.temperature),
   },
 ];
+
+const DEFAULT_SETPOINTS: DeviceMetricSetpoints = {
+  acceleration: DEFAULT_VIBRATION_SETPOINT,
+  velocity: DEFAULT_VIBRATION_SETPOINT,
+  displacement: DEFAULT_VIBRATION_SETPOINT,
+  temperature: DEFAULT_VIBRATION_SETPOINT,
+};
 
 export class AlertService {
   private readonly state = new Map<string, RuleEvaluationState>();
 
-  constructor(private readonly repository: AlertRepository) {
+  constructor(
+    private readonly repository: AlertRepository,
+    private readonly resolveSetpoints: (deviceId: string) => DeviceMetricSetpoints = () => DEFAULT_SETPOINTS,
+  ) {
     this.seedDefaults();
   }
 
@@ -224,123 +248,92 @@ export class AlertService {
   }
 
   evaluate(message: TelemetryMessage): AlertRecord[] {
-    const changedAlerts: AlertRecord[] = [];
-
-    for (const rule of this.repository.listRules()) {
-      if (!rule.enabled) {
-        continue;
-      }
-
-      const activeAlert = this.repository.getActiveAlert(rule.ruleId, message.deviceId);
-      if (!activeAlert && !this.isWithinTimeWindow(rule, message.receivedAt)) {
-        continue;
-      }
-
-      const value = message.payload[rule.metric];
-      if (typeof value !== 'number' || Number.isNaN(value)) {
-        continue;
-      }
-
-      const stateKey = this.createStateKey(rule.ruleId, message.deviceId);
-      const state = this.state.get(stateKey) ?? {
-        consecutiveAbove: 0,
-        recentTriggeredAt: [],
-      };
-      state.recentTriggeredAt = this.pruneRecentTriggers(state.recentTriggeredAt, rule, message.receivedAt);
-
-      if (value >= rule.threshold) {
-        state.consecutiveAbove += 1;
-
-        if (activeAlert) {
-          const occurrenceCount = Math.max(1, activeAlert.occurrenceCount || 1) + 1;
-          const updatedActive: AlertRecord = {
-            ...activeAlert,
-            status: activeAlert.status,
-            lastValue: value,
-            occurrenceCount,
-            noiseState: activeAlert.noiseState === 'flapping' ? 'flapping' : 'coalesced',
-            updatedAt: message.receivedAt,
-          };
-          this.repository.updateAlert(updatedActive);
-          this.state.set(stateKey, state);
-          continue;
-        }
-
-        const latestAlert = this.repository.getLatestAlert(rule.ruleId, message.deviceId);
-        const suppressionActive = this.isSuppressionActive(rule, state, message.receivedAt);
-
-        if (state.consecutiveAbove >= rule.debounceCount && suppressionActive) {
-          this.applySuppression(latestAlert, rule, message.deviceId, value, state, message.receivedAt);
-          this.state.set(stateKey, state);
-          continue;
-        }
-
-        if (state.consecutiveAbove >= rule.debounceCount) {
-          const recentTriggeredAt = this.recordTrigger(state.recentTriggeredAt, rule, message.receivedAt);
-          const isFlapping = this.isFlapping(rule, recentTriggeredAt);
-          const createdAlert: AlertRecord = {
-            alertId: this.createId('alert'),
-            ruleId: rule.ruleId,
-            ruleName: rule.name,
-            deviceId: message.deviceId,
-            metric: rule.metric,
-            severity: rule.severity,
-            threshold: rule.threshold,
-            triggerValue: value,
-            lastValue: value,
-            occurrenceCount: 1,
-            suppressedCount: 0,
-            noiseState: isFlapping ? 'flapping' : 'normal',
-            status: 'active',
-            triggeredAt: message.receivedAt,
-            updatedAt: message.receivedAt,
-          };
-          this.repository.saveAlert(createdAlert);
-          state.lastTriggeredAt = message.receivedAt;
-          state.recentTriggeredAt = recentTriggeredAt;
-          changedAlerts.push(createdAlert);
-        }
-
-        this.state.set(stateKey, state);
-        continue;
-      }
-
-      state.consecutiveAbove = 0;
-      this.state.set(stateKey, state);
-
-      if (activeAlert) {
-        const resolvedAlert: AlertRecord = {
-          ...activeAlert,
-          lastValue: value,
-          status: 'resolved',
-          resolvedAt: message.receivedAt,
-          resolvedBy: 'system',
-          resolutionNote: 'Resolved automatically after metric dropped below threshold',
-          updatedAt: message.receivedAt,
-        };
-        this.repository.updateAlert(resolvedAlert);
-        state.lastResolvedAt = message.receivedAt;
-        this.state.set(stateKey, state);
-        changedAlerts.push(resolvedAlert);
-      }
-    }
-
-    return changedAlerts;
+    const configured = this.resolveSetpoints(message.deviceId);
+    return METRICS
+      .map((definition) => this.evaluateMetric(message, definition, configured))
+      .filter((alert): alert is AlertRecord => Boolean(alert));
   }
 
   private seedDefaults(): void {
-    if (this.repository.listRules().length > 0) {
-      return;
-    }
-
     const now = new Date().toISOString();
-    for (const rule of DEFAULT_ALERT_RULES) {
+    for (const definition of METRICS) {
+      if (this.repository.getRule(definition.ruleId)) continue;
       this.repository.saveRule({
-        ...rule,
+        ruleId: definition.ruleId,
+        name: definition.name,
+        metric: definition.metric,
+        threshold: DEFAULT_VIBRATION_SETPOINT,
+        severity: 'warning',
+        debounceCount: 1,
+        cooldownMs: 0,
+        suppressionWindowMs: 0,
+        flappingWindowMs: 180_000,
+        flappingThreshold: 3,
+        enabled: true,
         createdAt: now,
         updatedAt: now,
       });
     }
+  }
+
+  private evaluateMetric(
+    message: TelemetryMessage,
+    definition: MetricDefinition,
+    setpoints: DeviceMetricSetpoints,
+  ): AlertRecord | null {
+    const rule = this.repository.getRule(definition.ruleId);
+    const value = definition.read(message.payload);
+    if (!rule?.enabled || value === undefined) return null;
+
+    const configured = setpoints[definition.setpoint];
+    const threshold = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_VIBRATION_SETPOINT;
+    const activeAlert = this.repository.getActiveAlert(rule.ruleId, message.deviceId);
+    if (value > threshold) {
+      if (activeAlert) {
+        this.repository.updateAlert({
+          ...activeAlert,
+          threshold,
+          lastValue: value,
+          occurrenceCount: Math.max(1, activeAlert.occurrenceCount || 1) + 1,
+          noiseState: 'coalesced',
+          updatedAt: message.receivedAt,
+        });
+        return null;
+      }
+      const created: AlertRecord = {
+        alertId: this.createId('alert'),
+        ruleId: rule.ruleId,
+        ruleName: rule.name,
+        deviceId: message.deviceId,
+        metric: definition.metric,
+        severity: 'warning',
+        threshold,
+        triggerValue: value,
+        lastValue: value,
+        occurrenceCount: 1,
+        suppressedCount: 0,
+        noiseState: 'normal',
+        status: 'active',
+        triggeredAt: message.receivedAt,
+        updatedAt: message.receivedAt,
+      };
+      this.repository.saveAlert(created);
+      return created;
+    }
+
+    if (!activeAlert) return null;
+    const resolved: AlertRecord = {
+      ...activeAlert,
+      threshold,
+      lastValue: value,
+      status: 'resolved',
+      resolvedAt: message.receivedAt,
+      resolvedBy: 'system',
+      resolutionNote: `Resolved automatically after ${definition.metric} dropped below the device setpoint`,
+      updatedAt: message.receivedAt,
+    };
+    this.repository.updateAlert(resolved);
+    return resolved;
   }
 
   private createStateKey(ruleId: string, deviceId: string): string {

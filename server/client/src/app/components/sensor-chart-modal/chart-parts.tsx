@@ -762,6 +762,8 @@ export type HoverTelemetrySnapshot = {
 export type SpectrumHoverTarget = {
   timestampMs: number;
   telemetryUuid?: string;
+  coverageStartMs?: number;
+  coverageEndMs?: number;
 };
 
 function thinAxisTicks(values: number[], maxTicks: number): number[] {
@@ -1173,6 +1175,8 @@ export function parseSpectrumHoverTarget(state: unknown): SpectrumHoverTarget | 
     return {
       timestampMs: timestampMsDirect,
       telemetryUuid: asNonEmptyString(row.telemetryUuid ?? row.telemetry_uuid),
+      coverageStartMs: asFiniteNumber(row.coverageStartMs),
+      coverageEndMs: asFiniteNumber(row.coverageEndMs),
     };
   }
 
@@ -1187,7 +1191,12 @@ export function parseSpectrumHoverTarget(state: unknown): SpectrumHoverTarget | 
   }
 
   const telemetryUuid = asNonEmptyString(payloadRecord.telemetryUuid ?? payloadRecord.telemetry_uuid);
-  return { timestampMs, telemetryUuid };
+  return {
+    timestampMs,
+    telemetryUuid,
+    coverageStartMs: asFiniteNumber(payloadRecord.coverageStartMs),
+    coverageEndMs: asFiniteNumber(payloadRecord.coverageEndMs),
+  };
 }
 
 export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
@@ -1676,12 +1685,21 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
 type TelemetryTrendChartProps = {
   data: TrendRow[];
   dataSource?: string;
-  hoverPoints: Array<{ ts: number; telemetryUuid?: string }>;
+  hoverPoints: Array<{
+    ts: number;
+    telemetryUuid?: string;
+    coverageStartMs?: number;
+    coverageEndMs?: number;
+  }>;
   series: TrendSeriesConfig[];
   statusBands?: TrendStatusBand[];
   missingDataBands?: TrendGapSegment[];
   timeDomain?: [number, number];
   yDomain: [number, number];
+  referenceLine?: {
+    value: number;
+    color?: string;
+  };
   hoverTarget?: SpectrumHoverTarget | null;
   pinnedTarget?: SpectrumHoverTarget | null;
   playheadTimestampMs?: number | null;
@@ -1755,6 +1773,26 @@ export function trendSegmentKey(seriesKey: string, segment: Array<{ ts: number }
   return `${seriesKey}:${segment[0]?.ts ?? "empty"}`;
 }
 
+export function includeTrendReferenceValueInDomain(
+  domain: [number, number],
+  referenceValue?: number,
+): [number, number] {
+  if (typeof referenceValue !== "number" || !Number.isFinite(referenceValue)) {
+    return domain;
+  }
+
+  const [min, max] = domain;
+  if (referenceValue > min && referenceValue < max) {
+    return domain;
+  }
+
+  const span = Math.max(1, Math.abs(max - min));
+  const padding = Math.max(0.1, span * 0.08);
+  return referenceValue <= min
+    ? [referenceValue - padding, max]
+    : [min, referenceValue + padding];
+}
+
 export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   data,
   dataSource = "timeline",
@@ -1764,6 +1802,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   missingDataBands = [],
   timeDomain,
   yDomain,
+  referenceLine,
   hoverTarget: syncedHoverTarget = null,
   pinnedTarget,
   playheadTimestampMs = null,
@@ -1834,7 +1873,12 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   const orderedHoverPoints = useMemo(() => {
     const source = hoverPoints.length > 0
       ? hoverPoints
-      : data.map((item) => ({ ts: item.ts, telemetryUuid: asNonEmptyString(item.telemetryUuid) }));
+      : data.map((item) => ({
+        ts: item.ts,
+        telemetryUuid: asNonEmptyString(item.telemetryUuid),
+        coverageStartMs: asFiniteNumber(item.coverageStartMs),
+        coverageEndMs: asFiniteNumber(item.coverageEndMs),
+      }));
     return source
       .filter((item) => Number.isFinite(item.ts))
       .sort((left, right) => left.ts - right.ts);
@@ -1860,7 +1904,12 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
       const right = orderedHoverPoints[low] ?? null;
       const left = orderedHoverPoints[Math.max(0, low - 1)] ?? null;
       const best = !left ? right : !right ? left : Math.abs(left.ts - targetTs) <= Math.abs(right.ts - targetTs) ? left : right;
-      return best ? { timestampMs: best.ts, telemetryUuid: best.telemetryUuid } : null;
+      return best ? {
+        timestampMs: best.ts,
+        telemetryUuid: best.telemetryUuid,
+        coverageStartMs: best.coverageStartMs,
+        coverageEndMs: best.coverageEndMs,
+      } : null;
     },
     [orderedHoverPoints],
   );
@@ -1905,6 +1954,10 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   const domainMin = timeDomain?.[0] ?? (data.length > 0 ? data[0]?.ts ?? Date.now() : Date.now() - 1000);
   const domainMaxRaw = timeDomain?.[1] ?? (data.length > 0 ? data[data.length - 1]?.ts ?? Date.now() : Date.now());
   const domainMax = domainMaxRaw > domainMin ? domainMaxRaw : domainMin + 1000;
+  const effectiveYDomain = useMemo(
+    () => includeTrendReferenceValueInDomain(yDomain, referenceLine?.value),
+    [referenceLine?.value, yDomain],
+  );
 
   const xScale = useMemo(
     () => scaleTime<number>({
@@ -1916,12 +1969,23 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
 
   const yScale = useMemo(
     () => scaleLinear<number>({
-      domain: [yDomain[0], yDomain[1]],
+      domain: [effectiveYDomain[0], effectiveYDomain[1]],
       range: [margin.top + innerHeight, margin.top],
     }),
-    [innerHeight, margin.top, yDomain],
+    [effectiveYDomain, innerHeight, margin.top],
   );
   const yAxisTicks = useMemo(() => thinAxisTicks(yScale.ticks(6), 3), [yScale]);
+  const referenceLineLayout = useMemo(() => {
+    const value = referenceLine?.value;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+
+    return {
+      color: referenceLine?.color ?? "#ef4444",
+      lineY: yScale(value),
+    };
+  }, [referenceLine?.color, referenceLine?.value, yScale]);
 
   const visibleStatusBands = useMemo(
     () => statusBands
@@ -2458,6 +2522,24 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
                   </g>
                 );
               })}
+
+              {referenceLineLayout ? (
+                <g
+                  pointerEvents="none"
+                  data-chart-reference-line="setpoint"
+                  data-reference-value={referenceLine?.value}
+                >
+                  <line
+                    x1={margin.left}
+                    x2={margin.left + innerWidth}
+                    y1={referenceLineLayout.lineY}
+                    y2={referenceLineLayout.lineY}
+                    stroke={referenceLineLayout.color}
+                    strokeWidth={wallboard ? 3 : 1.5}
+                    strokeDasharray={wallboard ? "12 8" : "6 4"}
+                  />
+                </g>
+              ) : null}
 
               {pinnedTarget ? (
                 <g>

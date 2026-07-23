@@ -67,8 +67,9 @@ const STATUSES = new Set<SgpDataImportStatus>([
   'uploading', 'validating', 'preview_ready', 'queued', 'running', 'completed', 'failed', 'interrupted',
 ]);
 const STAGES = new Set<SgpDataImportStage>([
-  'uploading', 'validating', 'preview_ready', 'queued', 'importing_devices', 'importing_telemetry',
-  'importing_placement_configs', 'importing_spectrum', 'rebuilding_summaries', 'completed', 'failed', 'interrupted',
+  'uploading', 'validating', 'preview_ready', 'queued', 'importing_zones', 'importing_devices', 'replacing_data',
+  'importing_telemetry', 'importing_placement_configs', 'importing_spectrum', 'rebuilding_summaries',
+  'completed', 'failed', 'interrupted',
 ]);
 
 function toIso(value: string | Date | null | undefined): string | undefined {
@@ -123,7 +124,7 @@ function toJob(row: SgpDataImportJobRow): SgpDataImportJob {
     filePath: row.file_path,
     fileSha256: row.file_sha256,
     sizeBytes: Math.max(0, Math.floor(toNumber(row.size_bytes))),
-    mode: row.mode === 'idempotent' ? 'idempotent' : 'merge',
+    mode: row.mode === 'replace' ? 'replace' : 'merge',
     totals: counts(row, 'total'),
     processed: counts(row, 'processed'),
     mutations: mutations(row),

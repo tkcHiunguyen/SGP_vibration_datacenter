@@ -39,6 +39,7 @@ export function ImportUploadPanel({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [checksumInvalid, setChecksumInvalid] = useState(false);
+  const replaceAvailable = Boolean(preview?.metadata.dateFrom && preview?.metadata.dateTo);
 
   useEffect(() => () => xhrRef.current?.abort(), []);
 
@@ -47,6 +48,7 @@ export function ImportUploadPanel({
     setFile(next);
     setPreview(null);
     setUploadId("");
+    setMode("merge");
     setUploadProgress(0);
     setMessage("");
     setError("");
@@ -180,15 +182,18 @@ export function ImportUploadPanel({
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(125px, 1fr))", gap: 8 }}>
             <MiniStat icon={<FileArchive size={14} />} label="Thiết bị" value={fmtCount(stats.deviceCount)} />
+            <MiniStat icon={<FileArchive size={14} />} label="Khu vực" value={fmtCount(stats.zoneCount)} />
+            <MiniStat icon={<FileArchive size={14} />} label="Cấu hình vị trí" value={fmtCount(stats.placementConfigCount)} />
             <MiniStat icon={<FileArchive size={14} />} label="Điểm đo" value={fmtCount(stats.measurementCount)} />
             <MiniStat icon={<FileArchive size={14} />} label="Phổ FFT" value={fmtCount(stats.spectrumCount)} />
             <MiniStat icon={<ShieldCheck size={14} />} label="Checksum" value={stats.checksumValid ? "Hợp lệ" : "Không hợp lệ"} />
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(["merge", "idempotent"] as const).map((value) => (
+            {(["merge", "replace"] as const).map((value) => (
               <button
                 key={value}
                 type="button"
+                disabled={value === "replace" && !replaceAvailable}
                 onClick={() => setMode(value)}
                 className="sgpdata-action-button"
                 style={{
@@ -198,15 +203,26 @@ export function ImportUploadPanel({
                   background: mode === value ? C.primaryBg : C.card,
                   color: mode === value ? C.primary : C.textBase,
                   padding: "0 12px",
-                  cursor: "pointer",
+                  cursor: value === "replace" && !replaceAvailable ? "not-allowed" : "pointer",
+                  opacity: value === "replace" && !replaceAvailable ? 0.5 : 1,
                   fontSize: "0.72rem",
                   fontWeight: 850,
                 }}
               >
-                {value === "merge" ? "Merge: cập nhật bản ghi trùng" : "Idempotent: bỏ qua bản ghi trùng"}
+                {value === "merge" ? "Bổ sung dữ liệu" : "Thay thế dữ liệu"}
               </button>
             ))}
           </div>
+          {mode === "replace" ? (
+            <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 10, fontSize: "0.68rem", fontWeight: 800 }}>
+              Dữ liệu cũ của các thiết bị trong đúng khoảng thời gian của file sẽ bị xóa trước khi import.
+            </div>
+          ) : null}
+          {!replaceAvailable ? (
+            <div style={{ color: C.textMuted, fontSize: "0.66rem", fontWeight: 700 }}>
+              File không có khoảng thời gian nên chỉ có thể bổ sung dữ liệu an toàn.
+            </div>
+          ) : null}
           <button
             className="sgpdata-action-button"
             type="button"

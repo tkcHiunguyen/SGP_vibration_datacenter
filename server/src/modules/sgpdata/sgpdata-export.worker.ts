@@ -10,6 +10,7 @@ import type { DataExportJob, DataExportJobRepository } from '../data-export/data
 import type { DeviceService } from '../device/device.service.js';
 import type { SpectrumStorageService } from '../spectrum/spectrum-storage.service.js';
 import type { TelemetryService } from '../telemetry/telemetry.service.js';
+import type { ZoneService } from '../zone/zone.service.js';
 import type { SgpDataManifest } from './sgpdata.types.js';
 
 type ExportWorkerOptions = {
@@ -46,6 +47,7 @@ export class SgpDataExportWorker {
     private readonly deviceService: DeviceService,
     private readonly telemetryService: TelemetryService,
     private readonly spectrumStorageService: SpectrumStorageService,
+    private readonly zoneService: ZoneService,
     private readonly auditService: AuditService,
     private readonly exportDir: string,
     private readonly options: ExportWorkerOptions = {},
@@ -75,6 +77,8 @@ export class SgpDataExportWorker {
 
   private async run(job: DataExportJob): Promise<void> {
     let filePath: string | undefined;
+    let gzipStream: ReturnType<typeof createGzip> | undefined;
+    let outputPromise: Promise<void> | undefined;
     try {
       job.status = 'running';
       job.progress = 1;
@@ -88,6 +92,8 @@ export class SgpDataExportWorker {
         ? [this.deviceService.getMetadata(job.deviceId)].filter((value): value is NonNullable<typeof value> => Boolean(value))
         : this.deviceService.list().map((item) => item.metadata).filter((value): value is NonNullable<typeof value> => Boolean(value));
       if (job.deviceId && devices.length === 0) throw new Error('device_not_found');
+      const referencedZoneCodes = new Set(devices.map((device) => device.zone).filter((code): code is string => Boolean(code)));
+      const zones = (await this.zoneService.listAll()).filter((zone) => !job.deviceId || referencedZoneCodes.has(zone.code));
       const placementConfigs = new Map<string, Record<string, unknown>>();
       for (const device of devices) {
         const config = await this.spectrumStorageService.readPlacementConfig(device.deviceId);
@@ -98,7 +104,7 @@ export class SgpDataExportWorker {
         this.telemetryService.countArchive(query),
         this.spectrumStorageService.countArchiveFrames(query),
       ]);
-      const totalRecords = devices.length + placementConfigs.size + measurementCount + spectrumFrameCount;
+      const totalRecords = zones.length + devices.length + placementConfigs.size + measurementCount + spectrumFrameCount;
       let processed = 0;
 
       await mkdir(this.exportDir, { recursive: true });
@@ -108,29 +114,33 @@ export class SgpDataExportWorker {
       filePath = `${this.exportDir}/${job.jobId}-${fileName}`;
       const manifest: SgpDataManifest = {
         format: 'sgpdata',
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
         dateRange: job.range,
         deviceCount: devices.length,
         measurementCount,
         spectrumFrameCount,
         placementConfigCount: placementConfigs.size,
+        zoneCount: zones.length,
       };
       const checksum = createHash('sha256');
-      const gzipStream = createGzip({ level: 3, chunkSize: 256 * 1024 });
-      const outputPromise = pipeline(gzipStream, createWriteStream(filePath, { highWaterMark: 1024 * 1024 }));
+      const activeGzipStream = createGzip({ level: 3, chunkSize: 256 * 1024 });
+      gzipStream = activeGzipStream;
+      outputPromise = pipeline(activeGzipStream, createWriteStream(filePath, { highWaterMark: 1024 * 1024 }));
       const writeEntry = async (type: string, data: unknown) => {
         const line = ndjsonLine(type, data);
         checksum.update(line).update('\n');
-        await writeLine(gzipStream, line);
+        await writeLine(activeGzipStream, line);
       };
       const writeEntries = async (type: string, items: unknown[]) => {
         if (items.length === 0) return;
         const chunk = `${items.map((item) => ndjsonLine(type, item)).join('\n')}\n`;
         checksum.update(chunk);
-        await writeChunk(gzipStream, chunk);
+        await writeChunk(activeGzipStream, chunk);
       };
       let lastProgressUpdateAt = 0;
+      let exportedMeasurementCount = 0;
+      let exportedSpectrumCount = 0;
       const updateProgress = async (stage: string, force = false) => {
         const now = Date.now();
         if (!force && processed < totalRecords && now - lastProgressUpdateAt < EXPORT_PROGRESS_INTERVAL_MS) return;
@@ -142,6 +152,12 @@ export class SgpDataExportWorker {
       };
 
       await writeEntry('manifest', { ...manifest, encoding: 'gzip-ndjson' });
+      for (const zone of zones) {
+        const { id: _id, ...portableZone } = zone;
+        await writeEntry('zone', portableZone);
+        processed += 1;
+      }
+      await updateProgress('Đang xuất khu vực', true);
       for (const device of devices) {
         await writeEntry('device', device);
         processed += 1;
@@ -156,6 +172,7 @@ export class SgpDataExportWorker {
       for await (const batch of this.telemetryService.exportHistoryBatches(query, EXPORT_TELEMETRY_BATCH_SIZE)) {
         await writeEntries('measurement', batch);
         processed += batch.length;
+        exportedMeasurementCount += batch.length;
         await updateProgress(`Đã xuất ${processed}/${totalRecords} record`);
       }
 
@@ -164,6 +181,7 @@ export class SgpDataExportWorker {
       for await (const frame of this.spectrumStorageService.exportArchiveFrames(query, EXPORT_SPECTRUM_BATCH_SIZE)) {
         spectrumChunk.push(frame);
         processed += 1;
+        exportedSpectrumCount += 1;
         if (spectrumChunk.length < EXPORT_SPECTRUM_WRITE_CHUNK_SIZE) continue;
         await writeEntries('spectrumFrame', spectrumChunk);
         spectrumChunk = [];
@@ -174,9 +192,15 @@ export class SgpDataExportWorker {
         await updateProgress(`Đã xuất ${processed}/${totalRecords} record`, processed === totalRecords);
       }
 
+      if (exportedMeasurementCount !== measurementCount || exportedSpectrumCount !== spectrumFrameCount) {
+        throw new Error(
+          `sgpdata_export_count_mismatch:measurements=${exportedMeasurementCount}/${measurementCount},spectrum=${exportedSpectrumCount}/${spectrumFrameCount}`,
+        );
+      }
+
       manifest.checksumSha256 = checksum.digest('hex');
-      await writeLine(gzipStream, ndjsonLine('end', { checksumSha256: manifest.checksumSha256 }));
-      gzipStream.end();
+      await writeLine(activeGzipStream, ndjsonLine('end', { checksumSha256: manifest.checksumSha256 }));
+      activeGzipStream.end();
       await outputPromise;
       const fileStat = await stat(filePath);
       const completedAt = new Date().toISOString();
@@ -201,6 +225,8 @@ export class SgpDataExportWorker {
         metadata: { dateRange: job.range, ...manifest, sizeBytes: fileStat.size },
       });
     } catch (error) {
+      gzipStream?.destroy();
+      if (outputPromise) await outputPromise.catch(() => undefined);
       if (filePath) await unlink(filePath).catch(() => undefined);
       const completedAt = new Date().toISOString();
       job.status = 'failed';

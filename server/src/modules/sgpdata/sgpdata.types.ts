@@ -7,6 +7,10 @@ export const sgpDataDeviceSchema = z.object({
   site: z.string().optional(),
   zone: z.string().optional(),
   firmwareVersion: z.string().optional(),
+  vibrationSetpoint: z.number().finite().positive().optional(),
+  accelerationSetpoint: z.number().finite().positive().optional(),
+  displacementSetpoint: z.number().finite().positive().optional(),
+  temperatureSetpoint: z.number().finite().positive().optional(),
   axisLabels: z.object({
     ax: z.string().optional(),
     ay: z.string().optional(),
@@ -35,6 +39,14 @@ export const sgpDataSpectrumFrameSchema = z.object({
   contentBase64: z.string().min(1),
 }).passthrough();
 
+export const sgpDataZoneSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+}).passthrough();
+
 export const sgpDataDateRangeSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
@@ -42,13 +54,14 @@ export const sgpDataDateRangeSchema = z.object({
 
 export const sgpDataManifestSchema = z.object({
   format: z.literal('sgpdata'),
-  version: z.literal(2),
+  version: z.union([z.literal(2), z.literal(3)]),
   exportedAt: z.string().optional(),
   dateRange: sgpDataDateRangeSchema.optional(),
   deviceCount: z.number().optional(),
   measurementCount: z.number().optional(),
   spectrumFrameCount: z.number().optional(),
   placementConfigCount: z.number().optional(),
+  zoneCount: z.number().optional(),
   checksumSha256: z.string().optional(),
 }).passthrough();
 
@@ -56,22 +69,26 @@ export type SgpDataManifest = z.infer<typeof sgpDataManifestSchema>;
 export type SgpDataDevice = z.infer<typeof sgpDataDeviceSchema>;
 export type SgpDataTelemetryPoint = z.infer<typeof sgpDataTelemetryPointSchema>;
 export type SgpDataSpectrumFrame = z.infer<typeof sgpDataSpectrumFrameSchema>;
+export type SgpDataZone = z.infer<typeof sgpDataZoneSchema>;
 
 export type SgpDataStreamEntry =
   | { type: 'manifest'; data: SgpDataManifest }
+  | { type: 'zone'; data: SgpDataZone }
   | { type: 'device'; data: SgpDataDevice }
   | { type: 'measurement'; data: SgpDataTelemetryPoint }
   | { type: 'spectrumFrame'; data: SgpDataSpectrumFrame }
   | { type: 'placementConfig'; data: { deviceId: string; config: Record<string, unknown> } };
 
-export type SgpDataImportMode = 'merge' | 'idempotent';
+export type SgpDataImportMode = 'merge' | 'replace';
 
 export type SgpDataImportStage =
   | 'uploading'
   | 'validating'
   | 'preview_ready'
   | 'queued'
+  | 'importing_zones'
   | 'importing_devices'
+  | 'replacing_data'
   | 'importing_telemetry'
   | 'importing_placement_configs'
   | 'importing_spectrum'
@@ -127,6 +144,7 @@ export type SgpDataPreview = {
     measurementCount: number;
     spectrumCount: number;
     placementConfigCount: number;
+    zoneCount?: number;
     dateFrom?: string;
     dateTo?: string;
     checksumSha256?: string;
@@ -143,6 +161,7 @@ export type SgpDataPreview = {
     spectrumTotal: number;
   }>;
   deviceMetadata?: SgpDataDevice[];
+  zones?: SgpDataZone[];
   placementConfigs?: Array<{ deviceId: string; config: Record<string, unknown> }>;
   measurements: number;
   spectra: number;

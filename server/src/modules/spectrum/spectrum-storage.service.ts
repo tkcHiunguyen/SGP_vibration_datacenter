@@ -205,7 +205,12 @@ export class SpectrumStorageService {
     this.scheduleFrameFlush(frame.key);
   }
 
-  async findNearestFrame(deviceId: string, at?: string, telemetryUuid?: string): Promise<SpectrumFrameLookupResult | null> {
+  async findNearestFrame(
+    deviceId: string,
+    at?: string,
+    telemetryUuid?: string,
+    window?: { from: string; to: string },
+  ): Promise<SpectrumFrameLookupResult | null> {
     if (!this.mysql) {
       return null;
     }
@@ -219,7 +224,8 @@ export class SpectrumStorageService {
       typeof telemetryUuid === 'string' && telemetryUuid.trim() ? telemetryUuid.trim().slice(0, 255) : undefined;
 
     let selected: SpectrumFrameRow | null = null;
-    let targetTimestamp: number | null = null;
+    let enforceLookupMaxDelta = false;
+    const targetTimestamp = at ? Date.parse(at) : null;
     if (normalizedTelemetryUuid) {
       const byUuidRows = await this.mysql.query<SpectrumFrameRow>(
         `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
@@ -230,9 +236,29 @@ export class SpectrumStorageService {
         [targetDeviceId, normalizedTelemetryUuid],
       );
       selected = byUuidRows[0] ?? null;
-    } else if (at) {
+    }
+
+    if (!selected && window) {
+      const windowFromMs = Date.parse(window.from);
+      const windowToMs = Date.parse(window.to);
+      if (Number.isFinite(windowFromMs) && Number.isFinite(windowToMs) && windowToMs > windowFromMs) {
+        const lookupTargetMs = targetTimestamp !== null && targetTimestamp >= windowFromMs && targetTimestamp < windowToMs
+          ? targetTimestamp
+          : windowFromMs + (windowToMs - windowFromMs) / 2;
+        const windowRows = await this.mysql.query<SpectrumFrameRow>(
+          `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
+             FROM device_spectrum_frames
+            WHERE device_id = ? AND captured_at >= ? AND captured_at < ?
+            ORDER BY ABS(TIMESTAMPDIFF(MICROSECOND, captured_at, ?)) ASC, captured_at ASC
+            LIMIT 1`,
+          [targetDeviceId, window.from, window.to, new Date(lookupTargetMs).toISOString()],
+        );
+        selected = windowRows[0] ?? null;
+      }
+    }
+
+    if (!selected && !normalizedTelemetryUuid && at && targetTimestamp !== null) {
       const target = new Date(at).toISOString();
-      targetTimestamp = Date.parse(target);
 
       const beforeRows = await this.mysql.query<SpectrumFrameRow>(
         `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
@@ -261,7 +287,8 @@ export class SpectrumStorageService {
       } else {
         selected = before ?? after ?? null;
       }
-    } else {
+      enforceLookupMaxDelta = true;
+    } else if (!selected && !normalizedTelemetryUuid && !at) {
       const latestRows = await this.mysql.query<SpectrumFrameRow>(
         `SELECT id, device_id, captured_at, telemetry_uuid, device_data_id, storage_path, file_size_bytes, checksum_sha256
            FROM device_spectrum_frames
@@ -277,7 +304,7 @@ export class SpectrumStorageService {
       return null;
     }
 
-    if (targetTimestamp !== null) {
+    if (enforceLookupMaxDelta && targetTimestamp !== null) {
       const deltaMs = Math.abs(parseTimestamp(selected.captured_at) - targetTimestamp);
       if (deltaMs > this.lookupMaxDeltaMs) {
         return null;
@@ -716,6 +743,38 @@ export class SpectrumStorageService {
     return frames;
   }
 
+  async purgeArchiveRange(deviceId: string, from: string, to: string): Promise<SpectrumFramePurgeResult> {
+    const targetDeviceId = deviceId.trim();
+    if (!this.mysql || !targetDeviceId) {
+      return { framesDeleted: 0, filesDeleted: 0, fileDeleteErrors: 0 };
+    }
+    const frameRows = await this.mysql.query<{ storage_path: string | null }>(
+      `SELECT storage_path FROM device_spectrum_frames
+       WHERE device_id = ? AND captured_at >= ? AND captured_at <= ?`,
+      [targetDeviceId, from, to],
+    );
+    if (frameRows.length === 0) {
+      return { framesDeleted: 0, filesDeleted: 0, fileDeleteErrors: 0 };
+    }
+    const framesDeleted = await this.mysql.execute(
+      'DELETE FROM device_spectrum_frames WHERE device_id = ? AND captured_at >= ? AND captured_at <= ?',
+      [targetDeviceId, from, to],
+    );
+    let filesDeleted = 0;
+    let fileDeleteErrors = 0;
+    for (const row of frameRows) {
+      if (!row.storage_path) continue;
+      try {
+        await unlink(join(this.baseDir, row.storage_path));
+        filesDeleted += 1;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: string }).code : undefined;
+        if (code !== 'ENOENT') fileDeleteErrors += 1;
+      }
+    }
+    return { framesDeleted, filesDeleted, fileDeleteErrors };
+  }
+
   async countArchiveFrames(query: SpectrumArchiveQuery): Promise<number> {
     if (!this.mysql) return 0;
     const where = ['captured_at >= ?', 'captured_at <= ?'];
@@ -765,7 +824,7 @@ export class SpectrumStorageService {
           rows.slice(index, index + ARCHIVE_READ_CONCURRENCY).map((row) => this.readArchiveFrame(row)),
         );
         for (const frame of frames) {
-          if (frame) yield frame;
+          yield frame;
         }
       }
       const last = rows.at(-1)!;
@@ -883,6 +942,18 @@ export class SpectrumStorageService {
     return next;
   }
 
+  async deletePlacementConfig(deviceId: string): Promise<boolean> {
+    const deviceSegment = sanitizePathSegment(deviceId, 'device');
+    try {
+      await unlink(join(this.baseDir, deviceSegment, 'placement-config.json'));
+      return true;
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: string }).code : undefined;
+      if (code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
   private async readPersistedPayload(storagePath: string): Promise<PersistedSpectrumPayload | null> {
     try {
       const absolutePath = join(this.baseDir, storagePath);
@@ -905,14 +976,14 @@ export class SpectrumStorageService {
     }
   }
 
-  private async readArchiveFrame(row: SpectrumFrameRow): Promise<SpectrumArchiveFrame | null> {
+  private async readArchiveFrame(row: SpectrumFrameRow): Promise<SpectrumArchiveFrame> {
     try {
       const safePath = assertSafeRelativePath(row.storage_path);
       const absolutePath = join(this.baseDir, safePath);
-      if (!isInsideBase(this.baseDir, absolutePath)) return null;
+      if (!isInsideBase(this.baseDir, absolutePath)) throw new Error('unsafe_spectrum_path');
       const content = await readFile(absolutePath);
       const checksum = createHash('sha256').update(content).digest('hex');
-      if (row.checksum_sha256 && checksum !== row.checksum_sha256) return null;
+      if (row.checksum_sha256 && checksum !== row.checksum_sha256) throw new Error('spectrum_checksum_mismatch');
       return {
         deviceId: row.device_id,
         capturedAt: toIsoTimestamp(row.captured_at),
@@ -922,8 +993,9 @@ export class SpectrumStorageService {
         checksumSha256: row.checksum_sha256 ?? checksum,
         contentBase64: content.toString('base64'),
       };
-    } catch {
-      return null;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown';
+      throw new Error(`spectrum_archive_read_failed:${row.device_id}:${row.id}:${detail}`);
     }
   }
 }

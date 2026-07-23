@@ -2,12 +2,12 @@ import React, { useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   CloudUpload,
   Gauge,
   MapPinned,
   Pin,
   PinOff,
-  RadioTower,
   SlidersHorizontal,
   Wifi,
   WifiOff,
@@ -34,8 +34,8 @@ function navIcon(label: string): React.ReactNode {
       return <CloudUpload size={15} strokeWidth={2.2} />;
     case "Quản lý khu vực":
       return <MapPinned size={15} strokeWidth={2.2} />;
-    case "Cảm biến":
-      return <RadioTower size={15} strokeWidth={2.2} />;
+    case "Phân tích":
+      return <BarChart3 size={15} strokeWidth={2.2} />;
     case "Cài đặt":
       return <SlidersHorizontal size={15} strokeWidth={2.2} />;
     default:

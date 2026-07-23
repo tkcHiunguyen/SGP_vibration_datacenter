@@ -84,6 +84,7 @@ export interface TelemetryRepository {
   exportHistoryBatches(query: TelemetryArchiveQuery, batchSize?: number): AsyncIterable<TelemetryImportPoint[]>;
   importHistory(points: TelemetryImportPoint[]): MaybePromise<TelemetryImportResult>;
   importHistoryBatch(points: TelemetryImportPoint[], mode: TelemetryImportMode): MaybePromise<TelemetryImportResult>;
+  deleteHistoryRange(range: TelemetrySummaryRebuildRange): MaybePromise<number>;
   rebuildHourlySummaries(ranges: TelemetrySummaryRebuildRange[]): MaybePromise<void>;
   applyRetention(): MaybePromise<{ removed: number; kept: number; cutoffAt: string } | null>;
 }

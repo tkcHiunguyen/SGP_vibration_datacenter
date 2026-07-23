@@ -73,7 +73,7 @@ export type TelemetrySpectrumMessage = {
   peakAmplitude?: number;
 };
 
-export type AlertMetric = 'temperature' | 'vibration';
+export type AlertMetric = 'temperature' | 'acceleration' | 'velocity' | 'displacement' | 'vibration';
 
 export type AlertSeverity = 'warning' | 'critical';
 
@@ -166,6 +166,10 @@ export type DeviceMetadata = {
   site?: string;
   zone?: string;
   firmwareVersion?: string;
+  vibrationSetpoint: number;
+  accelerationSetpoint?: number;
+  displacementSetpoint?: number;
+  temperatureSetpoint?: number;
   axisLabels?: DeviceAxisLabels;
   notes?: string;
   adxlHealth?: DeviceAdxlHealth;

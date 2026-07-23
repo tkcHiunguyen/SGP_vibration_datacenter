@@ -128,6 +128,32 @@ test('runtime MySQL schema includes ADXL health and partial telemetry fields', (
   assert.match(MYSQL_SCHEMA_SQL, /uq_device_datas_device_message_id/i);
 });
 
+test('runtime MySQL schema stores four per-device setpoints and removes legacy rules', () => {
+  for (const column of [
+    'vibration_setpoint',
+    'acceleration_setpoint',
+    'displacement_setpoint',
+    'temperature_setpoint',
+  ]) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`${column} DOUBLE NOT NULL DEFAULT 10`, 'i'));
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(`column_name = '${column}'`, 'i'));
+  }
+  for (const ruleId of [
+    'device-acceleration-setpoint',
+    'device-vibration-setpoint',
+    'device-displacement-setpoint',
+    'device-temperature-setpoint',
+  ]) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(ruleId, 'i'));
+  }
+  for (const ruleId of ['temperature-warning', 'temperature-critical', 'vibration-warning', 'vibration-critical']) {
+    assert.match(MYSQL_SCHEMA_SQL, new RegExp(ruleId, 'i'));
+  }
+  assert.match(MYSQL_SCHEMA_SQL, /SET rule_id = 'device-temperature-setpoint'[^;]+temperature-warning/is);
+  assert.match(MYSQL_SCHEMA_SQL, /SET rule_id = 'device-vibration-setpoint'[^;]+vibration-warning/is);
+  assert.match(MYSQL_SCHEMA_SQL, /DELETE FROM alert_rules/i);
+});
+
 test('runtime MySQL schema keeps separate metric sample counts for partial telemetry', () => {
   for (const column of ['temperature_sample_count', 'vibration_sample_count', 'ax_sample_count']) {
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`\\b${column}\\b`));

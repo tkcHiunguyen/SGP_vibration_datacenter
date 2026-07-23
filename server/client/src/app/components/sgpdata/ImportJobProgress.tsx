@@ -7,7 +7,9 @@ import type { ImportJob, ImportStage } from "./types";
 const STEPS: Array<{ stage: ImportStage; label: string }> = [
   { stage: "uploading", label: "Upload file" },
   { stage: "validating", label: "Kiểm tra checksum" },
+  { stage: "importing_zones", label: "Khu vực" },
   { stage: "importing_devices", label: "Thiết bị" },
+  { stage: "replacing_data", label: "Xóa dữ liệu cũ" },
   { stage: "importing_placement_configs", label: "Cấu hình vị trí" },
   { stage: "importing_telemetry", label: "Telemetry" },
   { stage: "importing_spectrum", label: "Phổ FFT" },
@@ -16,7 +18,7 @@ const STEPS: Array<{ stage: ImportStage; label: string }> = [
 ];
 
 const ORDER: ImportStage[] = [
-  "uploading", "validating", "preview_ready", "queued", "importing_devices", "importing_placement_configs",
+  "uploading", "validating", "preview_ready", "queued", "importing_zones", "importing_devices", "replacing_data", "importing_placement_configs",
   "importing_telemetry", "importing_spectrum", "rebuilding_summaries", "completed",
 ];
 
@@ -53,7 +55,7 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 7 }}>
-        {STEPS.map((step) => {
+        {STEPS.filter((step) => step.stage !== "replacing_data" || job.mode === "replace").map((step) => {
           const state = stepState(job, step.stage);
           const color = state === "done" ? C.success : state === "running" ? C.primary : state === "error" ? C.danger : C.textDim;
           return (

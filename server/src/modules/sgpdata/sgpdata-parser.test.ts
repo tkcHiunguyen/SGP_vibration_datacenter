@@ -62,6 +62,25 @@ test('rejects a v2 archive with a wrong checksum', async () => {
   }
 });
 
+test('rejects a v2 archive whose manifest counts do not match its records', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sgpdata-parser-'));
+  try {
+    const filePath = join(dir, 'bad-count.sgpdata');
+    const lines = createV2Lines();
+    lines[0] = JSON.stringify({
+      type: 'manifest',
+      data: { format: 'sgpdata', version: 2, deviceCount: 1, measurementCount: 2, spectrumFrameCount: 0 },
+    });
+    const checksum = createHash('sha256').update(`${lines.join('\n')}\n`).digest('hex');
+    const content = `${lines.join('\n')}\n${JSON.stringify({ type: 'end', data: { checksumSha256: checksum } })}\n`;
+    await writeFile(filePath, await gzipAsync(Buffer.from(content)));
+
+    await assert.rejects(inspectSgpDataFile(filePath), /sgpdata_manifest_measurement_count_mismatch:1\/2/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('rejects a truncated v2 archive without its end record', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sgpdata-parser-'));
   try {

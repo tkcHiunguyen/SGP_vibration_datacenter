@@ -12,6 +12,11 @@ test("import UI uploads once with real XHR progress and creates the job from upl
   assert.match(source, /xhr\.upload\.onprogress/);
   assert.match(source, /\/api\/sgpdata\/import\/uploads/);
   assert.match(source, /JSON\.stringify\(\{ uploadId, mode \}\)/);
+  assert.match(source, /"Bổ sung dữ liệu"/);
+  assert.match(source, /"Thay thế dữ liệu"/);
+  assert.doesNotMatch(source, /idempotent/i);
+  assert.match(source, /File không có khoảng thời gian nên chỉ có thể bổ sung dữ liệu an toàn/);
+  assert.match(source, /Cấu hình vị trí/);
   assert.doesNotMatch(source, /\/api\/sgpdata\/import\/preview/);
 });
 
@@ -28,6 +33,8 @@ test("export download uses a direct anchor and never buffers a browser Blob", as
   assert.match(source, /document\.createElement\("a"\)/);
   assert.match(source, /\/download/);
   assert.doesNotMatch(source, /response\.blob\(\)|createObjectURL/);
+  assert.match(source, /Khu vực và thiết bị/);
+  assert.match(source, /Ngưỡng và vị trí/);
 });
 
 test("end-of-day presets include the final millisecond", async () => {

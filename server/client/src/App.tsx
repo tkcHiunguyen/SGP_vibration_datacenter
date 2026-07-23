@@ -28,7 +28,7 @@ const NAV_TO_PATH: Record<string, string> = {
   "Tổng quan": "/dashboard",
   "Update Center": "/ota",
   "Quản lý khu vực": "/zones",
-  "Cảm biến": "/sensors",
+  "Phân tích": "/analysis",
   "Cài đặt": "/settings",
 };
 
@@ -36,7 +36,7 @@ const SIDEBAR_NAV_ORDER = [
   "Tổng quan",
   "Update Center",
   "Quản lý khu vực",
-  "Cảm biến",
+  "Phân tích",
   "Cài đặt",
 ] as const;
 
@@ -54,7 +54,8 @@ function normalizePinnedNavLabels(input: unknown): string[] {
 
   const unique = new Set<string>();
   for (const item of input) {
-    const label = safeString(item).trim();
+    const storedLabel = safeString(item).trim();
+    const label = storedLabel === "Cảm biến" ? "Phân tích" : storedLabel;
     if (label && isKnownNavLabel(label)) {
       unique.add(label);
     }
@@ -87,9 +88,11 @@ function navFromPathname(pathname: string): string {
     case "/zones":
     case "/app/zones":
       return "Quản lý khu vực";
+    case "/analysis":
+    case "/app/analysis":
     case "/sensors":
     case "/app/sensors":
-      return "Cảm biến";
+      return "Phân tích";
     case "/settings":
     case "/app/settings":
       return "Cài đặt";
@@ -117,7 +120,7 @@ const TELEMETRY_HISTORY_BUCKET_FALLBACK_POINTS = 8_000;
 const SPECTRUM_OVERVIEW_BUFFER_SIZE = 6;
 const REALTIME_FLUSH_INTERVAL_MS = 125;
 const INVENTORY_REFRESH_INTERVAL_MS = 30_000;
-const TOAST_DURATION_MS = 10_000;
+const TOAST_DURATION_MS = 2_000;
 const TOAST_EXIT_MS = 260;
 
 type TelemetryHistoryRequestOptions = {
@@ -137,12 +140,12 @@ type ToastMessage = {
   closing?: boolean;
 };
 
-type SignalAlert = {
-  id: string;
+type AlertEvent = {
   deviceId: string;
-  deviceName: string;
-  signal: number;
-  createdAt: string;
+  status: "active" | "acknowledged" | "resolved";
+  metric?: "temperature" | "acceleration" | "velocity" | "displacement";
+  lastValue?: number;
+  threshold?: number;
 };
 
 function safeString(value: unknown): string {
@@ -169,6 +172,24 @@ function firstArray(...values: unknown[]): unknown[] {
   }
 
   return [];
+}
+
+function parseAlertEvent(value: unknown): AlertEvent | null {
+  const record = asRecord(value);
+  const deviceId = safeString(record.deviceId || record.device_id).trim();
+  const status = safeString(record.status).trim();
+  if (!deviceId || (status !== "active" && status !== "acknowledged" && status !== "resolved")) {
+    return null;
+  }
+  return {
+    deviceId,
+    status,
+    metric: ["temperature", "acceleration", "velocity", "displacement"].includes(safeString(record.metric))
+      ? safeString(record.metric) as AlertEvent["metric"]
+      : undefined,
+    lastValue: asNumber(record.lastValue ?? record.last_reading_value),
+    threshold: asNumber(record.threshold),
+  };
 }
 
 function parseDevices(payload: unknown): DeviceListItem[] {
@@ -530,7 +551,6 @@ function DashboardShell({
   onSensorUpdated,
   toasts,
   onDismissToast,
-  signalAlerts,
 }: {
   sensors: Sensor[];
   telemetryByDevice: Record<string, DeviceTelemetryPoint[]>;
@@ -543,7 +563,6 @@ function DashboardShell({
   onSensorUpdated: (sensor: Sensor) => void;
   toasts: ToastMessage[];
   onDismissToast: (toastId: number) => void;
-  signalAlerts: SignalAlert[];
 }) {
   const { C, theme } = useTheme();
   const { wallboard } = useDisplayMode();
@@ -658,7 +677,6 @@ function DashboardShell({
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         sensors={sensors}
-        alertCount={signalAlerts.length}
       />
 
       <div className="dc-app-body">
@@ -680,7 +698,7 @@ function DashboardShell({
             totalSensors={sensors.length}
             onlineSensors={sensors.filter((sensor) => sensor.online).length}
             offlineSensors={sensors.filter((sensor) => !sensor.online).length}
-            alertCount={signalAlerts.length}
+            alertCount={sensors.filter((sensor) => sensor.status === "abnormal").length}
           />
         </div>
 
@@ -720,7 +738,7 @@ export default function App() {
   const [status, setStatus] = useState("Datacenter console ready");
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [signalAlerts, setSignalAlerts] = useState<SignalAlert[]>([]);
+  const [activeAlertDeviceIds, setActiveAlertDeviceIds] = useState<Set<string>>(() => new Set());
   const performanceProfileEnabled = new URLSearchParams(window.location.search).has("perf");
   const telemetryByDeviceRef = useRef<Record<string, DeviceTelemetryPoint[]>>({});
   const telemetryRetentionByDeviceRef = useRef<Map<string, number>>(new Map());
@@ -739,8 +757,6 @@ export default function App() {
   const nextToastIdRef = useRef(1);
   const deviceOnlineMapRef = useRef<Map<string, { online: boolean; name: string }>>(new Map());
   const inventoryReadyRef = useRef(false);
-  const signalAlertsRef = useRef<SignalAlert[]>([]);
-  const dismissedWeakSignalDevicesRef = useRef<Set<string>>(new Set());
 
   const captureDashboardRender: ProfilerOnRenderCallback = useCallback((
     id,
@@ -803,14 +819,20 @@ export default function App() {
     toastTimersRef.current.set(toastId, { auto: autoTimeoutId });
   }, [dismissToast]);
 
-  const dismissSignalAlert = useCallback((alertId: string) => {
-    setSignalAlerts((previous) => {
-      const target = previous.find((item) => item.id === alertId);
-      if (target) {
-        dismissedWeakSignalDevicesRef.current.add(target.deviceId);
+  const loadActiveAlerts = useCallback(async () => {
+    const result = await requestJson<unknown>("/api/alerts?status=all&limit=500");
+    if (!result.ok || !result.payload) {
+      return;
+    }
+    const root = asRecord(result.payload);
+    const activeDeviceIds = new Set<string>();
+    for (const item of firstArray(root.data, root.alerts, root.items)) {
+      const alert = parseAlertEvent(item);
+      if (alert && alert.status !== "resolved") {
+        activeDeviceIds.add(alert.deviceId);
       }
-      return previous.filter((item) => item.id !== alertId);
-    });
+    }
+    setActiveAlertDeviceIds(activeDeviceIds);
   }, []);
 
   const flushRealtimeUpdates = useCallback(() => {
@@ -1128,6 +1150,10 @@ export default function App() {
             ...(device.metadata ?? {}),
             name: updatedSensor.name,
             zone: updatedSensor.zoneCode || undefined,
+            accelerationSetpoint: updatedSensor.accelerationSetpoint,
+            vibrationSetpoint: updatedSensor.velocitySetpoint,
+            displacementSetpoint: updatedSensor.displacementSetpoint,
+            temperatureSetpoint: updatedSensor.temperatureSetpoint,
             axisLabels: updatedSensor.axisLabels,
           },
         };
@@ -1181,6 +1207,10 @@ export default function App() {
         device.metadata?.name || "",
         device.metadata?.zone || "",
         device.metadata?.firmwareVersion || "",
+        device.metadata?.vibrationSetpoint || "",
+        device.metadata?.accelerationSetpoint || "",
+        device.metadata?.displacementSetpoint || "",
+        device.metadata?.temperatureSetpoint || "",
       ].join("|"))
       .join("\n");
     if (inventorySignatureRef.current === signature) {
@@ -1210,70 +1240,6 @@ export default function App() {
           });
         }
       }
-    }
-
-    const currentAlertsByDevice = new Map(
-      signalAlertsRef.current.map((item) => [item.deviceId, item]),
-    );
-    let nextAlerts = [...signalAlertsRef.current];
-    let alertsMutated = false;
-
-    for (const item of parsed) {
-      const deviceId = item.deviceId;
-      const deviceName = item.metadata?.name?.trim() || deviceId;
-      const signal = item.heartbeat?.signal;
-      const hasWeakSignal = Boolean(
-        item.online &&
-        typeof signal === "number" &&
-        signal < -85,
-      );
-
-      if (!hasWeakSignal) {
-        dismissedWeakSignalDevicesRef.current.delete(deviceId);
-        continue;
-      }
-
-      const existing = currentAlertsByDevice.get(deviceId);
-      if (existing) {
-        if (existing.signal !== signal || existing.deviceName !== deviceName) {
-          nextAlerts = nextAlerts.map((entry) =>
-            entry.deviceId === deviceId
-              ? { ...entry, signal: signal as number, deviceName }
-              : entry,
-          );
-          currentAlertsByDevice.set(deviceId, {
-            ...existing,
-            signal: signal as number,
-            deviceName,
-          });
-          alertsMutated = true;
-        }
-        continue;
-      }
-
-      if (dismissedWeakSignalDevicesRef.current.has(deviceId)) {
-        continue;
-      }
-
-      const nextAlert: SignalAlert = {
-        id: `${deviceId}:${Date.now()}`,
-        deviceId,
-        deviceName,
-        signal: signal as number,
-        createdAt: new Date().toISOString(),
-      };
-      nextAlerts = [nextAlert, ...nextAlerts].slice(0, 100);
-      currentAlertsByDevice.set(deviceId, nextAlert);
-      alertsMutated = true;
-      showToast({
-        type: "warning",
-        title: "Cảnh báo RSSI yếu",
-        text: `${deviceName}: ${signal} dBm (< -85 dBm)`,
-      });
-    }
-
-    if (alertsMutated) {
-      setSignalAlerts(nextAlerts);
     }
 
     deviceOnlineMapRef.current = nextOnlineMap;
@@ -1309,6 +1275,7 @@ export default function App() {
   }, [flushRealtimeUpdates, showToast]);
 
   useEffect(() => {
+    void loadActiveAlerts();
     const socket = io(window.location.origin, {
       path: "/socket.io",
       transports: ["websocket", "polling"],
@@ -1321,6 +1288,7 @@ export default function App() {
         type: "success",
       });
       void loadDeviceInventory();
+      void loadActiveAlerts();
     });
 
     socket.on("disconnect", () => {
@@ -1381,10 +1349,41 @@ export default function App() {
       patchInventoryDevice(deviceId, { metadata: { adxlHealth } });
     });
 
+    socket.on("alert", (event: unknown) => {
+      const alert = parseAlertEvent(event);
+      if (!alert) {
+        return;
+      }
+      if (alert.status === "resolved") {
+        void loadActiveAlerts();
+      } else {
+        setActiveAlertDeviceIds((previous) => {
+          const next = new Set(previous);
+          next.add(alert.deviceId);
+          return next;
+        });
+      }
+      if (alert.status === "active") {
+        const metric = {
+          acceleration: { title: "gia tốc", unit: "m/s²" },
+          velocity: { title: "vận tốc", unit: "mm/s" },
+          displacement: { title: "biên độ", unit: "mm" },
+          temperature: { title: "nhiệt độ", unit: "°C" },
+        }[alert.metric ?? "velocity"];
+        const valueText = alert.lastValue === undefined ? "--" : alert.lastValue.toFixed(2);
+        const thresholdText = alert.threshold === undefined ? "--" : alert.threshold.toFixed(2);
+        showToast({
+          type: "warning",
+          title: `Cảnh báo ${metric.title} vượt ngưỡng`,
+          text: `${alert.deviceId}: ${valueText} ${metric.unit} > ${thresholdText} ${metric.unit}`,
+        });
+      }
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, [enqueueSpectrumPoint, enqueueTelemetryPoint, patchInventoryDevice, showToast]);
+  }, [enqueueSpectrumPoint, enqueueTelemetryPoint, loadActiveAlerts, patchInventoryDevice, showToast]);
 
   useEffect(() => {
     return () => {
@@ -1406,15 +1405,14 @@ export default function App() {
     };
   }, []);
 
-  const sensors = useMemo(() => mapDevicesToSensors(inventoryDevices), [inventoryDevices]);
+  const sensors = useMemo(
+    () => mapDevicesToSensors(inventoryDevices, activeAlertDeviceIds),
+    [activeAlertDeviceIds, inventoryDevices],
+  );
 
   useEffect(() => {
     telemetryByDeviceRef.current = telemetryByDevice;
   }, [telemetryByDevice]);
-
-  useEffect(() => {
-    signalAlertsRef.current = signalAlerts;
-  }, [signalAlerts]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -1478,7 +1476,6 @@ export default function App() {
               onSensorUpdated={updateInventoryDeviceFromSensor}
               toasts={toasts}
               onDismissToast={dismissToast}
-              signalAlerts={signalAlerts}
             />
           </Profiler>
         ) : (
@@ -1494,7 +1491,6 @@ export default function App() {
             onSensorUpdated={updateInventoryDeviceFromSensor}
             toasts={toasts}
             onDismissToast={dismissToast}
-            signalAlerts={signalAlerts}
           />
         )}
       </DisplayModeProvider>

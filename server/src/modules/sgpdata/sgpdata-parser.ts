@@ -11,6 +11,7 @@ import {
   sgpDataManifestSchema,
   sgpDataSpectrumFrameSchema,
   sgpDataTelemetryPointSchema,
+  sgpDataZoneSchema,
   type SgpDataDevice,
   type SgpDataPreview,
   type SgpDataStreamEntry,
@@ -93,6 +94,8 @@ function parseV2Entry(type: unknown, data: unknown, maxSpectrumBytes: number): S
   switch (type) {
     case 'manifest':
       return { type, data: sgpDataManifestSchema.parse(data) };
+    case 'zone':
+      return { type, data: sgpDataZoneSchema.parse(data) };
     case 'device':
       return { type, data: sgpDataDeviceSchema.parse(data) };
     case 'measurement':
@@ -155,8 +158,8 @@ async function* iterateV2Entries(filePath: string, limits: Required<ParserLimits
         if (sawManifest) {
           throw new Error('sgpdata_manifest_duplicate');
         }
-        if (entry.data.version !== 2) {
-          throw new Error('sgpdata_v2_manifest_required');
+        if (entry.data.version !== 2 && entry.data.version !== 3) {
+          throw new Error('sgpdata_manifest_version_unsupported');
         }
         sawManifest = true;
         manifest = entry.data;
@@ -209,20 +212,28 @@ export async function sha256File(filePath: string): Promise<string> {
 }
 
 export async function inspectSgpDataFile(filePath: string, parserLimits: ParserLimits = {}): Promise<SgpDataPreview> {
-  let manifest = sgpDataManifestSchema.parse({ format: 'sgpdata', version: 2 });
+  let manifest = sgpDataManifestSchema.parse({ format: 'sgpdata', version: 3 });
   const devices = new Map<string, SgpDataPreview['devices'][number]>();
   const deviceMetadata = new Map<string, SgpDataDevice>();
+  const zones: NonNullable<SgpDataPreview['zones']> = [];
   const placementConfigs: Array<{ deviceId: string; config: Record<string, unknown> }> = [];
+  let deviceRecordCount = 0;
   let measurementCount = 0;
   let spectrumCount = 0;
   let placementConfigCount = 0;
+  let zoneCount = 0;
 
   for await (const entry of iterateSgpDataEntries(filePath, parserLimits)) {
     switch (entry.type) {
       case 'manifest':
         manifest = entry.data;
         break;
+      case 'zone':
+        zoneCount += 1;
+        zones.push(entry.data);
+        break;
       case 'device':
+        deviceRecordCount += 1;
         deviceMetadata.set(entry.data.deviceId, entry.data);
         devices.set(entry.data.deviceId, {
           ...devices.get(entry.data.deviceId),
@@ -271,6 +282,19 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
     }
   }
 
+  const expectedCounts = [
+    ['device', manifest.deviceCount, deviceRecordCount],
+    ['measurement', manifest.measurementCount, measurementCount],
+    ['spectrum', manifest.spectrumFrameCount, spectrumCount],
+    ['placement_config', manifest.placementConfigCount, placementConfigCount],
+    ['zone', manifest.zoneCount, zoneCount],
+  ] as const;
+  for (const [label, expected, actual] of expectedCounts) {
+    if (typeof expected === 'number' && expected !== actual) {
+      throw new Error(`sgpdata_manifest_${label}_count_mismatch:${actual}/${expected}`);
+    }
+  }
+
   return {
     manifest,
     metadata: {
@@ -278,6 +302,7 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
       measurementCount,
       spectrumCount,
       placementConfigCount,
+      zoneCount,
       dateFrom: manifest.dateRange?.from,
       dateTo: manifest.dateRange?.to,
       checksumSha256: manifest.checksumSha256,
@@ -286,6 +311,7 @@ export async function inspectSgpDataFile(filePath: string, parserLimits: ParserL
     dateRange: manifest.dateRange,
     devices: [...devices.values()],
     deviceMetadata: [...deviceMetadata.values()],
+    zones,
     placementConfigs,
     measurements: measurementCount,
     spectra: spectrumCount,

@@ -1,5 +1,5 @@
 export type SgpPortabilityMode = "export" | "import";
-export type ImportMode = "merge" | "idempotent";
+export type ImportMode = "merge" | "replace";
 
 export type Preview = {
   manifest?: Record<string, unknown>;
@@ -8,6 +8,7 @@ export type Preview = {
     measurementCount: number;
     spectrumCount: number;
     placementConfigCount: number;
+    zoneCount?: number;
     dateFrom?: string;
     dateTo?: string;
     checksumSha256?: string;
@@ -45,7 +46,9 @@ export type ImportStage =
   | "validating"
   | "preview_ready"
   | "queued"
+  | "importing_zones"
   | "importing_devices"
+  | "replacing_data"
   | "importing_telemetry"
   | "importing_placement_configs"
   | "importing_spectrum"
@@ -119,5 +122,6 @@ export type ExportJob = {
     measurementCount?: number;
     spectrumFrameCount?: number;
     placementConfigCount?: number;
+    zoneCount?: number;
   };
 };

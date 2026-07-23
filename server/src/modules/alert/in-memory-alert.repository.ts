@@ -1,4 +1,4 @@
-import type { AlertRecord, AlertRule, AlertStatus, AlertTimeWindow } from '../../shared/types.js';
+import type { AlertMetric, AlertRecord, AlertRule, AlertStatus, AlertTimeWindow } from '../../shared/types.js';
 import type { AlertRepository, AlertSummary } from './alert.repository.js';
 import type { MySqlAccess } from '../persistence/mysql-access.js';
 import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
@@ -6,7 +6,7 @@ import { getSharedMySqlAccess } from '../persistence/mysql-access.js';
 type AlertRuleRow = {
   rule_id: string;
   name: string;
-  metric: 'temperature' | 'vibration';
+  metric: AlertMetric;
   threshold: number | string;
   severity: 'warning' | 'critical';
   debounce_count: number | string;
@@ -27,7 +27,7 @@ type AlertRecordRow = {
   rule_id: string;
   rule_name: string;
   device_id: string;
-  metric: 'temperature' | 'vibration';
+  metric: AlertMetric;
   severity: 'warning' | 'critical';
   threshold: number | string;
   trigger_value: number | string;
