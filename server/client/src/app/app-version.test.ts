@@ -26,6 +26,10 @@ test("parses the generated app version manifest", () => {
 test("adds a cache-busting build id without changing the current page", () => {
   const url = createAppVersionReloadUrl("http://localhost:8080/dashboard?zone=A", "build-b");
   assert.equal(url, "http://localhost:8080/dashboard?zone=A&ui_version=build-b");
+  assert.equal(
+    createAppVersionReloadUrl("http://localhost:8080/dashboard?ui_version=build-a&zone=A", "build-b"),
+    "http://localhost:8080/dashboard?ui_version=build-b&zone=A",
+  );
 });
 
 test("exposes version-check activity so screenshot capture can wait", () => {

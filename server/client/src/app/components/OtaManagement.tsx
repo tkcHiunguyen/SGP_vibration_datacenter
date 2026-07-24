@@ -152,10 +152,10 @@ function StepBadge({ num, label, active, done }: { num: number; label: string; a
       }}>
         {done
           ? <CheckCircle2 size={13} color="#fff" strokeWidth={2.5} />
-          : <span style={{ color: active ? "#fff" : C.textMuted, fontSize: "0.68rem", fontWeight: 800 }}>{num}</span>
+          : <span style={{ color: active ? "#fff" : C.textMuted, fontSize: "0.75rem", fontWeight: 800 }}>{num}</span>
         }
       </div>
-      <span style={{ color: active ? C.textBright : done ? C.textBase : C.textMuted, fontSize: "0.74rem", fontWeight: active ? 700 : 500 }}>
+      <span style={{ color: active ? C.textBright : done ? C.textBase : C.textMuted, fontSize: "0.75rem", fontWeight: active ? 700 : 500 }}>
         {label}
       </span>
     </div>
@@ -178,7 +178,7 @@ function PhasePill({ phase, label }: { phase: OtaPhase; label: string }) {
       display: "inline-flex", alignItems: "center", gap: 4,
       padding: "2px 7px", borderRadius: 99,
       background: s.bg, color: s.color,
-      fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.04em",
+      fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.04em",
     }}>
       {s.icon} {label}
     </span>
@@ -209,7 +209,7 @@ function StatCard({
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <span style={{ color }}>{icon}</span>
-        <span style={{ color: C.textMuted, fontSize: "0.6rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+        <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
       </div>
       <div style={{ color, fontSize: "1.5rem", fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
@@ -487,7 +487,7 @@ export function OtaManagement() {
               <h1 style={{ color: C.textBright, fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.02em", margin: 0 }}>
                 Update Center
               </h1>
-              <div style={{ color: C.textMuted, fontSize: "0.66rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>
+              <div style={{ color: C.textMuted, fontSize: "0.75rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600 }}>
                 Over-the-Air firmware update
               </div>
             </div>
@@ -527,7 +527,7 @@ export function OtaManagement() {
                 <span style={{
                   marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4,
                   padding: "2px 8px", borderRadius: 99, background: C.successBg,
-                  color: C.success, fontSize: "0.62rem", fontWeight: 700,
+                  color: C.success, fontSize: "0.75rem", fontWeight: 700,
                 }}>
                   <CheckCircle2 size={10} /> Đã sẵn sàng
                 </span>
@@ -537,6 +537,8 @@ export function OtaManagement() {
             <div style={{ padding: 16 }}>
               {/* Drop zone */}
               <label
+                className="dc-file-drop-zone"
+                htmlFor="ota-firmware-file"
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
                 onDrop={(e) => {
@@ -550,6 +552,7 @@ export function OtaManagement() {
                   border: `2px dashed ${dragOver ? C.primary : step1Done ? C.success + "66" : C.border}`,
                   borderRadius: 12,
                   background: dragOver ? C.primaryBg : step1Done ? C.successBg : C.surface,
+                  color: C.primary,
                   padding: "20px 16px", textAlign: "center",
                   transition: "all 0.2s",
                 }}
@@ -568,25 +571,33 @@ export function OtaManagement() {
                 {step1Done ? (
                   <>
                     <div style={{ color: C.success, fontSize: "0.78rem", fontWeight: 700 }}>{uploadedBin!.fileName}</div>
-                    <div style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 3 }}>
+                    <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>
                       {formatBytes(uploadedBin!.sizeBytes)} · Click để thay file
                     </div>
                   </>
                 ) : selectedFile ? (
                   <>
                     <div style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 700 }}>{selectedFile.name}</div>
-                    <div style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 3 }}>{formatBytes(selectedFile.size)} · Sẵn sàng upload</div>
+                    <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>{formatBytes(selectedFile.size)} · Sẵn sàng upload</div>
                   </>
                 ) : (
                   <>
                     <div style={{ color: C.textBase, fontSize: "0.78rem", fontWeight: 600 }}>Kéo thả file .bin vào đây</div>
-                    <div style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 3 }}>hoặc click để chọn file</div>
+                    <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>hoặc click để chọn file</div>
                   </>
                 )}
                 <input
+                  id="ota-firmware-file"
+                  className="dc-file-input-native"
                   type="file"
                   accept=".bin"
-                  style={{ display: "none" }}
+                  aria-label="Chọn file firmware .bin"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.currentTarget.click();
+                    }
+                  }}
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
                     handlePickedFile(file);
@@ -640,7 +651,7 @@ export function OtaManagement() {
                     style={{
                       height: 34, padding: "0 12px", borderRadius: 9,
                       background: "transparent", border: `1px solid ${C.border}`,
-                      color: C.textMuted, fontSize: "0.72rem", fontWeight: 600,
+                      color: C.textMuted, fontSize: "0.75rem", fontWeight: 600,
                       cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s ease",
                     }}>
                     Xoá
@@ -649,7 +660,7 @@ export function OtaManagement() {
               </div>
 
               {uploadMsg && (
-                <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 8, background: C.dangerBg, border: `1px solid ${C.danger}33`, color: C.danger, fontSize: "0.71rem" }}>
+                <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 8, background: C.dangerBg, border: `1px solid ${C.danger}33`, color: C.danger, fontSize: "0.75rem" }}>
                   {uploadMsg}
                 </div>
               )}
@@ -657,8 +668,8 @@ export function OtaManagement() {
               {/* URL info */}
               {uploadedBin && (
                 <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}` }}>
-                  <div style={{ color: C.textDim, fontSize: "0.6rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Firmware URL</div>
-                  <div style={{ color: C.textMuted, fontSize: "0.67rem", wordBreak: "break-all", lineHeight: 1.5 }}>{uploadedBin.url}</div>
+                  <div style={{ color: C.textDim, fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Firmware URL</div>
+                  <div style={{ color: C.textMuted, fontSize: "0.75rem", wordBreak: "break-all", lineHeight: 1.5 }}>{uploadedBin.url}</div>
                 </div>
               )}
             </div>
@@ -678,12 +689,12 @@ export function OtaManagement() {
             <div style={{ padding: 16 }}>
               {/* Summary pills */}
               <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-                <div style={{ padding: "4px 10px", borderRadius: 99, background: C.primaryBg, border: `1px solid ${C.primary}22`, color: C.primary, fontSize: "0.68rem", fontWeight: 700 }}>
+                <div style={{ padding: "4px 10px", borderRadius: 99, background: C.primaryBg, border: `1px solid ${C.primary}22`, color: C.primary, fontSize: "0.75rem", fontWeight: 700 }}>
                   <Cpu size={10} style={{ display: "inline", marginRight: 4 }} />
                   {selectedDeviceIds.length} thiết bị đã chọn
                 </div>
                 {uploadedBin && (
-                  <div style={{ padding: "4px 10px", borderRadius: 99, background: C.successBg, border: `1px solid ${C.success}22`, color: C.success, fontSize: "0.68rem", fontWeight: 700 }}>
+                  <div style={{ padding: "4px 10px", borderRadius: 99, background: C.successBg, border: `1px solid ${C.success}22`, color: C.success, fontSize: "0.75rem", fontWeight: 700 }}>
                     {formatBytes(uploadedBin.sizeBytes)}
                   </div>
                 )}
@@ -715,7 +726,7 @@ export function OtaManagement() {
 
               {/* Progress msg */}
               {progressMsg && (
-                <div style={{ marginTop: 10, color: C.textMuted, fontSize: "0.7rem", textAlign: "center" }}>{progressMsg}</div>
+                <div style={{ marginTop: 10, color: C.textMuted, fontSize: "0.75rem", textAlign: "center" }}>{progressMsg}</div>
               )}
 
               {/* Stats */}
@@ -726,8 +737,8 @@ export function OtaManagement() {
                   {/* Progress bar */}
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                      <span style={{ color: C.textMuted, fontSize: "0.66rem", fontWeight: 600 }}>Tiến trình</span>
-                      <span style={{ color: otaRunning ? C.primary : failedTotal > 0 ? C.warning : C.success, fontSize: "0.7rem", fontWeight: 800 }}>
+                      <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 600 }}>Tiến trình</span>
+                      <span style={{ color: otaRunning ? C.primary : failedTotal > 0 ? C.warning : C.success, fontSize: "0.75rem", fontWeight: 800 }}>
                         {summary.percent}%
                       </span>
                     </div>
@@ -761,13 +772,13 @@ export function OtaManagement() {
                         ? <ServerCrash size={14} color={C.warning} />
                         : <CheckCircle2 size={14} color={C.success} />
                       }
-                      <span style={{ color: failedTotal > 0 ? C.warning : C.success, fontSize: "0.72rem", fontWeight: 700 }}>
+                      <span style={{ color: failedTotal > 0 ? C.warning : C.success, fontSize: "0.75rem", fontWeight: 700 }}>
                         {failedTotal > 0 ? `Hoàn tất — ${failedTotal} thiết bị gặp lỗi` : "Tất cả thiết bị cập nhật thành công!"}
                       </span>
                     </div>
                   )}
 
-                  <div style={{ marginTop: 8, color: C.textDim, fontSize: "0.6rem" }}>
+                  <div style={{ marginTop: 8, color: C.textDim, fontSize: "0.75rem" }}>
                     Run ID: {dispatchResult.runId}
                   </div>
                 </div>
@@ -789,7 +800,7 @@ export function OtaManagement() {
               <span style={{
                 marginLeft: "auto", padding: "2px 8px", borderRadius: 99,
                 background: C.primaryBg, border: `1px solid ${C.primary}22`,
-                color: C.primary, fontSize: "0.62rem", fontWeight: 700,
+                color: C.primary, fontSize: "0.75rem", fontWeight: 700,
               }}>{onlineDevices.length} online</span>
             </div>
 
@@ -802,10 +813,11 @@ export function OtaManagement() {
               }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                 <input
+                  aria-label="Tìm thiết bị để cập nhật firmware"
                   placeholder="Tìm deviceId, tên, zone, firmware..."
                   value={deviceSearch}
                   onChange={(e) => setDeviceSearch(e.target.value)}
-                  style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.72rem", fontFamily: "inherit" }}
+                  style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.75rem", fontFamily: "inherit" }}
                 />
               </div>
               <button
@@ -837,15 +849,15 @@ export function OtaManagement() {
             {/* Bulk select */}
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <button className="ota-action-btn" onClick={() => setSelectedDeviceIds(filteredDevices.map((d) => d.deviceId))}
-                style={{ padding: "3px 10px", height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface, color: C.textMuted, fontSize: "0.65rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "3px 10px", height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface, color: C.textMuted, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                 Chọn tất cả ({filteredDevices.length})
               </button>
               <button className="ota-action-btn" onClick={() => setSelectedDeviceIds([])}
-                style={{ padding: "3px 10px", height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface, color: C.textMuted, fontSize: "0.65rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ padding: "3px 10px", height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface, color: C.textMuted, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                 Bỏ chọn
               </button>
               {selectedDeviceIds.length > 0 && (
-                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", padding: "3px 10px", borderRadius: 7, background: C.primaryBg, color: C.primary, fontSize: "0.65rem", fontWeight: 700 }}>
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", padding: "3px 10px", borderRadius: 7, background: C.primaryBg, color: C.primary, fontSize: "0.75rem", fontWeight: 700 }}>
                   ✓ {selectedDeviceIds.length} đã chọn
                 </span>
               )}
@@ -860,7 +872,7 @@ export function OtaManagement() {
                   <WifiOff size={18} color={C.textDim} strokeWidth={1.5} />
                 </div>
                 <div style={{ color: C.textBase, fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>Không có thiết bị online</div>
-                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>Kiểm tra kết nối hoặc thay đổi bộ lọc</div>
+                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>Kiểm tra kết nối hoặc thay đổi bộ lọc</div>
               </div>
             ) : (
               filteredDevices.map((device, idx) => {
@@ -911,8 +923,8 @@ export function OtaManagement() {
                         <span className="ota-online-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, flexShrink: 0 }} />
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {toText(m.name) && <span style={{ color: C.textMuted, fontSize: "0.65rem" }}>{toText(m.name)}</span>}
-                        {toText(m.zone) && <span style={{ color: C.textDim, fontSize: "0.65rem" }}>· {toText(m.zone)}</span>}
+                        {toText(m.name) && <span style={{ color: C.textMuted, fontSize: "0.75rem" }}>{toText(m.name)}</span>}
+                        {toText(m.zone) && <span style={{ color: C.textDim, fontSize: "0.75rem" }}>· {toText(m.zone)}</span>}
                       </div>
                     </div>
 
@@ -922,7 +934,7 @@ export function OtaManagement() {
                         <span style={{
                           padding: "2px 7px", borderRadius: 99,
                           background: C.surface, border: `1px solid ${C.border}`,
-                          color: C.textMuted, fontSize: "0.6rem", fontWeight: 700,
+                          color: C.textMuted, fontSize: "0.75rem", fontWeight: 700,
                           letterSpacing: "0.04em",
                         }}>fw {fw}</span>
                       )}
@@ -944,7 +956,7 @@ export function OtaManagement() {
                   { phase: "queued" as OtaPhase, count: summary.queued, color: C.warning },
                   { phase: "failed" as OtaPhase, count: failedTotal, color: C.danger },
                 ].filter((s) => s.count > 0).map(({ phase, count, color }) => (
-                  <span key={phase} style={{ display: "flex", alignItems: "center", gap: 5, color, fontSize: "0.68rem", fontWeight: 700 }}>
+                  <span key={phase} style={{ display: "flex", alignItems: "center", gap: 5, color, fontSize: "0.75rem", fontWeight: 700 }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
                     {phase === "confirmed" ? "Thành công" : phase === "in_progress" ? "Đang chạy" : phase === "queued" ? "Chờ" : "Lỗi"}: {count}
                   </span>

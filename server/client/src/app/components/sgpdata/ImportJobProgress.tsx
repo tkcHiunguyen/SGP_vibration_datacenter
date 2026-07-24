@@ -39,7 +39,7 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <span>
           <strong style={{ color: C.textBright, fontSize: "0.82rem" }}>Tiến trình import</strong>
-          <span style={{ color: C.textMuted, fontSize: "0.66rem", display: "block", marginTop: 3 }}>{job.fileName} · cập nhật {fmtDateTime(job.updatedAt)}</span>
+          <span style={{ color: C.textMuted, fontSize: "0.75rem", display: "block", marginTop: 3 }}>{job.fileName} · cập nhật {fmtDateTime(job.updatedAt)}</span>
         </span>
         <strong style={{ color: terminalError ? C.danger : C.primary, fontSize: "1rem" }}>{job.overallProgress ?? job.progress}%</strong>
       </div>
@@ -61,7 +61,7 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
           return (
             <div className={`sgpdata-step is-${state}`} key={step.stage} style={{ border: `1px solid ${state === "running" ? C.primary : C.border}`, borderRadius: 8, padding: "8px 9px", display: "flex", alignItems: "center", gap: 7, color }}>
               {state === "done" ? <CheckCircle2 size={14} /> : state === "running" ? <Loader2 size={14} style={{ animation: "webSpin 0.8s linear infinite" }} /> : state === "error" ? <AlertTriangle size={14} /> : <Circle size={14} />}
-              <span style={{ fontSize: "0.67rem", fontWeight: 850 }}>{step.label}</span>
+              <span style={{ fontSize: "0.75rem", fontWeight: 850 }}>{step.label}</span>
             </div>
           );
         })}
@@ -69,7 +69,7 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
 
       {job.devices && job.devices.length > 0 ? (
         <div style={{ display: "grid", gap: 7 }}>
-          <strong style={{ color: C.textBase, fontSize: "0.7rem" }}>Theo từng thiết bị</strong>
+          <strong style={{ color: C.textBase, fontSize: "0.75rem" }}>Theo từng thiết bị</strong>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 7, maxHeight: 220, overflow: "auto" }}>
             {job.devices.map((device) => {
               const done = device.measurementsProcessed + device.spectrumProcessed;
@@ -77,11 +77,11 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
               const progress = total > 0 ? Math.round((done / total) * 100) : device.status === "completed" ? 100 : 0;
               return (
                 <div className="sgpdata-metric-card" key={device.deviceId} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 9, display: "grid", gap: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: C.textBright, fontSize: "0.68rem", fontWeight: 850 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: C.textBright, fontSize: "0.75rem", fontWeight: 850 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{device.name || device.deviceId}</span><span>{progress}%</span>
                   </div>
                   <ProgressBar value={progress} color={device.status === "failed" ? C.danger : C.success} background={C.surface} compact active={device.status === "running"} />
-                  <span style={{ color: C.textMuted, fontSize: "0.62rem" }}>{fmtCount(done)}/{fmtCount(total)} record · {device.status}</span>
+                  <span style={{ color: C.textMuted, fontSize: "0.75rem" }}>{fmtCount(done)}/{fmtCount(total)} record · {device.status}</span>
                 </div>
               );
             })}
@@ -91,9 +91,9 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
 
       {job.events && job.events.length > 0 ? (
         <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9, display: "grid", gap: 5, maxHeight: 180, overflow: "auto" }}>
-          <strong style={{ color: C.textBase, fontSize: "0.7rem" }}>Sự kiện gần nhất</strong>
+          <strong style={{ color: C.textBase, fontSize: "0.75rem" }}>Sự kiện gần nhất</strong>
           {[...job.events].reverse().map((event, index) => (
-            <div key={`${event.at}-${index}`} style={{ display: "grid", gridTemplateColumns: "125px minmax(0, 1fr)", gap: 8, color: C.textMuted, fontSize: "0.63rem" }}>
+            <div key={`${event.at}-${index}`} style={{ display: "grid", gridTemplateColumns: "125px minmax(0, 1fr)", gap: 8, color: C.textMuted, fontSize: "0.75rem" }}>
               <span>{fmtDateTime(event.at)}</span><span style={{ color: C.textBase }}>{event.message}</span>
             </div>
           ))}
@@ -101,7 +101,7 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
       ) : null}
 
       {job.error || pollError ? (
-        <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 9, fontSize: "0.7rem", fontWeight: 800 }}>
+        <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 9, fontSize: "0.75rem", fontWeight: 800 }}>
           {job.error || pollError}
         </div>
       ) : null}
@@ -111,8 +111,8 @@ export function ImportJobProgress({ job, pollError }: { job: ImportJob; pollErro
   function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
     return (
       <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 9px", minWidth: 0 }}>
-        <span style={{ color: C.textMuted, fontSize: "0.61rem", fontWeight: 800, display: "flex", gap: 5, alignItems: "center" }}>{icon}{label}</span>
-        <strong style={{ color: C.textBright, fontSize: "0.74rem", display: "block", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</strong>
+        <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 800, display: "flex", gap: 5, alignItems: "center" }}>{icon}{label}</span>
+        <strong style={{ color: C.textBright, fontSize: "0.875rem", display: "block", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</strong>
       </div>
     );
   }

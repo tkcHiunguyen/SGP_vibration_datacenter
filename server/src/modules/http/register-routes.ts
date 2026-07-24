@@ -45,6 +45,64 @@ type RegisterRoutesDeps = {
   persistenceStatus: MySqlPersistenceStatus;
 };
 
+const isoDateTimeSchema = z.iso.datetime({ offset: true });
+
+function validateDateRange(
+  value: { from?: string; to?: string },
+  context: z.RefinementCtx,
+): void {
+  if (value.from && value.to && Date.parse(value.from) > Date.parse(value.to)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['to'],
+      message: 'from_must_not_be_after_to',
+    });
+  }
+}
+
+export const telemetryHistoryQuerySchema = z.object({
+  from: isoDateTimeSchema.optional(),
+  to: isoDateTimeSchema.optional(),
+  limit: z.coerce.number().int().positive().max(12_000).optional(),
+  bucketMs: z.coerce.number().int().positive().max(86_400_000).optional(),
+}).superRefine(validateDateRange);
+
+export const telemetryAvailabilityQuerySchema = z.object({
+  from: isoDateTimeSchema.optional(),
+  to: isoDateTimeSchema.optional(),
+  timezoneOffsetMinutes: z.coerce.number().int().min(-840).max(840).optional(),
+  limitDays: z.coerce.number().int().positive().max(731).optional(),
+}).superRefine(validateDateRange);
+
+export const zoneListQuerySchema = z.object({
+  search: z.string().optional(),
+  descriptionFilter: z.enum(['all', 'with-description', 'without-description']).optional(),
+  sortBy: z.enum(['updated-desc', 'name-asc', 'code-asc']).optional(),
+  page: z.coerce.number().int().positive().max(10_000).optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+});
+
+export const zoneIdParamsSchema = z.object({ zoneId: z.coerce.number().int().positive() });
+export const thresholdJobParamsSchema = z.object({ jobId: z.string().uuid() });
+
+export function registerRequestErrorHandler(app: FastifyInstance): void {
+  const defaultErrorHandler = app.errorHandler;
+  app.setErrorHandler((error, request, reply) => {
+    if (!(error instanceof z.ZodError)) {
+      return defaultErrorHandler(error, request, reply);
+    }
+
+    return reply.code(422).send({
+      ok: false,
+      error: 'validation_failed',
+      issues: error.issues.map((issue) => ({
+        field: issue.path.map(String).join('.') || 'request',
+        code: issue.code,
+      })),
+    });
+  });
+}
+
 export function registerRoutes({
   app,
   authService,
@@ -62,6 +120,7 @@ export function registerRoutes({
   deviceThresholdAnalysisService,
   persistenceStatus,
 }: RegisterRoutesDeps): void {
+  registerRequestErrorHandler(app);
   type AppRole = 'admin' | 'approver' | 'release_manager' | 'operator' | 'viewer';
   type DeviceDataClearJob = {
     jobId: string;
@@ -185,24 +244,10 @@ export function registerRoutes({
     limit: z.coerce.number().int().positive().max(200).optional(),
   });
 
-  const telemetryHistoryQuerySchema = z.object({
-    from: z.string().optional(),
-    to: z.string().optional(),
-    limit: z.coerce.number().int().positive().max(12_000).optional(),
-    bucketMs: z.coerce.number().int().positive().max(86_400_000).optional(),
-  });
-
   const deviceStatusHistoryQuerySchema = z.object({
     from: z.string().optional(),
     to: z.string().optional(),
     limit: z.coerce.number().int().positive().max(5_000).optional(),
-  });
-
-  const telemetryAvailabilityQuerySchema = z.object({
-    from: z.string().optional(),
-    to: z.string().optional(),
-    timezoneOffsetMinutes: z.coerce.number().int().min(-840).max(840).optional(),
-    limitDays: z.coerce.number().int().positive().max(731).optional(),
   });
 
   const spectrumFrameQuerySchema = z.object({
@@ -210,14 +255,6 @@ export function registerRoutes({
     telemetryUuid: z.string().optional(),
     from: z.string().optional(),
     to: z.string().optional(),
-  });
-
-  const zoneListQuerySchema = z.object({
-    search: z.string().optional(),
-    descriptionFilter: z.enum(['all', 'with-description', 'without-description']).optional(),
-    sortBy: z.enum(['updated-desc', 'name-asc', 'code-asc']).optional(),
-    page: z.coerce.number().int().positive().max(10_000).optional(),
-    pageSize: z.coerce.number().int().positive().max(200).optional(),
   });
 
   const zoneCreateSchema = z.object({
@@ -701,7 +738,7 @@ export function registerRoutes({
     if (!requireRole(request, reply, 'viewer')) {
       return;
     }
-    const { zoneId } = z.object({ zoneId: z.coerce.number().int().positive() }).parse(request.params);
+    const { zoneId } = zoneIdParamsSchema.parse(request.params);
     const zone = await zoneService.get(zoneId);
     if (!zone) {
       return reply.code(404).send({ ok: false, error: 'zone_not_found' });
@@ -745,7 +782,7 @@ export function registerRoutes({
     if (!principal) {
       return;
     }
-    const { zoneId } = z.object({ zoneId: z.coerce.number().int().positive() }).parse(request.params);
+    const { zoneId } = zoneIdParamsSchema.parse(request.params);
     const before = await zoneService.get(zoneId);
     if (!before) {
       return reply.code(404).send({ ok: false, error: 'zone_not_found' });
@@ -782,7 +819,7 @@ export function registerRoutes({
       return;
     }
 
-    const { zoneId } = z.object({ zoneId: z.coerce.number().int().positive() }).parse(request.params);
+    const { zoneId } = zoneIdParamsSchema.parse(request.params);
     const zone = await zoneService.get(zoneId);
     if (!zone) {
       return reply.code(404).send({ ok: false, error: 'zone_not_found' });
@@ -805,7 +842,7 @@ export function registerRoutes({
     if (!principal) {
       return;
     }
-    const { zoneId } = z.object({ zoneId: z.coerce.number().int().positive() }).parse(request.params);
+    const { zoneId } = zoneIdParamsSchema.parse(request.params);
     const query = zoneDeleteQuerySchema.parse(request.query ?? {});
     const zone = await zoneService.get(zoneId);
     if (!zone) {
@@ -952,7 +989,7 @@ export function registerRoutes({
     if (!requireRole(request, reply, 'viewer')) {
       return;
     }
-    const { jobId } = z.object({ jobId: z.string().uuid() }).parse(request.params);
+    const { jobId } = thresholdJobParamsSchema.parse(request.params);
     const job = deviceThresholdAnalysisService.get(jobId);
     if (!job) {
       return reply.code(404).send({ ok: false, error: 'analysis_job_not_found' });
@@ -1051,6 +1088,15 @@ export function registerRoutes({
         url: `/api/display-clients/${encodeURIComponent(record.clientId)}/screenshot/image?v=${encodeURIComponent(record.receivedAt)}`,
       })),
     };
+  });
+
+  app.post('/api/display-clients/refresh', async (request, reply) => {
+    if (!requireRole(request, reply, 'operator')) {
+      return;
+    }
+    const requestId = Date.now().toString(36);
+    realtimeGateway.broadcastDisplayRefresh(requestId);
+    return { ok: true, data: { requestId } };
   });
 
   app.get('/api/display-clients/:clientId/screenshot/image', async (request, reply) => {

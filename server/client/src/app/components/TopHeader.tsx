@@ -1,7 +1,7 @@
 import React from "react";
 import {
-  Activity, Bell, ChevronDown, LayoutDashboard,
-  Cpu, BarChart2, Settings, Search, AlertCircle, UploadCloud, MapPin,
+  Activity, Bell, LayoutDashboard,
+  Cpu, BarChart2, Settings, UploadCloud, MapPin,
   MonitorUp, PanelLeftClose, PanelLeftOpen, Sun, Moon,
 } from "lucide-react";
 import { Sensor } from "../data/sensors";
@@ -35,6 +35,10 @@ interface TopHeaderProps {
   onToggleSidebar: () => void;
   sensors: Sensor[];
   alertCount?: number;
+}
+
+export function shouldShowNotificationDot(alertCount: number): boolean {
+  return alertCount > 0;
 }
 
 export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onToggleSidebar, sensors, alertCount }: TopHeaderProps) {
@@ -112,7 +116,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
             <div className="dc-header-brand-title" style={{ color: C.textBright, fontWeight: 700, fontSize: "0.83rem", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               SGP Vibration Datacenter
             </div>
-            <div className="dc-header-subtitle" style={{ color: C.textDim, fontSize: "0.53rem", letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 600 }}>
+            <div className="dc-header-subtitle" style={{ color: C.textDim, fontSize: "0.75rem", letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 600 }}>
               Hệ thống giám sát công nghiệp
             </div>
           </div>
@@ -134,7 +138,7 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
                   background: isActive ? C.navActive : "transparent",
                   border: `1px solid ${isActive ? C.cardBorder : "transparent"}`,
                   color: isActive ? C.textBright : C.textMuted,
-                  fontSize: "0.74rem", fontWeight: isActive ? 600 : 400,
+                  fontSize: "0.75rem", fontWeight: isActive ? 600 : 400,
                   cursor: "pointer", transition: "all 0.15s",
                   display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0,
                 }}
@@ -151,40 +155,26 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
         {/* Right */}
         <div className="dc-header-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
 
-          {/* Search */}
-          <div className="dc-header-search" style={{
-            display: "flex", alignItems: "center", gap: 7,
-            height: 34, padding: "0 10px", borderRadius: 8, width: "clamp(148px, 10vw, 220px)",
-            background: C.input, border: `1px solid ${C.border}`,
-          }}>
-            <Search size={11} color={C.textMuted} strokeWidth={2} />
-            <span className="dc-header-search-label" style={{ color: C.textMuted, fontSize: "0.72rem" }}>Tìm kiếm…</span>
-            <span className="dc-header-shortcut" style={{ marginLeft: "auto", background: C.surface, border: `1px solid ${C.border}`, color: C.textDim, fontSize: "0.55rem", borderRadius: 4, padding: "1px 4px", fontWeight: 600 }}>⌘K</span>
-          </div>
-
-          {/* Bell */}
-          <button className="dc-header-icon-button" type="button" aria-label={`Thông báo: ${derivedAlertCount} cảnh báo`} style={{
-            width: 34, height: 34, borderRadius: 8,
-            background: C.card, border: `1px solid ${C.cardBorder}`,
-            cursor: "pointer", position: "relative",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <Bell size={13} color={C.textMuted} strokeWidth={2} />
-            <span style={{
-              position: "absolute", top: 6, right: 6, width: 6, height: 6,
-              borderRadius: "50%", background: C.danger,
-              border: `1.5px solid ${C.headerBg}`,
-            }} />
-          </button>
-
-          {/* Alert pill */}
-          <div className="dc-header-alert-pill" style={{
+          <div className="dc-header-alert-pill" role="status" aria-label={`${derivedAlertCount} cảnh báo`} style={{
             display: "flex", alignItems: "center", gap: 5,
             height: 30, padding: "0 10px", borderRadius: 8,
             background: C.dangerBg, border: `1px solid ${C.danger}22`,
           }}>
-            <AlertCircle size={12} color={C.danger} strokeWidth={2} />
-            <span className="dc-header-alert-label" style={{ color: C.danger, fontSize: "0.7rem", fontWeight: 600 }}>
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <Bell size={12} color={C.danger} strokeWidth={2} />
+              {shouldShowNotificationDot(derivedAlertCount) ? (
+                <span
+                  data-ux="notification-dot"
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute", top: -2, right: -2, width: 5, height: 5,
+                    borderRadius: "50%", background: C.danger,
+                    border: `1px solid ${C.headerBg}`,
+                  }}
+                />
+              ) : null}
+            </span>
+            <span className="dc-header-alert-label" style={{ color: C.danger, fontSize: "0.75rem", fontWeight: 600 }}>
               {derivedAlertCount} cảnh báo
             </span>
           </div>
@@ -230,22 +220,19 @@ export function TopHeader({ activeNav, onNavChange, navItems, sidebarOpen, onTog
               : <Moon size={13} color={C.textMuted} strokeWidth={2} />}
           </button>
 
-          {/* User */}
-          <button className="dc-header-user-button" type="button" aria-label="Mở menu tài khoản quản trị" style={{
+          <div className="dc-header-user-button" title="Tài khoản hiện tại" style={{
             display: "flex", alignItems: "center", gap: 6,
             height: 34, padding: "0 8px", borderRadius: 8,
             background: C.card, border: `1px solid ${C.cardBorder}`,
-            cursor: "pointer",
           }}>
             <div className="dc-header-user-avatar" style={{
               width: 20, height: 20, borderRadius: 6,
               background: C.primary,
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: "0.53rem", fontWeight: 700,
+              color: isDark ? "#07111f" : "#fff", fontSize: "0.75rem", fontWeight: 700,
             }}>QT</div>
-            <span className="dc-header-user-name" style={{ color: C.textBase, fontSize: "0.73rem", fontWeight: 500 }}>Quản trị</span>
-            <ChevronDown className="dc-header-user-chevron" size={10} color={C.textMuted} strokeWidth={2} />
-          </button>
+            <span className="dc-header-user-name" style={{ color: C.textBase, fontSize: "0.75rem", fontWeight: 500 }}>Quản trị</span>
+          </div>
         </div>
       </div>
     </header>

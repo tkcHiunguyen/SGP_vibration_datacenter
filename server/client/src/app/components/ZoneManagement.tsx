@@ -635,6 +635,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
           >
             <FormInput
               type="text"
+              aria-label="Tìm khu vực theo mã, tên hoặc mô tả"
               placeholder="Tìm theo mã, tên, mô tả..."
               value={search}
               onChange={(event) => {
@@ -650,6 +651,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
             style={{ gap: 7 }}
           >
             <FormSelect
+              aria-label="Lọc khu vực theo mô tả"
               value={descriptionFilter}
               onChange={(event) => {
                 setDescriptionFilter(event.target.value as DescriptionFilter);
@@ -669,6 +671,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
             style={{ gap: 7 }}
           >
             <FormSelect
+              aria-label="Sắp xếp danh sách khu vực"
               value={sortBy}
               onChange={(event) => {
                 setSortBy(event.target.value as SortOption);
@@ -684,10 +687,10 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ color: C.textMuted, fontSize: "0.71rem" }}>
+          <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
             Hiển thị <strong style={{ color: C.textBase }}>{zones.length}</strong> / {totalZones} khu vực
           </div>
-          <div style={{ color: C.textMuted, fontSize: "0.71rem" }}>
+          <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
             Trang {currentPage}/{totalPages}
           </div>
         </div>
@@ -703,18 +706,18 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
               <tr style={{ background: C.surface }}>
-                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem", width: 70 }}>ID</th>
-                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem", width: 160 }}>Mã khu vực</th>
-                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem", width: 220 }}>Tên khu vực</th>
-                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem" }}>Mô tả</th>
-                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem", width: 200 }}>Cập nhật</th>
-                <th style={{ textAlign: "right", padding: "10px 12px", color: C.textMuted, fontSize: "0.65rem", width: 150 }}>Hành động</th>
+                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem", width: 70 }}>ID</th>
+                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem", width: 160 }}>Mã khu vực</th>
+                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem", width: 220 }}>Tên khu vực</th>
+                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem" }}>Mô tả</th>
+                <th style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem", width: 200 }}>Cập nhật</th>
+                <th style={{ textAlign: "right", padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem", width: 150 }}>Hành động</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: "16px 12px", color: C.textMuted, fontSize: "0.74rem" }}>
+                  <td colSpan={6} style={{ padding: "16px 12px", color: C.textMuted, fontSize: "0.75rem" }}>
                     Đang tải dữ liệu khu vực...
                   </td>
                 </tr>
@@ -731,7 +734,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                           size="sm"
                           onClick={openCreateModal}
                           style={{ marginTop: 4, height: 30 }}
-                          className="px-2.5 text-[0.72rem]"
+                          className="px-2.5 text-[0.75rem]"
                         >
                           <Plus size={12} strokeWidth={2.3} />
                           Thêm khu vực
@@ -743,7 +746,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               ) : (
                 zones.map((zone) => (
                   <tr key={zone.id} className="zone-table-row" style={{ borderTop: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "10px 12px", color: C.textDim, fontSize: "0.72rem", fontWeight: 600 }}>
+                    <td style={{ padding: "10px 12px", color: C.textDim, fontSize: "0.75rem", fontWeight: 600 }}>
                       #{zone.id}
                     </td>
                     <td style={{ padding: "10px 12px" }}>
@@ -758,7 +761,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                           background: C.primaryBg,
                           border: `1px solid ${C.primary}33`,
                           color: C.primary,
-                          fontSize: "0.68rem",
+                          fontSize: "0.75rem",
                           fontWeight: 800,
                         }}
                       >
@@ -769,10 +772,10 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                     <td style={{ padding: "10px 12px", color: C.textBright, fontSize: "0.75rem", fontWeight: 700 }}>
                       {zone.name}
                     </td>
-                    <td style={{ padding: "10px 12px", color: C.textBase, fontSize: "0.73rem", lineHeight: 1.5 }}>
+                    <td style={{ padding: "10px 12px", color: C.textBase, fontSize: "0.75rem", lineHeight: 1.5 }}>
                       {zone.description || <span style={{ color: C.textDim }}>Chưa có mô tả</span>}
                     </td>
-                    <td style={{ padding: "10px 12px", color: C.textMuted, fontSize: "0.71rem" }}>
+                    <td style={{ padding: "10px 12px", color: C.textMuted, fontSize: "0.75rem" }}>
                       {formatDateTime(zone.updatedAt)}
                     </td>
                     <td style={{ padding: "10px 12px", textAlign: "right" }}>
@@ -781,7 +784,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                           variant="neutral"
                           size="sm"
                           onClick={() => openEditModal(zone)}
-                          className="zone-action-btn px-2.5 text-[0.68rem]"
+                          className="zone-action-btn px-2.5 text-[0.75rem]"
                           style={{ height: 28 }}
                         >
                           <Save size={11} strokeWidth={2.2} />
@@ -791,7 +794,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                           variant="danger"
                           size="sm"
                           onClick={() => openDeleteModal(zone)}
-                          className="zone-action-btn px-2.5 text-[0.68rem]"
+                          className="zone-action-btn px-2.5 text-[0.75rem]"
                           style={{ height: 28 }}
                         >
                           <Trash2 size={11} strokeWidth={2.2} />
@@ -819,7 +822,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               flexWrap: "wrap",
             }}
           >
-            <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
               Tổng {totalZones} khu vực sau lọc
             </div>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -834,7 +837,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               >
                 <ChevronLeft size={14} strokeWidth={2.3} />
               </ConsoleButton>
-              <div style={{ color: C.textBase, fontSize: "0.72rem", minWidth: 78, textAlign: "center", fontWeight: 700 }}>
+              <div style={{ color: C.textBase, fontSize: "0.75rem", minWidth: 78, textAlign: "center", fontWeight: 700 }}>
                 {currentPage}/{totalPages}
               </div>
               <ConsoleButton
@@ -864,7 +867,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
             border: `1px solid ${C.danger}33`,
             borderRadius: 10,
             padding: "9px 10px",
-            fontSize: "0.73rem",
+            fontSize: "0.75rem",
           }}
         >
           <AlertTriangle size={14} strokeWidth={2.2} />
@@ -889,7 +892,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               size="sm"
               onClick={closeFormModal}
               disabled={saving}
-              className="h-[33px] px-3 text-[0.72rem]"
+              className="h-[33px] px-3 text-[0.75rem]"
               style={{ height: 33 }}
             >
               Huỷ
@@ -899,7 +902,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
               size="sm"
               onClick={() => void submitForm()}
               disabled={saving}
-              className="h-[33px] px-3 text-[0.72rem]"
+              className="h-[33px] px-3 text-[0.75rem]"
               style={{ height: 33 }}
             >
               <Save size={12} strokeWidth={2.3} />
@@ -910,11 +913,12 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
       >
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: "0.7rem", color: C.textMuted, fontWeight: 700 }}>
+            <label htmlFor="zone-name-input" style={{ fontSize: "0.75rem", color: C.textMuted, fontWeight: 700 }}>
               Tên khu vực <span style={{ color: C.danger }}>*</span>
-            </div>
+            </label>
             <FormFieldShell className="h-9">
               <FormInput
+                id="zone-name-input"
                 type="text"
                 placeholder="Ví dụ: Khu máy nén khí"
                 value={form.name}
@@ -925,10 +929,11 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
           </div>
 
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: "0.7rem", color: C.textMuted, fontWeight: 700 }}>
+            <label htmlFor="zone-description-input" style={{ fontSize: "0.75rem", color: C.textMuted, fontWeight: 700 }}>
               Mô tả
-            </div>
+            </label>
             <FormTextarea
+              id="zone-description-input"
               placeholder="Nhập mô tả ngắn về vị trí, chức năng hoặc phạm vi khu vực..."
               value={form.description}
               onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
@@ -947,7 +952,7 @@ export function ZoneManagement({ onNotify }: { onNotify?: (message: Omit<ToastIt
                 border: `1px solid ${C.danger}33`,
                 borderRadius: 8,
                 padding: "8px 9px",
-                fontSize: "0.72rem",
+                fontSize: "0.75rem",
               }}
             >
               <AlertTriangle size={13} strokeWidth={2.2} />

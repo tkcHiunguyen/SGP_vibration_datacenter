@@ -64,11 +64,11 @@ export function SettingsPage() {
         <ConsolePanel style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 12px 10px", borderBottom: `1px solid ${C.border}`, background: C.headerBg }}>
             <div style={{ color: C.textBright, fontSize: "0.8rem", fontWeight: 900 }}>Mục cài đặt</div>
-            <div style={{ color: C.textMuted, fontSize: "0.66rem", marginTop: 3 }}>Data</div>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>Data</div>
           </div>
           <div style={{ display: "grid", gap: 10, padding: 10 }}>
             <DataGroup />
-            <div style={{ color: C.textMuted, fontSize: "0.61rem", fontWeight: 850, letterSpacing: "0.08em", padding: "2px 4px 0", textTransform: "uppercase" }}>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 850, letterSpacing: "0.08em", padding: "2px 4px 0", textTransform: "uppercase" }}>
               Client
             </div>
             <SettingsNavItem item={displayItem} active={activeKey === displayItem.key} />
@@ -94,10 +94,10 @@ export function SettingsPage() {
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: C.textBright, fontSize: "0.9rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeItem.title}</div>
-                <div style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeItem.detail}</div>
+                <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeItem.detail}</div>
               </div>
             </div>
-            <span style={{ borderRadius: 999, border: `1px solid ${C.border}`, background: C.surface, color: C.textBase, padding: "4px 8px", fontSize: "0.62rem", fontWeight: 850, flexShrink: 0 }}>
+            <span style={{ borderRadius: 999, border: `1px solid ${C.border}`, background: C.surface, color: C.textBase, padding: "4px 8px", fontSize: "0.75rem", fontWeight: 850, flexShrink: 0 }}>
               {activeItem.status}
             </span>
           </div>
@@ -178,8 +178,8 @@ export function SettingsPage() {
           {item.icon}
         </span>
         <span style={{ minWidth: 0 }}>
-          <span style={{ display: "block", color: active ? C.textBright : C.textBase, fontSize: "0.74rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
-          <span style={{ display: "block", color: C.textMuted, fontSize: "0.62rem", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.detail}</span>
+          <span style={{ display: "block", color: active ? C.textBright : C.textBase, fontSize: "0.75rem", fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+          <span style={{ display: "block", color: C.textMuted, fontSize: "0.75rem", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.detail}</span>
         </span>
         <ChevronRight size={14} strokeWidth={2.2} style={{ color: active ? C.primary : C.textDim }} />
       </button>

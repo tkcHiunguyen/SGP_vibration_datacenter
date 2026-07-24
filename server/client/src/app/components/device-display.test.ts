@@ -8,6 +8,7 @@ import {
   DEFAULT_DEVICE_SORT,
   DEVICE_AXIS_DIRECTION_LABELS,
   formatDeviceZoneOptionLabel,
+  filterDashboardDevices,
   getLatestDeviceTelemetryPoint,
   pickZoneAxisDisplayDeviceIds,
 } from "./device-display";
@@ -158,4 +159,21 @@ test("keeps the first device when zone axis peaks are tied", () => {
   );
 
   assert.deepEqual([...winners], ["d1"]);
+});
+
+test("combines dashboard search, status, and zone filters", () => {
+  const devices = [
+    { id: "d1", name: "Bơm cấp nước", zoneCode: "ZA", zone: "Tầng 1", online: true, status: "normal" as const },
+    { id: "d2", name: "Bơm tuần hoàn", zoneCode: "ZB", zone: "Tầng 2", online: true, status: "abnormal" as const },
+    { id: "d3", name: "Quạt hút", zoneCode: "ZA", zone: "Tầng 1", online: false, status: "normal" as const },
+  ];
+
+  assert.deepEqual(
+    filterDashboardDevices(devices, { search: "bơm", status: "online", zone: "za" }).map((device) => device.id),
+    ["d1"],
+  );
+  assert.deepEqual(
+    filterDashboardDevices(devices, { search: "", status: "offline", zone: "all" }).map((device) => device.id),
+    ["d3"],
+  );
 });

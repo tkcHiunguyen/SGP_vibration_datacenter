@@ -26,7 +26,7 @@ export function ConsoleEmptyState({
     >
       {icon ? <div style={{ color: C.textDim }}>{icon}</div> : null}
       <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{title}</div>
-      {description ? <div style={{ fontSize: "0.72rem" }}>{description}</div> : null}
+      {description ? <div style={{ fontSize: "0.75rem" }}>{description}</div> : null}
       {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );

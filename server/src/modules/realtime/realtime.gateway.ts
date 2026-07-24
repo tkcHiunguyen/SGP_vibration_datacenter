@@ -23,6 +23,7 @@ export interface RealtimeGateway {
   }): void;
   broadcastDeviceMetadata(payload: { deviceId: string; metadata: DeviceMetadata }): void;
   broadcastDeviceSensorStatus(payload: DeviceSensorStatusMessage): void;
+  broadcastDisplayRefresh(requestId: string): void;
   sendCommand(deviceId: string, command: DeviceCommand): void;
   disconnectDevice(deviceId: string): void;
   onConnection(handler: (socket: Socket) => void): void;

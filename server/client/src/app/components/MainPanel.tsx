@@ -77,6 +77,7 @@ export function MainPanel({
     <main className="dc-main-panel" style={{ background: C.bg }}>
       {isDashboard ? (
         <div className="dc-dashboard-canvas flex flex-col overflow-hidden">
+          <h1 className="sr-only">Tổng quan</h1>
           <DeviceManagement
             sensors={sensors}
             telemetryByDevice={telemetryByDevice}

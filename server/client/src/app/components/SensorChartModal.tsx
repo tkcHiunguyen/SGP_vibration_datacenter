@@ -939,11 +939,31 @@ interface Props {
   pinned?: boolean;
 }
 
-const AXIS_SERIES_COLORS: Record<DeviceAxisKey, string> = {
+const DARK_AXIS_SERIES_COLORS: Record<DeviceAxisKey, string> = {
   ax: "#22d3ee",
   ay: "#a3e635",
   az: "#c084fc",
 };
+
+const LIGHT_AXIS_SERIES_COLORS: Record<DeviceAxisKey, string> = {
+  ax: "#075985",
+  ay: "#365314",
+  az: "#6b21a8",
+};
+
+const DARK_THRESHOLD_COLORS = {
+  acceleration: "#38bdf8",
+  velocity: "#34d399",
+  displacement: "#fbbf24",
+  temperature: "#fb7185",
+} as const;
+
+const LIGHT_THRESHOLD_COLORS = {
+  acceleration: "#075985",
+  velocity: "#065f46",
+  displacement: "#92400e",
+  temperature: "#9f1239",
+} as const;
 
 const TEMPERATURE_TREND_STROKE_WIDTH = 1.35;
 const AXIS_TREND_STROKE_WIDTH = 1.25;
@@ -961,8 +981,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   onCollapse,
   pinned = false,
 }: Props) {
-  const { C } = useTheme();
+  const { C, theme } = useTheme();
   const { wallboard } = useDisplayMode();
+  const axisSeriesColors = theme === "light" ? LIGHT_AXIS_SERIES_COLORS : DARK_AXIS_SERIES_COLORS;
+  const thresholdColors = theme === "light" ? LIGHT_THRESHOLD_COLORS : DARK_THRESHOLD_COLORS;
   const initialHistoryPreset = useMemo<ChartRangePreset>(() => readStoredHistoryPreset(), [sensor?.id]);
 
   useEffect(() => {
@@ -3032,27 +3054,27 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   );
   const accelTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "az", name: `${chartAxisLabels.az} RMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "ax", name: `${chartAxisLabels.ax} RMS`, color: axisSeriesColors.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "ay", name: `${chartAxisLabels.ay} RMS`, color: axisSeriesColors.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "az", name: `${chartAxisLabels.az} RMS`, color: axisSeriesColors.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
-    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+    [axisSeriesColors, chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
   const vrmsTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "vrmsX", name: `${chartAxisLabels.ax} VRMS`, color: axisSeriesColors.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "vrmsY", name: `${chartAxisLabels.ay} VRMS`, color: axisSeriesColors.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "vrmsZ", name: `${chartAxisLabels.az} VRMS`, color: axisSeriesColors.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
-    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+    [axisSeriesColors, chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
   const drmsTrendSeries = useMemo<TrendSeriesConfig[]>(
     () => [
-      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: AXIS_SERIES_COLORS.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: AXIS_SERIES_COLORS.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
-      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: AXIS_SERIES_COLORS.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "drmsX", name: `${chartAxisLabels.ax} DRMS`, color: axisSeriesColors.ax, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "drmsY", name: `${chartAxisLabels.ay} DRMS`, color: axisSeriesColors.ay, strokeWidth: AXIS_TREND_STROKE_WIDTH },
+      { key: "drmsZ", name: `${chartAxisLabels.az} DRMS`, color: axisSeriesColors.az, strokeWidth: AXIS_TREND_STROKE_WIDTH },
     ],
-    [chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
+    [axisSeriesColors, chartAxisLabels.ax, chartAxisLabels.ay, chartAxisLabels.az],
   );
   const showInitialLoading = rangeBusy && telemetryPoints.length === 0;
   const chartHasTelemetry = telemetryPoints.length > 0;
@@ -3253,7 +3275,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 
   const zoneLabel = sensor.zoneCode.trim() || (sensor.zone !== "--" ? sensor.zone.trim() : "") || "Chưa gán";
   const chartDeviceLabel = `${sensor.name} - ${zoneLabel}`;
-  const chartTextStyle = { fill: wallboard ? "#c5d5e8" : C.textMuted, fontSize: wallboard ? 22 : 10 };
+  const chartTextStyle = { fill: C.textMuted, fontSize: wallboard ? 22 : 12 };
   const gridColor = C.border + "44";
   const fftRenderByAxis = {
     x: fftRenderX,
@@ -3262,7 +3284,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   } satisfies Record<SpectrumAxis, typeof fftRenderX>;
 
   const renderFftAxisLabelButton = (axis: DeviceAxisKey, spectrumAxis: SpectrumAxis) => {
-    const color = AXIS_SERIES_COLORS[axis];
+    const color = axisSeriesColors[axis];
     const axisDisplayLabel = chartAxisLabels[axis];
     return (
       <button
@@ -3291,7 +3313,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
           borderRadius: 6,
           background: `${color}12`,
           color,
-          fontSize: "0.56rem",
+          fontSize: "0.75rem",
           fontWeight: 800,
           lineHeight: 1.15,
           padding: "2px 18px 2px 6px",
@@ -3321,7 +3343,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
   };
 
   const renderFftAxisCard = ({ deviceAxis, spectrumAxis }: FftAxisDisplayItem) => {
-    const color = AXIS_SERIES_COLORS[deviceAxis];
+    const color = axisSeriesColors[deviceAxis];
     const data = fftRenderByAxis[spectrumAxis];
     const peak = spectrumPeakByAxis[spectrumAxis];
 
@@ -3344,7 +3366,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             className="dc-fft-peak-summary"
             style={{
               color: C.textMuted,
-              fontSize: "0.56rem",
+              fontSize: "0.75rem",
               fontWeight: 600,
               minWidth: 0,
               maxWidth: "54%",
@@ -3401,7 +3423,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
           style={{
             textAlign: "right",
             color: C.textMuted,
-            fontSize: "0.58rem",
+            fontSize: "0.75rem",
             paddingRight: 6,
             marginTop: -2,
             minHeight: modalLayout.fftAxisFooterHeight,
@@ -3579,7 +3601,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     border: `1px solid ${C.border}`,
                     background: C.surface,
                     color: C.textBase,
-                    fontSize: "0.62rem",
+                    fontSize: "0.75rem",
                     fontWeight: 600,
                     lineHeight: 1.35,
                     whiteSpace: "nowrap",
@@ -3629,7 +3651,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       padding: "0 10px",
                       background: active ? C.primaryBg : C.surface,
                       color: active ? C.primary : C.textBase,
-                      fontSize: "0.66rem",
+                      fontSize: "0.75rem",
                       fontWeight: 800,
                       cursor: "pointer",
                       display: "inline-flex",
@@ -3659,7 +3681,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   padding: "0 9px",
                   background: calendarPopoverOpen ? C.primaryBg : C.surface,
                   color: calendarPopoverOpen ? C.primary : C.textBase,
-                  fontSize: "0.66rem",
+                  fontSize: "0.75rem",
                   fontWeight: 700,
                   cursor: "pointer",
                   display: "inline-flex",
@@ -3729,10 +3751,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       <ArrowLeft size={13} strokeWidth={2.4} />
                     </button>
                     <div style={{ minWidth: 0, textAlign: "center" }}>
-                      <div className="dc-chart-calendar-month" style={{ color: C.textBright, fontSize: "0.73rem", fontWeight: 800, letterSpacing: "0.01em" }}>
+                      <div className="dc-chart-calendar-month" style={{ color: C.textBright, fontSize: "0.75rem", fontWeight: 800, letterSpacing: "0.01em" }}>
                         {calendarMonthLabel}
                       </div>
-                      <div className="dc-chart-calendar-summary" style={{ color: C.textMuted, fontSize: "0.62rem" }}>
+                      <div className="dc-chart-calendar-summary" style={{ color: C.textMuted, fontSize: "0.75rem" }}>
                         {calendarDaysWithDataCount > 0
                           ? `${calendarDaysWithDataCount} ngày có dữ liệu`
                           : "Chưa có dữ liệu trong tháng"}
@@ -3774,7 +3796,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                         style={{
                           textAlign: "center",
                           color: C.textMuted,
-                          fontSize: "0.58rem",
+                          fontSize: "0.75rem",
                           fontWeight: 700,
                           letterSpacing: "0.05em",
                           textTransform: "uppercase",
@@ -3852,7 +3874,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                               : inCurrentMonth
                                 ? C.textBase
                                 : C.textDim,
-                            fontSize: "0.68rem",
+                            fontSize: "0.75rem",
                             fontWeight: selected || hovered ? 800 : 700,
                             display: "inline-flex",
                             alignItems: "center",
@@ -3909,7 +3931,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       minHeight: 18,
                     }}
                   >
-                    <div style={{ color: C.textMuted, fontSize: "0.6rem", marginLeft: "auto" }}>
+                    <div style={{ color: C.textMuted, fontSize: "0.75rem", marginLeft: "auto" }}>
                       {calendarMonthLoading
                         ? "Đang tải ngày dữ liệu..."
                         : calendarAvailabilityError
@@ -3936,7 +3958,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   padding: "0 9px",
                   background: EXTRA_CHART_RANGE_PRESETS.includes(activeHistoryPreset as ChartRangePreset) || selectedRange.kind === "custom" ? C.primaryBg : C.surface,
                   color: EXTRA_CHART_RANGE_PRESETS.includes(activeHistoryPreset as ChartRangePreset) || selectedRange.kind === "custom" ? C.primary : C.textBase,
-                  fontSize: "0.66rem",
+                  fontSize: "0.75rem",
                   fontWeight: 700,
                   cursor: "pointer",
                   display: "inline-flex",
@@ -3994,7 +4016,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                           borderRadius: 8,
                           background: active ? C.primaryBg : "transparent",
                           color: active ? C.primary : C.textBase,
-                          fontSize: "0.67rem",
+                          fontSize: "0.75rem",
                           fontWeight: 700,
                           cursor: "pointer",
                           display: "flex",
@@ -4046,7 +4068,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       borderRadius: 8,
                       background: selectedRange.kind === "custom" ? C.primaryBg : "transparent",
                       color: selectedRange.kind === "custom" ? C.primary : C.textBase,
-                      fontSize: "0.67rem",
+                      fontSize: "0.75rem",
                       fontWeight: 700,
                       cursor: "pointer",
                       display: "flex",
@@ -4076,8 +4098,8 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     gap: 8,
                   }}
                 >
-                  <strong style={{ color: C.textBright, fontSize: "0.7rem" }}>Khoảng thời gian tùy chỉnh</strong>
-                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.6rem", fontWeight: 700 }}>
+                  <strong style={{ color: C.textBright, fontSize: "0.75rem" }}>Khoảng thời gian tùy chỉnh</strong>
+                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.75rem", fontWeight: 700 }}>
                     Bắt đầu
                     <input
                       type="datetime-local"
@@ -4087,7 +4109,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       style={{ height: 34, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textBase, padding: "0 8px", colorScheme: "dark" }}
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.6rem", fontWeight: 700 }}>
+                  <label style={{ display: "grid", gap: 4, color: C.textMuted, fontSize: "0.75rem", fontWeight: 700 }}>
                     Kết thúc
                     <input
                       type="datetime-local"
@@ -4098,7 +4120,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       style={{ height: 34, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textBase, padding: "0 8px", colorScheme: "dark" }}
                     />
                   </label>
-                  {customRangeError ? <span style={{ color: C.danger, fontSize: "0.6rem" }}>{customRangeError}</span> : null}
+                  {customRangeError ? <span style={{ color: C.danger, fontSize: "0.75rem" }}>{customRangeError}</span> : null}
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
                     <button type="button" onClick={() => setCustomRangeOpen(false)} style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.textMuted, padding: "0 10px", cursor: "pointer", fontWeight: 700 }}>Hủy</button>
                     <button type="button" onClick={handleCustomRangeApply} style={{ height: 30, borderRadius: 8, border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary, padding: "0 11px", cursor: "pointer", fontWeight: 800 }}>Áp dụng</button>
@@ -4120,7 +4142,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   background: C.primaryBg,
                   color: C.primary,
                   padding: "0 9px",
-                  fontSize: "0.62rem",
+                  fontSize: "0.75rem",
                   fontWeight: 800,
                   whiteSpace: "nowrap",
                 }}
@@ -4132,7 +4154,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 )}
               </span>
             ) : rangeController.state.status === "error" ? (
-              <span role="alert" title={rangeController.state.error ?? undefined} style={{ color: C.danger, fontSize: "0.62rem", fontWeight: 700 }}>
+              <span role="alert" title={rangeController.state.error ?? undefined} style={{ color: C.danger, fontSize: "0.75rem", fontWeight: 700 }}>
                 Không tải được khoảng mới; đang giữ dữ liệu hiện tại.
               </span>
             ) : null}
@@ -4151,7 +4173,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   padding: "0 9px",
                   background: C.primaryBg,
                   color: C.primary,
-                  fontSize: "0.66rem",
+                  fontSize: "0.75rem",
                   fontWeight: 800,
                   cursor: "pointer",
                   display: "inline-flex",
@@ -4180,7 +4202,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   ? `linear-gradient(135deg, ${C.primaryBg}, ${C.surface})`
                   : C.surface,
                 color: visualizeOpen ? C.primary : C.textBase,
-                fontSize: "0.66rem",
+                fontSize: "0.75rem",
                 fontWeight: 800,
                 cursor: "pointer",
                 display: "inline-flex",
@@ -4206,7 +4228,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 padding: "0 10px",
                 background: trendAtLatest ? C.surface : C.primaryBg,
                 color: trendAtLatest ? C.textMuted : C.primary,
-                fontSize: "0.66rem",
+                fontSize: "0.75rem",
                 fontWeight: 700,
                 display: selectedRange.kind === "relative" ? "inline-flex" : "none",
                 cursor: trendAtLatest ? "default" : "pointer",
@@ -4554,7 +4576,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 cardPadding={modalLayout.chartCardPadding}
               >
                 {showInitialLoading ? (
-                  <div className="dc-chart-loading-state" style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.74rem" }}>
+                  <div className="dc-chart-loading-state" style={{ height: modalLayout.chartHeight, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textMuted, fontSize: "0.75rem" }}>
                     <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.border}`, borderTopColor: C.primary, animation: "chartSpin 0.8s linear infinite" }} />
                     <div>Đang tải dữ liệu lịch sử...</div>
                   </div>
@@ -4592,11 +4614,11 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       onLeave={handleTelemetryChartLeave}
                     />
                     {chart.showTelemetryStatus && !chartHasTelemetry ? (
-                      <div className="dc-chart-empty-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.74rem", pointerEvents: "none", padding: "0 12px", boxSizing: "border-box", maxWidth: "100%", textAlign: "center", overflow: "hidden" }}>
+                      <div className="dc-chart-empty-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: "0.75rem", pointerEvents: "none", padding: "0 12px", boxSizing: "border-box", maxWidth: "100%", textAlign: "center", overflow: "hidden" }}>
                         <span style={{ display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Chưa có dữ liệu</span>
                       </div>
                     ) : chart.showTelemetryStatus && rangeBusy ? (
-                      <div className="dc-chart-loading-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.10)", backdropFilter: "blur(1px)", color: C.textMuted, fontSize: "0.72rem", pointerEvents: "none" }}>Đang cập nhật...</div>
+                      <div className="dc-chart-loading-state" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.10)", backdropFilter: "blur(1px)", color: C.textMuted, fontSize: "0.75rem", pointerEvents: "none" }}>Đang cập nhật...</div>
                     ) : null}
                   </div>
                 )}
@@ -4618,7 +4640,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             >
               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", minWidth: 0 }}>
                 <span style={{ color: C.primary }}><BarChart3 size={13} strokeWidth={2} /></span>
-                <span className="dc-fft-section-title" style={{ color: C.textBright, fontSize: "0.74rem", fontWeight: 700 }}>Phổ tần số FFT</span>
+                <span className="dc-fft-section-title" style={{ color: C.textBright, fontSize: "0.75rem", fontWeight: 700 }}>Phổ tần số FFT</span>
                 <button
                   className="dc-chart-control-button"
                   type="button"
@@ -4646,7 +4668,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     padding: "0 6px",
                     background: C.surface,
                     color: C.textBase,
-                    fontSize: "0.58rem",
+                    fontSize: "0.75rem",
                     fontWeight: 800,
                     cursor: "pointer",
                     display: "inline-flex",
@@ -4666,7 +4688,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   style={{
                     maxWidth: "48%",
                     color: C.textMuted,
-                    fontSize: "0.62rem",
+                    fontSize: "0.75rem",
                     fontWeight: 600,
                     padding: "2px 7px",
                     borderRadius: 999,
@@ -4726,7 +4748,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   }}
                 >
                   <span style={{ color: C.primary }}><Clock3 size={13} strokeWidth={2} /></span>
-                  <span className="dc-loaded-data-title" style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Toàn cảnh dữ liệu đã tải</span>
+                  <span className="dc-loaded-data-title" style={{ color: C.textBright, fontSize: "0.75rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Toàn cảnh dữ liệu đã tải</span>
                   <button
                     type="button"
                     onClick={() => setAdvancedRangeOpen((open) => !open)}
@@ -4740,7 +4762,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       color: advancedRangeOpen ? C.primary : C.textMuted,
                       padding: "0 7px",
                       cursor: "pointer",
-                      fontSize: "0.56rem",
+                      fontSize: "0.75rem",
                       fontWeight: 800,
                     }}
                   >
@@ -4761,7 +4783,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       border: `1px solid ${C.border}`,
                       background: C.surface,
                       color: C.textMuted,
-                      fontSize: "0.56rem",
+                      fontSize: "0.75rem",
                       fontWeight: 800,
                       letterSpacing: "0.01em",
                       whiteSpace: "nowrap",
@@ -4784,7 +4806,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                         outline: "none",
                         background: "transparent",
                         color: C.textBright,
-                        fontSize: "0.56rem",
+                        fontSize: "0.75rem",
                         fontWeight: 900,
                         cursor: "pointer",
                         maxWidth: 104,
@@ -4901,7 +4923,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "0.72rem",
+                        fontSize: "0.75rem",
                         fontWeight: 800,
                       }}
                     >
@@ -4944,7 +4966,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 6,
-                      fontSize: "0.68rem",
+                      fontSize: "0.75rem",
                       fontWeight: 900,
                       letterSpacing: "0.02em",
                       opacity: playbackCanStart ? 1 : 0.62,
@@ -4979,14 +5001,14 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     style={{
                       minWidth: 58,
                       color: "#e2e8f0",
-                      fontSize: "0.64rem",
+                      fontSize: "0.75rem",
                       fontWeight: 900,
                       textAlign: "center",
                       lineHeight: 1.1,
                     }}
                   >
                     <div>{playbackSpeedLabel}</div>
-                    <div style={{ color: "#94a3b8", fontSize: "0.54rem", fontWeight: 800 }}>{playbackDelayLabel}</div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.75rem", fontWeight: 800 }}>{playbackDelayLabel}</div>
                   </div>
                   <button
                     type="button"
@@ -5025,7 +5047,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 5,
-                      fontSize: "0.64rem",
+                      fontSize: "0.75rem",
                       fontWeight: 900,
                     }}
                   >
@@ -5093,7 +5115,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   alignItems: "center",
                   justifyContent: "center",
                   color: C.textMuted,
-                  fontSize: "0.72rem",
+                  fontSize: "0.75rem",
                   fontWeight: 700,
                 }}
               >
@@ -5149,13 +5171,13 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               @keyframes positionConfigGlow { 0%, 100% { box-shadow: 0 0 0 rgba(20,184,166,0); } 50% { box-shadow: 0 0 22px rgba(20,184,166,0.22); } }
             `}</style>
             <div key={positionConfigStep} style={{ animation: "positionConfigStepIn 420ms cubic-bezier(0.16, 1, 0.3, 1)", willChange: "opacity, transform" }}>
-            <div style={{ color: "#0f766e", fontSize: "0.68rem", fontWeight: 900, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <div style={{ color: "#0f766e", fontSize: "0.75rem", fontWeight: 900, letterSpacing: "0.04em", textTransform: "uppercase" }}>
               Bước {positionConfigStep}/3
             </div>
             <div style={{ color: "#0f172a", fontSize: "0.92rem", fontWeight: 900, marginTop: 5 }}>
               {positionConfigStep === 1 ? "Xác định hướng motor" : positionConfigStep === 2 ? "Xác định hướng cảm biến" : "Đổi tên và xác nhận"}
             </div>
-            <div style={{ color: "#334155", fontSize: "0.68rem", lineHeight: 1.45, marginTop: 5 }}>
+            <div style={{ color: "#334155", fontSize: "0.75rem", lineHeight: 1.45, marginTop: 5 }}>
               {positionConfigStep < 3 ? "Chọn trục rung tiếp xúc + hướng xoay 0°/90° quanh trục đó." : "Đổi tên 3 trục motor theo mapping cảm biến, rồi lưu cấu hình."}
             </div>
 
@@ -5187,7 +5209,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       border: `1px solid ${active ? option.color : C.border}`,
                       background: active ? option.pastel : "rgba(255,255,255,0.82)",
                       color: active ? option.color : "#334155",
-                      fontSize: "0.68rem",
+                      fontSize: "0.75rem",
                       fontWeight: 900,
                       cursor: "pointer",
                       outline: "none",
@@ -5224,7 +5246,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       border: `1px solid ${active ? activeFace.color : C.border}`,
                       background: active ? activeFace.pastel : "rgba(255,255,255,0.82)",
                       color: active ? activeFace.color : "#475569",
-                      fontSize: "0.62rem",
+                      fontSize: "0.75rem",
                       fontWeight: 900,
                       cursor: "pointer",
                       outline: "none",
@@ -5254,11 +5276,12 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 7 }}>
-                        <span style={{ color: "#0f172a", fontSize: "0.68rem", fontWeight: 900 }}>{option.defaultLabel}</span>
-                        <span style={{ color: "#0f766e", fontSize: "0.62rem", fontWeight: 900 }}>{sensorLabel}</span>
+                        <span style={{ color: "#0f172a", fontSize: "0.75rem", fontWeight: 900 }}>{option.defaultLabel}</span>
+                        <span style={{ color: "#0f766e", fontSize: "0.75rem", fontWeight: 900 }}>{sensorLabel}</span>
                       </div>
                       <FormFieldShell icon={<PencilLine size={13} strokeWidth={2.1} />} style={{ minHeight: 36 }}>
                         <FormInput
+                          aria-label={`Tên hiển thị cho trục ${option.defaultLabel}`}
                           value={positionAxisRenameDrafts[option.deviceAxisKey]}
                           onChange={(event) => {
                             setPositionAxisRenameDrafts((current) => ({
@@ -5281,16 +5304,15 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                           autoFocus={index === 0}
                           disabled={positionAxisRenameSaving}
                           maxLength={48}
-                          aria-label={`Tên trục ${option.defaultLabel}`}
                         />
                       </FormFieldShell>
                     </div>
                   );
                 })}
                 {positionAxisRenameError ? (
-                  <div style={{ color: C.warning, fontSize: "0.7rem", lineHeight: 1.45 }}>{positionAxisRenameError}</div>
+                  <div style={{ color: C.warning, fontSize: "0.75rem", lineHeight: 1.45 }}>{positionAxisRenameError}</div>
                 ) : (
-                  <div style={{ color: "#64748b", fontSize: "0.6rem", fontWeight: 800, lineHeight: 1.45 }}>
+                  <div style={{ color: "#64748b", fontSize: "0.75rem", fontWeight: 800, lineHeight: 1.45 }}>
                     Tên trống sẽ quay về tên mặc định Axial / Radial H / Radial V.
                   </div>
                 )}
@@ -5338,7 +5360,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   background: "linear-gradient(135deg, rgba(20,184,166,0.2), rgba(45,212,191,0.32))",
                   color: "#0f766e",
                   padding: "0 13px",
-                  fontSize: "0.68rem",
+                  fontSize: "0.75rem",
                   fontWeight: 900,
                   cursor: positionAxisRenameSaving ? "wait" : "pointer",
                   outline: "none",
@@ -5388,7 +5410,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   background: "rgba(255, 255, 255, 0.72)",
                   color: "#334155",
                   padding: "0 11px",
-                  fontSize: "0.66rem",
+                  fontSize: "0.75rem",
                   fontWeight: 900,
                   cursor: positionAxisRenameSaving ? "wait" : "pointer",
                   opacity: positionAxisRenameSaving ? 0.68 : 1,
@@ -5480,7 +5502,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 850 }}>Ngưỡng cảnh báo</div>
-                  <div style={{ color: C.textMuted, fontSize: "0.66rem", marginTop: 3 }}>Cảnh báo khi giá trị mới nhất vượt ngưỡng; A, V và D lấy trục lớn nhất.</div>
+                  <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>Cảnh báo khi giá trị mới nhất vượt ngưỡng; A, V và D lấy trục lớn nhất.</div>
                 </div>
                 <span
                   style={{
@@ -5489,7 +5511,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                     border: `1px solid ${C.primary}44`,
                     borderRadius: 999,
                     padding: "3px 8px",
-                    fontSize: "0.58rem",
+                    fontSize: "0.75rem",
                     fontWeight: 800,
                     whiteSpace: "nowrap",
                   }}
@@ -5499,10 +5521,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               </div>
               <div className="data-settings-setpoint-grid">
                 {([
-                  { key: "acceleration", code: "A", label: "Gia tốc", unit: "m/s²", accent: "#38bdf8", icon: <Activity size={15} strokeWidth={2.2} /> },
-                  { key: "velocity", code: "V", label: "Vận tốc RMS", unit: "mm/s", accent: "#34d399", icon: <Gauge size={15} strokeWidth={2.2} /> },
-                  { key: "displacement", code: "D", label: "Biên độ RMS", unit: "mm", accent: "#fbbf24", icon: <Ruler size={15} strokeWidth={2.2} /> },
-                  { key: "temperature", code: "TEMP", label: "Nhiệt độ", unit: "°C", accent: "#fb7185", icon: <Thermometer size={15} strokeWidth={2.2} /> },
+                  { key: "acceleration", code: "A", label: "Gia tốc", unit: "m/s²", accent: thresholdColors.acceleration, icon: <Activity size={15} strokeWidth={2.2} /> },
+                  { key: "velocity", code: "V", label: "Vận tốc RMS", unit: "mm/s", accent: thresholdColors.velocity, icon: <Gauge size={15} strokeWidth={2.2} /> },
+                  { key: "displacement", code: "D", label: "Biên độ RMS", unit: "mm", accent: thresholdColors.displacement, icon: <Ruler size={15} strokeWidth={2.2} /> },
+                  { key: "temperature", code: "TEMP", label: "Nhiệt độ", unit: "°C", accent: thresholdColors.temperature, icon: <Thermometer size={15} strokeWidth={2.2} /> },
                 ] as const).map((field) => (
                   <div
                     key={field.key}
@@ -5527,10 +5549,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                         {field.icon}
                       </span>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 800 }}>{field.label}</div>
-                        <div style={{ color: C.textMuted, fontSize: "0.58rem", marginTop: 2 }}>Ngưỡng cảnh báo</div>
+                        <div style={{ color: C.textBright, fontSize: "0.875rem", fontWeight: 800 }}>{field.label}</div>
+                        <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 2 }}>Ngưỡng cảnh báo</div>
                       </div>
-                      <span style={{ color: field.accent, fontSize: "0.58rem", fontWeight: 900, letterSpacing: "0.05em" }}>{field.code}</span>
+                      <span style={{ color: field.accent, fontSize: "0.75rem", fontWeight: 900, letterSpacing: "0.05em" }}>{field.code}</span>
                     </div>
                     <FormFieldShell className="data-settings-setpoint-input">
                       <FormInput
@@ -5552,7 +5574,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                           background: `${field.accent}12`,
                           borderRadius: 6,
                           padding: "3px 6px",
-                          fontSize: "0.64rem",
+                          fontSize: "0.75rem",
                           fontWeight: 800,
                           whiteSpace: "nowrap",
                         }}
@@ -5563,7 +5585,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                   </div>
                 ))}
               </div>
-              {setpointError ? <div role="alert" style={{ color: C.danger, fontSize: "0.7rem", marginTop: 10 }}>{setpointError}</div> : null}
+              {setpointError ? <div role="alert" style={{ color: C.danger, fontSize: "0.75rem", marginTop: 10 }}>{setpointError}</div> : null}
             </section>
 
 
@@ -5587,7 +5609,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
                 </div>
                 <div>
                   <div style={{ color: C.textBright, fontSize: "0.78rem", fontWeight: 850 }}>Dữ liệu lưu trữ</div>
-                  <div style={{ color: C.textMuted, fontSize: "0.64rem", marginTop: 3 }}>Dung lượng telemetry và phổ tần của thiết bị.</div>
+                  <div style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>Dung lượng telemetry và phổ tần của thiết bị.</div>
                 </div>
               </div>
 	        {dataSummaryLoading ? (
@@ -5600,7 +5622,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	              flexDirection: "column",
 	              gap: 10,
 	              color: C.textMuted,
-	              fontSize: "0.74rem",
+	              fontSize: "0.75rem",
 	            }}
 	          >
 	            <div
@@ -5626,10 +5648,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	              padding: "10px 12px",
 	            }}
 	          >
-	            <div style={{ color: C.warning, fontSize: "0.74rem", fontWeight: 700 }}>
+	            <div style={{ color: C.warning, fontSize: "0.75rem", fontWeight: 700 }}>
 	              Không tải được thống kê dữ liệu
 	            </div>
-	            <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>{dataSummaryError}</div>
+	            <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>{dataSummaryError}</div>
 	          </div>
 	        ) : dataSummary ? (
 	          <div style={{ display: "grid", gap: 10 }}>
@@ -5643,19 +5665,19 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	                padding: "10px 12px",
 	              }}
 	            >
-	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.72rem" }}>
+	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.75rem" }}>
 	                <span style={{ color: C.textMuted }}>Dữ liệu cập nhật tới</span>
 	                <span style={{ color: C.textBright, fontWeight: 700 }}>
 	                  {dataSummary.updatedAt ? formatTooltipDateTime(dataSummary.updatedAt) : "--"}
 	                </span>
 	              </div>
-	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.72rem" }}>
+	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.75rem" }}>
 	                <span style={{ color: C.textMuted }}>Tổng số dữ liệu</span>
 	                <span style={{ color: C.textBright, fontWeight: 700 }}>
 	                  {dataSummary.totalRecords.toLocaleString("vi-VN")} bản ghi
 	                </span>
 	              </div>
-	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.72rem" }}>
+	              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.75rem" }}>
 	                <span style={{ color: C.textMuted }}>Tổng dung lượng dữ liệu</span>
 	                <span style={{ color: C.textBright, fontWeight: 700 }}>{formatByteSize(dataSummary.totalBytes)}</span>
 	              </div>
@@ -5672,17 +5694,17 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	                  gap: 6,
 	                }}
 	              >
-	                <div style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700 }}>Telemetry</div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textBright, fontSize: "0.75rem", fontWeight: 700 }}>Telemetry</div>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Tổng bản ghi: <strong style={{ color: C.textBright }}>{dataSummary.telemetry.records.toLocaleString("vi-VN")}</strong>
 	                </div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Cập nhật tới:{" "}
 	                  <strong style={{ color: C.textBright }}>
 	                    {dataSummary.telemetry.latestAt ? formatTooltipDateTime(dataSummary.telemetry.latestAt) : "--"}
 	                  </strong>
 	                </div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Dung lượng ước tính:{" "}
 	                  <strong style={{ color: C.textBright }}>{formatByteSize(dataSummary.telemetry.estimatedBytes)}</strong>
 	                </div>
@@ -5698,17 +5720,17 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	                  gap: 6,
 	                }}
 	              >
-	                <div style={{ color: C.textBright, fontSize: "0.72rem", fontWeight: 700 }}>Spectrum</div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textBright, fontSize: "0.75rem", fontWeight: 700 }}>Spectrum</div>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Tổng frame: <strong style={{ color: C.textBright }}>{dataSummary.spectrum.frames.toLocaleString("vi-VN")}</strong>
 	                </div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Cập nhật tới:{" "}
 	                  <strong style={{ color: C.textBright }}>
 	                    {dataSummary.spectrum.latestAt ? formatTooltipDateTime(dataSummary.spectrum.latestAt) : SPECTRUM_NO_DATA_LABEL}
 	                  </strong>
 	                </div>
-	                <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>
+	                <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
 	                  Dung lượng phổ:{" "}
 	                  <strong style={{ color: C.textBright }}>{formatByteSize(dataSummary.spectrum.totalBytes)}</strong>
 	                </div>
@@ -5716,7 +5738,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
 	            </div>
 	          </div>
 	        ) : (
-	          <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>Chưa có dữ liệu thống kê.</div>
+	          <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>Chưa có dữ liệu thống kê.</div>
 	        )}
             </section>
           </div>
@@ -5743,6 +5765,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
         <div style={{ display: "grid", gap: 10 }}>
           <FormFieldShell icon={<PencilLine size={14} strokeWidth={2.1} />} style={{ minHeight: 40 }}>
             <FormInput
+              aria-label={`Tên hiển thị cho trục ${axisRenameTarget ? chartAxisLabels[axisRenameTarget] : "cảm biến"}`}
               value={axisRenameDraft}
               onChange={(event) => {
                 setAxisRenameDraft(event.target.value);
@@ -5762,11 +5785,10 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               autoFocus
               disabled={axisRenameSaving}
               maxLength={48}
-              aria-label="Tên trục cảm biến"
             />
           </FormFieldShell>
           {axisRenameError ? (
-            <div style={{ color: C.warning, fontSize: "0.7rem", lineHeight: 1.45 }}>{axisRenameError}</div>
+            <div style={{ color: C.warning, fontSize: "0.75rem", lineHeight: 1.45 }}>{axisRenameError}</div>
           ) : null}
         </div>
       </Modal>
@@ -5796,7 +5818,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
             Bạn sắp xoá toàn bộ dữ liệu biểu đồ của{" "}
             <strong style={{ color: C.textBright }}>{sensor?.name || sensor?.id}</strong>.
           </div>
-          <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>
+          <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
             Hành động này sẽ xoá telemetry và phổ đã lưu, không thể hoàn tác.
           </div>
           {dataClearJobActive ? (
@@ -5804,7 +5826,7 @@ export const SensorChartModal = React.memo(function SensorChartModal({
               <div style={{ height: 8, borderRadius: 999, background: `${C.border}66`, overflow: "hidden" }}>
                 <div style={{ width: `${Math.max(0, Math.min(100, asFiniteNumber(dataClearJob?.progress) ?? 0))}%`, height: "100%", background: C.primary }} />
               </div>
-              <div style={{ color: C.textMuted, fontSize: "0.72rem" }}>
+              <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>
                 Tiến độ {Math.round(asFiniteNumber(dataClearJob?.progress) ?? 0)}% · đã xoá {Math.round(asFiniteNumber(dataClearJob?.telemetryDeleted) ?? 0)} telemetry
               </div>
             </div>

@@ -80,12 +80,12 @@ function getColors(theme: Theme): Colors {
     textBright:  "#060c20",   // ① đen midnight — tiêu đề
     textBase:    "#1a3565",   // ② navy đậm — nội dung chính
     textMuted:   "#3d5e99",   // ③ xanh trung — nhãn phụ
-    textDim:     "#5272a5",   // ④ chú thích đủ tương phản
-    danger:      "#dc2626",
+    textDim:     "#3f5f8f",   // ④ chú thích đủ tương phản
+    danger:      "#b91c1c",
     dangerBg:    "#dc262610",
-    success:     "#059669",
+    success:     "#065f46",
     successBg:   "#05966910",
-    warning:     "#d97706",
+    warning:     "#92400e",
     warningBg:   "#d9770610",
     navActive:   "#d4e3f8",
     scrollbar:   "#aac0eb",

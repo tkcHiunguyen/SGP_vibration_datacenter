@@ -89,8 +89,12 @@ test('runtime MySQL schema includes hourly telemetry availability summaries', ()
   }
 });
 
-test('runtime MySQL schema migrates archive range indexes', () => {
-  for (const indexName of ['idx_device_datas_received_at', 'idx_device_spectrum_frames_captured_at']) {
+test('runtime MySQL schema migrates archive and delete-impact indexes', () => {
+  for (const indexName of [
+    'idx_device_datas_received_at',
+    'idx_device_spectrum_frames_captured_at',
+    'idx_device_spectrum_frames_device_size',
+  ]) {
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`index_name = '${indexName}'`, 'i'));
     assert.match(MYSQL_SCHEMA_SQL, new RegExp(`ADD KEY ${indexName}`, 'i'));
   }

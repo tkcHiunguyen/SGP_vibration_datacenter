@@ -26,7 +26,6 @@ export function ImportUploadPanel({
   onJobCreated: (job: ImportJob) => void;
 }) {
   const { C } = useTheme();
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -122,8 +121,9 @@ export function ImportUploadPanel({
   const uploadBusy = uploading || (uploadProgress === 100 && !preview && !error);
   return (
     <div className="sgpdata-panel-enter" style={{ display: "grid", gap: 12 }}>
-      <div
-        className={`sgpdata-drop-zone${dragActive ? " is-active" : ""}`}
+      <label
+        className={`dc-file-drop-zone sgpdata-drop-zone${dragActive ? " is-active" : ""}`}
+        htmlFor="sgpdata-import-file"
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
         onDrop={(event) => {
@@ -131,11 +131,11 @@ export function ImportUploadPanel({
           setDragActive(false);
           chooseFile(event.dataTransfer.files?.[0] ?? null);
         }}
-        onClick={() => !uploading && inputRef.current?.click()}
         style={{
           borderRadius: 10,
           border: `1.5px dashed ${dragActive ? C.primary : C.cardBorder}`,
           background: dragActive ? C.primaryBg : C.surface,
+          color: C.primary,
           padding: 16,
           display: "flex",
           alignItems: "center",
@@ -146,11 +146,19 @@ export function ImportUploadPanel({
         }}
       >
         <input
-          ref={inputRef}
+          id="sgpdata-import-file"
+          className="dc-file-input-native"
           type="file"
           accept=".sgpdata,application/octet-stream,application/zip"
+          aria-label="Chọn file .sgpdata để nhập dữ liệu"
+          disabled={uploading}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          }}
           onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
-          style={{ display: "none" }}
         />
         <span style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
           <span style={{ width: 38, height: 38, borderRadius: 9, background: C.card, border: `1px solid ${C.border}`, color: C.primary, display: "grid", placeItems: "center", flexShrink: 0 }}>
@@ -160,15 +168,15 @@ export function ImportUploadPanel({
             <strong style={{ display: "block", color: C.textBright, fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {file?.name ?? "Chọn file .sgpdata"}
             </strong>
-            <span style={{ color: C.textMuted, fontSize: "0.68rem" }}>{file ? fmtBytes(file.size) : "Kéo thả hoặc bấm để chọn"}</span>
+            <span style={{ color: C.textMuted, fontSize: "0.75rem" }}>{file ? fmtBytes(file.size) : "Kéo thả hoặc bấm để chọn"}</span>
           </span>
         </span>
-        <span style={{ color: C.primary, fontSize: "0.68rem", fontWeight: 850 }}>Browse</span>
-      </div>
+        <span style={{ color: C.primary, fontSize: "0.75rem", fontWeight: 850 }}>Browse</span>
+      </label>
 
       {file ? (
         <div style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 9, padding: 11, display: "grid", gap: 7 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", color: C.textBase, fontSize: "0.7rem", fontWeight: 800 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", color: C.textBase, fontSize: "0.75rem", fontWeight: 800 }}>
             <span>{uploadProgress < 100 ? "Tiến trình upload" : preview ? "Upload và kiểm tra hoàn tất" : "Đang kiểm tra trên server"}</span>
             <span>{uploadProgress}%</span>
           </div>
@@ -205,7 +213,7 @@ export function ImportUploadPanel({
                   padding: "0 12px",
                   cursor: value === "replace" && !replaceAvailable ? "not-allowed" : "pointer",
                   opacity: value === "replace" && !replaceAvailable ? 0.5 : 1,
-                  fontSize: "0.72rem",
+                  fontSize: "0.75rem",
                   fontWeight: 850,
                 }}
               >
@@ -214,12 +222,12 @@ export function ImportUploadPanel({
             ))}
           </div>
           {mode === "replace" ? (
-            <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 10, fontSize: "0.68rem", fontWeight: 800 }}>
+            <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 10, fontSize: "0.75rem", fontWeight: 800 }}>
               Dữ liệu cũ của các thiết bị trong đúng khoảng thời gian của file sẽ bị xóa trước khi import.
             </div>
           ) : null}
           {!replaceAvailable ? (
-            <div style={{ color: C.textMuted, fontSize: "0.66rem", fontWeight: 700 }}>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 700 }}>
               File không có khoảng thời gian nên chỉ có thể bổ sung dữ liệu an toàn.
             </div>
           ) : null}
@@ -251,20 +259,20 @@ export function ImportUploadPanel({
       ) : null}
 
       {checksumInvalid ? (
-        <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 7, fontSize: "0.7rem", fontWeight: 850 }}>
+        <div style={{ border: `1px solid ${C.danger}55`, background: C.dangerBg, color: C.danger, borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 7, fontSize: "0.75rem", fontWeight: 850 }}>
           <ShieldCheck size={15} /> Checksum: không hợp lệ
         </div>
       ) : null}
 
-      {message ? <div style={{ color: C.textMuted, fontSize: "0.7rem" }}>{message}</div> : null}
-      {error ? <div style={{ color: C.danger, fontSize: "0.72rem", fontWeight: 800 }}>{error}</div> : null}
+      {message ? <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>{message}</div> : null}
+      {error ? <div style={{ color: C.danger, fontSize: "0.75rem", fontWeight: 800 }}>{error}</div> : null}
     </div>
   );
 
   function MiniStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
     return (
       <div className="sgpdata-metric-card" style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: "9px 10px", minWidth: 0 }}>
-        <span style={{ color: C.textMuted, fontSize: "0.62rem", fontWeight: 800, display: "flex", alignItems: "center", gap: 5 }}>{icon}{label}</span>
+        <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 800, display: "flex", alignItems: "center", gap: 5 }}>{icon}{label}</span>
         <strong style={{ color: C.textBright, fontSize: "0.82rem", display: "block", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</strong>
       </div>
     );

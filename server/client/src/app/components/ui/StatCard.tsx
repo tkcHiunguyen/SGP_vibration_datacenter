@@ -62,7 +62,7 @@ export function ConsoleStatCard({
             className="dc-stat-card-label"
             style={{
               color: C.textMuted,
-              fontSize: "0.65rem",
+              fontSize: "0.75rem",
               fontWeight: 700,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
@@ -77,7 +77,7 @@ export function ConsoleStatCard({
             {value}
           </div>
           {caption ? (
-            <div className="dc-stat-card-caption" style={{ color: C.textMuted, fontSize: "0.68rem", marginTop: 4 }}>
+            <div className="dc-stat-card-caption" style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 4 }}>
               {caption}
             </div>
           ) : null}

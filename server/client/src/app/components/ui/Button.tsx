@@ -55,7 +55,7 @@ export function ConsoleButton({
   const { C } = useTheme();
   const palette = getButtonPalette(C, variant);
   const sizeClass =
-    size === "sm" ? "h-7 px-2.5 text-[0.68rem]" : "h-[34px] px-3 text-[0.72rem]";
+    size === "sm" ? "h-7 px-2.5 text-[0.75rem]" : "h-[34px] px-3 text-[0.75rem]";
 
   const cssVars = {
     "--cc-btn-bg": palette.bg,

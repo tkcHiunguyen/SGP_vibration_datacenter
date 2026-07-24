@@ -197,12 +197,12 @@ function DetailRow({ icon, label, value }: DetailItem) {
         }}
       >
         <span className="device-info-detail-icon" style={{ display: "inline-flex", flexShrink: 0 }}>{icon}</span>
-        <span className="device-info-detail-label" style={{ fontSize: "0.74rem" }}>{label}</span>
+        <span className="device-info-detail-label" style={{ fontSize: "0.75rem" }}>{label}</span>
       </div>
       <span
         className="device-info-detail-value"
         style={{
-          fontSize: "0.74rem",
+          fontSize: "0.75rem",
           color: C.textBright,
           textAlign: "right",
           maxWidth: "58%",
@@ -381,9 +381,10 @@ function EditDeviceModal({
     >
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ color: C.textMuted, fontSize: "0.7rem", fontWeight: 700 }}>Tên thiết bị</div>
+          <label htmlFor="device-name-input" style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 700 }}>Tên thiết bị</label>
           <FormFieldShell className="h-9">
             <FormInput
+              id="device-name-input"
               value={nameDraft}
               onChange={(event) => setNameDraft(event.target.value)}
               disabled={savingEdit}
@@ -393,7 +394,7 @@ function EditDeviceModal({
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ color: C.textMuted, fontSize: "0.7rem", fontWeight: 700 }}>Khu vực</div>
+          <label htmlFor="device-zone-select" style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 700 }}>Khu vực</label>
           {loadingZones ? (
             <div
               style={{
@@ -406,7 +407,7 @@ function EditDeviceModal({
                 alignItems: "center",
                 gap: 7,
                 padding: "0 11px",
-                fontSize: "0.72rem",
+                fontSize: "0.75rem",
               }}
             >
               <Loader2 size={13} className="animate-spin" />
@@ -415,6 +416,7 @@ function EditDeviceModal({
           ) : (
             <FormFieldShell className="h-9">
               <FormSelect
+                id="device-zone-select"
                 value={zoneDraft}
                 onChange={(event) => setZoneDraft(event.target.value)}
                 disabled={savingEdit}
@@ -443,7 +445,7 @@ function EditDeviceModal({
               border: `1px solid ${C.danger}40`,
               borderRadius: 8,
               padding: "8px 9px",
-              fontSize: "0.72rem",
+              fontSize: "0.75rem",
               lineHeight: 1.45,
             }}
           >
@@ -834,7 +836,7 @@ export function DeviceInfoModal({
 
           .device-info-detail-label,
           .device-info-detail-value {
-            font-size: 0.71rem !important;
+            font-size: 0.75rem !important;
             line-height: 1.4;
           }
 
@@ -885,7 +887,7 @@ export function DeviceInfoModal({
                 flexWrap: "wrap",
               }}
             >
-              <span style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 600 }}>
+              <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 600 }}>
                 Cập nhật {sensor.lastUpdated} phút trước
               </span>
               <ConsoleButton
@@ -920,7 +922,7 @@ export function DeviceInfoModal({
                     border: `1px solid ${isOnline ? `${C.success}45` : C.border}`,
                     background: isOnline ? C.successBg : C.input,
                     color: isOnline ? C.success : C.textMuted,
-                    fontSize: "0.67rem",
+                    fontSize: "0.75rem",
                     fontWeight: 700,
                     display: "inline-flex",
                     alignItems: "center",
@@ -940,7 +942,7 @@ export function DeviceInfoModal({
                     border: `1px solid ${isAbnormal ? `${C.danger}45` : `${C.primary}45`}`,
                     background: isAbnormal ? C.dangerBg : C.primaryBg,
                     color: isAbnormal ? C.danger : C.primary,
-                    fontSize: "0.67rem",
+                    fontSize: "0.75rem",
                     fontWeight: 700,
                     display: "inline-flex",
                     alignItems: "center",
@@ -989,7 +991,7 @@ export function DeviceInfoModal({
                   <div
                     style={{
                       color: C.textMuted,
-                      fontSize: "0.63rem",
+                      fontSize: "0.75rem",
                       letterSpacing: "0.08em",
                       textTransform: "uppercase",
                       fontWeight: 700,
@@ -1039,7 +1041,7 @@ export function DeviceInfoModal({
       <ConfirmModal
         open={deleteOpen}
         onClose={() => {
-          if (!deleting && !loadingDeleteImpact) {
+          if (!deleting) {
             setDeleteOpen(false);
             setDeleteImpact(null);
             setDeleteImpactError("");
@@ -1059,8 +1061,8 @@ export function DeviceInfoModal({
               : "Xoá tất cả dữ liệu"
         }
         cancelLabel="Huỷ"
-        busy={deleting || loadingDeleteImpact}
-        confirmDisabled={Boolean(deleteImpactError) || !deleteImpact}
+        busy={deleting}
+        confirmDisabled={loadingDeleteImpact || Boolean(deleteImpactError) || !deleteImpact}
         danger
         zIndex={123}
       />

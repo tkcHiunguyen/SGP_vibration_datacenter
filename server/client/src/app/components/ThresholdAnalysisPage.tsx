@@ -47,6 +47,13 @@ const METRIC_UI: Record<ThresholdMetric, {
   drms: { code: 'D', label: 'Biên độ RMS', color: '#fbbf24', icon: <Ruler size={15} strokeWidth={2.2} /> },
 };
 
+const LIGHT_METRIC_COLORS: Record<ThresholdMetric, string> = {
+  temperature: '#9f1239',
+  arms: '#075985',
+  vrms: '#065f46',
+  drms: '#92400e',
+};
+
 const METRIC_ORDER: ThresholdMetric[] = ['temperature', 'arms', 'vrms', 'drms'];
 
 type ApplyTarget = {
@@ -114,7 +121,7 @@ export function ThresholdAnalysisPage({
   onNotify: (message: Omit<ToastItem, 'id'>) => void;
   onSensorUpdated?: (sensor: Sensor) => void;
 }) {
-  const { C } = useTheme();
+  const { C, theme } = useTheme();
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const [zoneFilter, setZoneFilter] = useState('all');
   const [deviceFilter, setDeviceFilter] = useState('all');
@@ -466,6 +473,7 @@ export function ThresholdAnalysisPage({
                 <div className="analysis-metric-list">
                   {rows.map((row) => {
                     const ui = METRIC_UI[row.metric];
+                    const metricColor = theme === 'light' ? LIGHT_METRIC_COLORS[row.metric] : ui.color;
                     const suggested = row.suggestedThreshold;
                     const current = row.currentThreshold;
                     const difference = typeof suggested === 'number' && typeof current === 'number' ? suggested - current : undefined;
@@ -476,10 +484,10 @@ export function ThresholdAnalysisPage({
                     return (
                       <article key={row.metric} className="analysis-metric-row" style={{ borderColor: C.border }}>
                         <div className="analysis-metric-name">
-                          <span style={{ color: ui.color, borderColor: `${ui.color}66`, background: `${ui.color}12` }}>{ui.icon}</span>
+                          <span style={{ color: metricColor, borderColor: `${metricColor}66`, background: `${metricColor}12` }}>{ui.icon}</span>
                           <div>
                             <strong style={{ color: C.textBright }}>{ui.label}</strong>
-                            <small style={{ color: ui.color }}>{ui.code} · {formatUnit(row.unit)}</small>
+                            <small style={{ color: metricColor }}>{ui.code} · {formatUnit(row.unit)}</small>
                           </div>
                           <em style={{ color: row.status === 'error' ? C.danger : isOk ? C.success : C.warning }}>
                             {row.status === 'error' ? 'Lỗi' : isOk ? 'Đủ dữ liệu' : 'Thiếu dữ liệu'}
@@ -503,11 +511,11 @@ export function ThresholdAnalysisPage({
                                     {row.densityBins.map((share, index) => (
                                       <i
                                         key={index}
-                                        style={{ background: ui.color, opacity: densityMax > 0 ? 0.12 + share / densityMax * 0.88 : 0.12 }}
+                                        style={{ background: metricColor, opacity: densityMax > 0 ? 0.12 + share / densityMax * 0.88 : 0.12 }}
                                       />
                                     ))}
                                     {currentPosition !== undefined ? <b title={`Ngưỡng hiện tại: ${formatNumber(current)}`} style={{ left: `${currentPosition}%`, background: C.warning }} /> : null}
-                                    {suggestedPosition !== undefined ? <b title={`Ngưỡng đề xuất: ${formatNumber(suggested)}`} style={{ left: `${suggestedPosition}%`, background: ui.color }} /> : null}
+                                    {suggestedPosition !== undefined ? <b title={`Ngưỡng đề xuất: ${formatNumber(suggested)}`} style={{ left: `${suggestedPosition}%`, background: metricColor }} /> : null}
                                   </div>
                                   <small style={{ color: C.textMuted }}>{formatNumber(row.popularFrom)}–{formatNumber(row.popularTo)} · {formatNumber(row.popularSharePercent, 1)}%</small>
                                 </div>
@@ -516,7 +524,7 @@ export function ThresholdAnalysisPage({
                             <div className="analysis-data-cell"><span>P95</span><strong style={{ color: C.textBright }}>{formatNumber(row.p95)}</strong></div>
                             <div className="analysis-data-cell"><span>P99</span><strong style={{ color: C.textBright }}>{formatNumber(row.p99)}</strong></div>
                             <div className="analysis-data-cell"><span>Hiện tại</span><strong style={{ color: C.textBase }}>{formatNumber(current)}</strong></div>
-                            <div className="analysis-data-cell"><span>Đề xuất</span><strong style={{ color: isOk ? ui.color : C.textMuted }}>{formatNumber(suggested)}</strong></div>
+                            <div className="analysis-data-cell"><span>Đề xuất</span><strong style={{ color: isOk ? metricColor : C.textMuted }}>{formatNumber(suggested)}</strong></div>
                             <div className="analysis-data-cell"><span>Chênh lệch</span><strong style={{ color: typeof difference === 'number' && difference > 0 ? C.warning : C.success }}>{typeof difference === 'number' && difference > 0 ? '+' : ''}{formatNumber(difference)}</strong></div>
                           </>
                         )}
@@ -544,9 +552,10 @@ export function ThresholdAnalysisPage({
             <div style={{ display: 'grid', gap: 7 }}>
               {applyTarget.rows.filter((row) => row.status === 'ok' && typeof row.suggestedThreshold === 'number' && row.suggestedThreshold > 0).map((row) => {
                 const ui = METRIC_UI[row.metric];
+                const metricColor = theme === 'light' ? LIGHT_METRIC_COLORS[row.metric] : ui.color;
                 return (
                   <div key={row.metric} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 1fr) auto', gap: 12, padding: '7px 9px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface }}>
-                    <span style={{ color: ui.color, fontWeight: 800 }}>{ui.label}</span>
+                    <span style={{ color: metricColor, fontWeight: 800 }}>{ui.label}</span>
                     <span className="tabular-nums" style={{ color: C.textMuted }}>
                       {formatNumber(row.currentThreshold)} → <strong style={{ color: C.textBright }}>{formatNumber(row.suggestedThreshold)} {formatUnit(row.unit)}</strong>
                     </span>
@@ -554,60 +563,60 @@ export function ThresholdAnalysisPage({
                 );
               })}
             </div>
-            <div style={{ color: C.warning, fontSize: '0.68rem' }}>Chỉ bốn trường ngưỡng hợp lệ được gửi; thông tin thiết bị khác được giữ nguyên.</div>
+            <div style={{ color: C.warning, fontSize: '0.75rem' }}>Chỉ bốn trường ngưỡng hợp lệ được gửi; thông tin thiết bị khác được giữ nguyên.</div>
           </div>
         ) : ''}
       />
 
       <style>{`
         .threshold-analysis-page { width: 100%; max-width: 1540px; margin: 0 auto; }
-        .threshold-analysis-page h2, .threshold-analysis-page h3 { text-wrap: balance; }
+        .threshold-analysis-page h1, .threshold-analysis-page h2, .threshold-analysis-page h3 { text-wrap: balance; }
         .threshold-analysis-page p { text-wrap: pretty; }
-        .analysis-runtime-note { display: inline-flex; align-items: center; gap: 6px; font-size: 0.66rem; }
+        .analysis-runtime-note { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; }
         .analysis-runtime-note strong { font-size: inherit; }
         .analysis-config-panel { overflow: hidden; }
         .analysis-config-head { min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid; }
         .analysis-config-head > div:first-child { display: grid; gap: 3px; }
         .analysis-config-head h3 { margin: 0; font-size: 0.78rem; font-weight: 820; }
-        .analysis-config-head p { margin: 0; font-size: 0.61rem; }
+        .analysis-config-head p { margin: 0; font-size: 0.75rem; }
         .analysis-target-count { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
         .analysis-target-count strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
-        .analysis-target-count span { font-size: 0.61rem; }
+        .analysis-target-count span { font-size: 0.75rem; }
         .analysis-control-grid { display: grid; grid-template-columns: 220px minmax(140px, 0.7fr) minmax(260px, 1.35fr) auto auto; align-items: end; gap: 10px; padding: 14px; }
         .analysis-range-field { min-width: 0; margin: 0; padding: 0; border: 0; }
-        .analysis-range-field legend, .analysis-field > span { display: block; margin: 0 0 6px; padding: 0; font-size: 0.61rem; font-weight: 780; }
+        .analysis-range-field legend, .analysis-field > span { display: block; margin: 0 0 6px; padding: 0; font-size: 0.75rem; font-weight: 780; }
         .analysis-range-group { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
         .analysis-range-group button { min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 4px; margin-left: -1px; border: 1px solid; border-radius: 0; cursor: pointer; font: inherit; transition: border-color 150ms ease-out, background 150ms ease-out, color 150ms ease-out; }
         .analysis-range-group button:first-child { margin-left: 0; border-radius: 7px 0 0 7px; }
         .analysis-range-group button:last-child { border-radius: 0 7px 7px 0; }
-        .analysis-range-group button strong { font-size: 0.72rem; font-variant-numeric: tabular-nums; }
-        .analysis-range-group button span { font-size: 0.58rem; }
+        .analysis-range-group button strong { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+        .analysis-range-group button span { font-size: 0.75rem; }
         .analysis-range-group button:disabled { cursor: not-allowed; opacity: 0.55; }
         .analysis-field { display: grid; gap: 6px; min-width: 0; }
-        .analysis-select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid; border-radius: 7px; outline: 0; font: inherit; font-size: 0.68rem; font-weight: 680; cursor: pointer; }
+        .analysis-select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid; border-radius: 7px; outline: 0; font: inherit; font-size: 0.75rem; font-weight: 680; cursor: pointer; }
         .analysis-select:focus-visible { border-color: ${C.primary}; outline: 2px solid ${C.primary}33; outline-offset: 1px; }
         .analysis-select:disabled { cursor: not-allowed; opacity: 0.55; }
         .analysis-sim-option { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding-bottom: 1px; cursor: pointer; white-space: nowrap; }
         .analysis-sim-option input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
-        .analysis-sim-option span { font-size: 0.65rem; font-weight: 700; }
+        .analysis-sim-option span { font-size: 0.75rem; font-weight: 700; }
         .analysis-run-button { min-height: 40px; white-space: nowrap; }
-        .analysis-run-facts { display: flex; align-items: center; gap: 0; padding: 8px 14px; border-top: 1px solid; font-size: 0.59rem; }
+        .analysis-run-facts { display: flex; align-items: center; gap: 0; padding: 8px 14px; border-top: 1px solid; font-size: 0.75rem; }
         .analysis-run-facts span { display: inline-flex; align-items: center; }
         .analysis-run-facts span + span::before { content: '·'; margin: 0 8px; opacity: 0.6; }
-        .analysis-inline-error { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid; border-radius: 9px; font-size: 0.7rem; font-weight: 750; }
+        .analysis-inline-error { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid; border-radius: 9px; font-size: 0.75rem; font-weight: 750; }
         .analysis-progress-panel { padding: 16px; }
         .analysis-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
         .analysis-progress-head > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
         .analysis-progress-head > div > div { display: grid; gap: 3px; min-width: 0; }
         .analysis-progress-head strong { font-size: 0.76rem; }
-        .analysis-progress-head small { font-size: 0.62rem; }
+        .analysis-progress-head small { font-size: 0.75rem; }
         .analysis-progress-track { height: 5px; margin-top: 12px; overflow: hidden; border-radius: 999px; }
         .analysis-progress-track > div { height: 100%; }
         .analysis-device-progress { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 7px; margin-top: 12px; }
         .analysis-device-progress > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; min-width: 0; padding: 8px 9px; border: 1px solid; border-radius: 8px; }
-        .analysis-device-progress strong { overflow: hidden; font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
-        .analysis-device-progress small { font-size: 0.58rem; white-space: nowrap; }
-        .analysis-log { max-height: 142px; display: grid; gap: 5px; margin-top: 12px; padding: 9px 11px; overflow: auto; border: 1px solid; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.61rem; }
+        .analysis-device-progress strong { overflow: hidden; font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+        .analysis-device-progress small { font-size: 0.75rem; white-space: nowrap; }
+        .analysis-log { max-height: 142px; display: grid; gap: 5px; margin-top: 12px; padding: 9px 11px; overflow: auto; border: 1px solid; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
         .analysis-log > div { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 8px; }
         .analysis-log time { opacity: 0.7; font-variant-numeric: tabular-nums; }
         .analysis-results { display: grid; gap: 12px; }
@@ -615,9 +624,9 @@ export function ThresholdAnalysisPage({
         .analysis-result-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 15px; border-bottom: 1px solid; }
         .analysis-result-head > div { display: grid; gap: 4px; min-width: 0; }
         .analysis-result-head strong { font-size: 0.84rem; }
-        .analysis-result-head span { display: flex; align-items: center; gap: 5px; font-size: 0.63rem; }
+        .analysis-result-head span { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; }
         .analysis-table-header, .analysis-metric-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(82px, 0.6fr) minmax(180px, 1.25fr) repeat(5, minmax(76px, 0.55fr)); align-items: center; }
-        .analysis-table-header { min-height: 35px; padding: 0 14px; border-bottom: 1px solid; font-size: 0.58rem; font-weight: 820; text-transform: uppercase; }
+        .analysis-table-header { min-height: 35px; padding: 0 14px; border-bottom: 1px solid; font-size: 0.75rem; font-weight: 820; text-transform: uppercase; }
         .analysis-table-header span:not(:first-child) { text-align: right; }
         .analysis-metric-list { display: grid; }
         .analysis-metric-row { min-height: 72px; padding: 9px 14px; border-bottom: 1px solid; }
@@ -625,20 +634,20 @@ export function ThresholdAnalysisPage({
         .analysis-metric-name { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
         .analysis-metric-name > span { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid; border-radius: 8px; }
         .analysis-metric-name > div { display: grid; gap: 2px; min-width: 0; }
-        .analysis-metric-name strong { overflow: hidden; font-size: 0.68rem; text-overflow: ellipsis; white-space: nowrap; }
-        .analysis-metric-name small { font-size: 0.56rem; font-weight: 800; }
-        .analysis-metric-name em { grid-column: 2; font-size: 0.54rem; font-style: normal; font-weight: 750; }
+        .analysis-metric-name strong { overflow: hidden; font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+        .analysis-metric-name small { font-size: 0.75rem; font-weight: 800; }
+        .analysis-metric-name em { grid-column: 2; font-size: 0.75rem; font-style: normal; font-weight: 750; }
         .analysis-data-cell { display: grid; justify-items: end; gap: 3px; min-width: 0; }
         .analysis-data-cell > span { display: none; }
-        .analysis-data-cell strong { font-size: 0.7rem; font-variant-numeric: tabular-nums; }
-        .analysis-data-cell small { font-size: 0.53rem; }
+        .analysis-data-cell strong { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+        .analysis-data-cell small { font-size: 0.75rem; }
         .analysis-density-cell { justify-items: stretch; }
         .analysis-density { width: 100%; display: grid; gap: 4px; }
         .analysis-density-strip { position: relative; height: 22px; display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 1px; padding: 2px; overflow: hidden; border-radius: 5px; }
         .analysis-density-strip > i { min-width: 0; border-radius: 2px; }
         .analysis-density-strip > b { position: absolute; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); }
         .analysis-density small { text-align: left; font-variant-numeric: tabular-nums; }
-        .analysis-row-error { grid-column: 2 / -1; padding-left: 12px; font-size: 0.66rem; }
+        .analysis-row-error { grid-column: 2 / -1; padding-left: 12px; font-size: 0.75rem; }
         @media (max-width: 1050px) {
           .analysis-control-grid { grid-template-columns: 220px minmax(140px, 0.8fr) minmax(260px, 1.2fr); }
           .analysis-sim-option { grid-column: 1 / 3; }
@@ -647,7 +656,7 @@ export function ThresholdAnalysisPage({
           .analysis-metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; align-items: start; padding: 12px 14px; }
           .analysis-metric-name { grid-column: 1 / -1; }
           .analysis-data-cell { grid-template-columns: minmax(74px, 1fr) auto; align-items: baseline; justify-items: stretch; gap: 8px; }
-          .analysis-data-cell > span { display: block; color: ${C.textMuted}; font-size: 0.57rem; }
+          .analysis-data-cell > span { display: block; color: ${C.textMuted}; font-size: 0.75rem; }
           .analysis-data-cell strong, .analysis-data-cell small { text-align: right; }
           .analysis-data-cell small { grid-column: 1 / -1; }
           .analysis-density small { grid-column: auto; text-align: left; }

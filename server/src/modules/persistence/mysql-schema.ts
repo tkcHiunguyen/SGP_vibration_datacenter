@@ -954,6 +954,7 @@ CREATE TABLE IF NOT EXISTS device_spectrum_frames (
   peak_z_amplitude DOUBLE NULL,
   created_at DATETIME(3) NOT NULL,
   KEY idx_device_spectrum_frames_device_time (device_id, captured_at),
+  KEY idx_device_spectrum_frames_device_size (device_id, file_size_bytes),
   KEY idx_device_spectrum_frames_captured_at (captured_at),
   KEY idx_device_spectrum_frames_device_data_id (device_data_id),
   UNIQUE KEY uq_device_spectrum_frames_device_uuid (device_id, telemetry_uuid),
@@ -1439,6 +1440,22 @@ SET @add_idx_device_spectrum_frames_captured_at_sql := IF(
 PREPARE add_idx_device_spectrum_frames_captured_at_stmt FROM @add_idx_device_spectrum_frames_captured_at_sql;
 EXECUTE add_idx_device_spectrum_frames_captured_at_stmt;
 DEALLOCATE PREPARE add_idx_device_spectrum_frames_captured_at_stmt;
+
+SET @has_idx_device_spectrum_frames_device_size := (
+  SELECT COUNT(*)
+  FROM information_schema.statistics
+  WHERE table_schema = DATABASE()
+    AND table_name = 'device_spectrum_frames'
+    AND index_name = 'idx_device_spectrum_frames_device_size'
+);
+SET @add_idx_device_spectrum_frames_device_size_sql := IF(
+  @has_idx_device_spectrum_frames_device_size = 0,
+  'ALTER TABLE device_spectrum_frames ADD KEY idx_device_spectrum_frames_device_size (device_id, file_size_bytes)',
+  'SELECT 1'
+);
+PREPARE add_idx_device_spectrum_frames_device_size_stmt FROM @add_idx_device_spectrum_frames_device_size_sql;
+EXECUTE add_idx_device_spectrum_frames_device_size_stmt;
+DEALLOCATE PREPARE add_idx_device_spectrum_frames_device_size_stmt;
 
 -- System-scoped audit events may not belong to a concrete device.
 SET @audit_logs_device_nullable := (

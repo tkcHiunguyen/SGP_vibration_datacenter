@@ -62,12 +62,12 @@ export function ConsolePageHeader({
         <div>
           <div className="flex items-center gap-2">
             {icon ? <span style={{ color: C.primary }}>{icon}</span> : null}
-            <h2 className="text-balance" style={{ color: C.textBright, margin: 0, fontSize: "1rem", fontWeight: 800 }}>
+            <h1 className="text-balance" style={{ color: C.textBright, margin: 0, fontSize: "1rem", fontWeight: 800 }}>
               {title}
-            </h2>
+            </h1>
           </div>
           {subtitle ? (
-            <p className="text-pretty" style={{ color: C.textMuted, margin: "6px 0 0", fontSize: "0.74rem" }}>{subtitle}</p>
+            <p className="text-pretty" style={{ color: C.textMuted, margin: "6px 0 0", fontSize: "0.75rem" }}>{subtitle}</p>
           ) : null}
         </div>
         {actions ? <div className="flex items-center gap-2">{actions}</div> : null}

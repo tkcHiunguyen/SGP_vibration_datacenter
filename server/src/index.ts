@@ -77,6 +77,11 @@ async function registerAppPlugins(app: FastifyInstance, otaUploadRoot: string): 
   await app.register(fastifyStatic, {
     root: join(process.cwd(), 'public', 'app'),
     prefix: '/app/',
+    cacheControl: false,
+    setHeaders(response, filePath) {
+      const mustRefresh = filePath.endsWith('index.html') || filePath.endsWith('version.json');
+      response.setHeader('cache-control', mustRefresh ? 'no-store, no-cache, must-revalidate' : 'public, max-age=0');
+    },
   });
   await app.register(fastifyStatic, {
     root: otaUploadRoot,

@@ -1,4 +1,5 @@
 export const APP_VERSION_QUERY_KEY = "ui_version";
+export const APP_VERSION_CHECK_EVENT = "sgp:check-app-version";
 
 let appVersionWatcherBusy = false;
 

@@ -159,7 +159,7 @@ export function Modal({
           <div>
             <div id={titleId} style={{ color: C.textBright, fontSize: "0.88rem", fontWeight: 800 }}>{title}</div>
             {description ? (
-              <div id={descriptionId} style={{ color: C.textMuted, fontSize: "0.7rem", marginTop: 3 }}>{description}</div>
+              <div id={descriptionId} style={{ color: C.textMuted, fontSize: "0.75rem", marginTop: 3 }}>{description}</div>
             ) : null}
           </div>
           <button

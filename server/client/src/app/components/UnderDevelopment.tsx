@@ -104,7 +104,7 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
           background: C.warningBg, border: `1px solid ${C.warning}28`,
         }}>
           <Wrench size={10} color={C.warning} strokeWidth={2} />
-          <span style={{ color: C.warning, fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          <span style={{ color: C.warning, fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
             Đang phát triển
           </span>
         </div>
@@ -116,7 +116,7 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
             borderRadius: 12, padding: "16px 20px",
             textAlign: "left", marginBottom: 24,
           }}>
-            <div style={{ color: C.textMuted, fontSize: "0.62rem", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 10 }}>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 10 }}>
               Tính năng dự kiến
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -137,7 +137,7 @@ export function UnderDevelopment({ page }: UnderDevelopmentProps) {
           background: C.primaryBg, border: `1px solid ${C.primary}22`,
         }}>
           <Clock size={12} color={C.primary} strokeWidth={2} />
-          <span style={{ color: C.textBase, fontSize: "0.73rem" }}>
+          <span style={{ color: C.textBase, fontSize: "0.75rem" }}>
             Dự kiến hoàn thành: <strong style={{ color: C.primary }}>{config.eta}</strong>
           </span>
         </div>

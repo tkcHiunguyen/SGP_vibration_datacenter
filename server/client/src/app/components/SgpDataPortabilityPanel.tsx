@@ -79,7 +79,7 @@ export function SgpDataPortabilityPanel({
         <span style={{ width: 31, height: 31, borderRadius: 8, display: "grid", placeItems: "center", border: `1px solid ${active ? C.primary : C.border}`, flexShrink: 0 }}>{icon}</span>
         <span style={{ minWidth: 0 }}>
           <strong style={{ color: active ? C.primary : C.textBright, display: "block", fontSize: "0.76rem" }}>{label}</strong>
-          <span style={{ color: C.textMuted, display: "block", fontSize: "0.62rem", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detail}</span>
+          <span style={{ color: C.textMuted, display: "block", fontSize: "0.75rem", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detail}</span>
         </span>
       </button>
     );

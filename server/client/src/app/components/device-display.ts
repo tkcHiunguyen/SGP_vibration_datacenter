@@ -1,6 +1,15 @@
 import type { DeviceAxisKey, DeviceAxisLabels, DeviceTelemetryPoint, Sensor } from "../data/sensors";
 
 export type DeviceSortKey = "status" | "zone" | "name-az" | "device-id";
+export type DeviceStatusFilter = "all" | "online" | "offline" | "abnormal";
+
+type FilterableDashboardDevice = Pick<Sensor, "id" | "name" | "zone" | "zoneCode" | "online" | "status">;
+
+type DashboardDeviceFilters = {
+  search: string;
+  status: DeviceStatusFilter;
+  zone: string;
+};
 
 export const DEFAULT_DEVICE_SORT: DeviceSortKey = "zone";
 
@@ -72,12 +81,31 @@ function normalizeZoneLabel(value?: string): string {
   return trimmed && trimmed !== "--" ? trimmed : "";
 }
 
-function getSensorZoneLabel(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
+export function getDeviceZoneLabel(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
   return normalizeZoneLabel(sensor.zoneCode) || normalizeZoneLabel(sensor.zone) || UNASSIGNED_ZONE_LABEL;
 }
 
-function getSensorZoneKey(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
-  return getSensorZoneLabel(sensor).toLocaleLowerCase("vi-VN");
+export function getDeviceZoneKey(sensor: Pick<Sensor, "zoneCode" | "zone">): string {
+  return getDeviceZoneLabel(sensor).toLocaleLowerCase("vi-VN");
+}
+
+export function filterDashboardDevices<T extends FilterableDashboardDevice>(
+  devices: readonly T[],
+  filters: DashboardDeviceFilters,
+): T[] {
+  const query = filters.search.trim().toLocaleLowerCase("vi-VN");
+
+  return devices.filter((device) => {
+    const matchesSearch = !query || [device.name, device.id, device.zone, device.zoneCode]
+      .some((value) => value.toLocaleLowerCase("vi-VN").includes(query));
+    const matchesStatus = filters.status === "all"
+      || (filters.status === "online" && device.online)
+      || (filters.status === "offline" && !device.online)
+      || (filters.status === "abnormal" && device.status === "abnormal");
+    const matchesZone = filters.zone === "all" || getDeviceZoneKey(device) === filters.zone;
+
+    return matchesSearch && matchesStatus && matchesZone;
+  });
 }
 
 export function getDeviceAxisPeakMagnitude(point?: DeviceTelemetryPoint | null): number | null {
@@ -109,7 +137,7 @@ export function pickZoneAxisDisplayDeviceIds(
       return;
     }
 
-    const zoneKey = getSensorZoneKey(sensor);
+    const zoneKey = getDeviceZoneKey(sensor);
     const currentWinner = zoneWinners.get(zoneKey);
     if (!currentWinner || peak > currentWinner.peak) {
       zoneWinners.set(zoneKey, { deviceId: sensor.id, peak });

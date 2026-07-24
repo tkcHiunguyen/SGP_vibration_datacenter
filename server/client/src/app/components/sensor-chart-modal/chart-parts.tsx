@@ -27,6 +27,7 @@ const TREND_BUTTON_PAN_FRAME_MS = 34;
 const TREND_BUTTON_PAN_BASE_WINDOWS_PER_SECOND = 0.16;
 const TREND_BUTTON_PAN_MAX_WINDOWS_PER_SECOND = 1.05;
 const TREND_BUTTON_PAN_ACCELERATION_MS = 2_400;
+export const CHART_UI_FONT_SIZE_PX = 12;
 export const DEFAULT_SPECTRUM_SAMPLE_RATE_HZ = 1000;
 export const DEFAULT_SPECTRUM_SOURCE_SAMPLES = 1024;
 export const SPECTRUM_RENDER_BARS = 512;
@@ -1669,7 +1670,7 @@ export const TrendOverviewBrush = React.memo(function TrendOverviewBrush({
               return (
                 <g key={`overview-tick-${tick.getTime()}`} transform={`translate(${x},0)`}>
                   <line y1={barBottom + 2} y2={barBottom + 5} stroke={C.border} strokeWidth={0.8} />
-                  <text y={height - (wallboard ? 7 : 4)} fill={axisLabelColor} fontSize={wallboard ? 22 : 7.5} fontWeight={wallboard ? 700 : 400} textAnchor="middle">
+                  <text y={height - (wallboard ? 7 : 4)} fill={axisLabelColor} fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX} fontWeight={wallboard ? 700 : 400} textAnchor="middle">
                     {formatTrendAxisTime(tick.getTime(), firstTs, lastTs)}
                   </text>
                 </g>
@@ -1844,7 +1845,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
   const margin = useMemo(
     () => wallboard
       ? { left: 72, right: 24, top: showLegend ? 48 : 24, bottom: 44 }
-      : { left: 20, right: 8, top: showLegend ? 18 : 8, bottom: 18 },
+      : { left: 32, right: 8, top: showLegend ? 24 : 8, bottom: 24 },
     [showLegend, wallboard],
   );
 
@@ -2442,7 +2443,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
                         x={Math.min(x1, x2) + (wallboard ? 12 : 6)}
                         y={margin.top + (wallboard ? 26 : 12)}
                         fill={isServerOffline ? '#b45309' : '#dc2626'}
-                        fontSize={wallboard ? 22 : 9}
+                        fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX}
                         fontWeight={800}
                       >
                         {label}
@@ -2475,7 +2476,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
                         x={Math.min(x1, x2) + (wallboard ? 12 : 6)}
                         y={margin.top + (wallboard ? 26 : 12)}
                         fill="#2563eb"
-                        fontSize={wallboard ? 22 : 9}
+                        fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX}
                         fontWeight={800}
                       >
                         No data
@@ -2515,7 +2516,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
                   <g key={'latest-' + config.key}>
                     <circle cx={cx} cy={cy} r={wallboard ? 9 : 5} fill={config.color} stroke={C.surface} strokeWidth={wallboard ? 3 : 2} />
                     {latestLabel ? (
-                      <text x={cx} y={cy - (wallboard ? 18 : 10)} textAnchor="middle" fill={C.textBright} fontSize={wallboard ? 24 : 10} fontWeight={800}>
+                      <text x={cx} y={cy - (wallboard ? 18 : 14)} textAnchor="middle" fill={C.textBright} fontSize={wallboard ? 24 : CHART_UI_FONT_SIZE_PX} fontWeight={800}>
                         {latestLabel}
                       </text>
                     ) : null}
@@ -2603,7 +2604,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
             tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: wallboard ? 22 : 7,
+              fontSize: wallboard ? 22 : CHART_UI_FONT_SIZE_PX,
               fontWeight: wallboard ? 700 : 400,
               textAnchor: 'end',
               dy: '0.33em',
@@ -2618,7 +2619,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
             top={margin.top + innerHeight}
             numTicks={timeAxisTickCount}
             tickFormat={(value) => formatTrendAxisTime(Number(value), domainMin, domainMax)}
-            tickLabelProps={() => ({ fill: axisLabelColor, fontSize: wallboard ? 22 : 8, fontWeight: wallboard ? 700 : 400, textAnchor: 'middle' })}
+            tickLabelProps={() => ({ fill: axisLabelColor, fontSize: wallboard ? 22 : CHART_UI_FONT_SIZE_PX, fontWeight: wallboard ? 700 : 400, textAnchor: 'middle' })}
             stroke={gridColor}
             tickStroke={gridColor}
           />
@@ -2627,8 +2628,8 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
             <Group top={4} left={margin.left + 4}>
               {series.map((seriesConfig, index) => (
                 <g key={'legend-' + seriesConfig.key} transform={'translate(' + String(index * legendItemWidth) + ', 0)'}>
-                  <rect x={0} y={wallboard ? 4 : 0} width={wallboard ? 24 : 10} height={wallboard ? 6 : 3} rx={3} fill={seriesConfig.color} />
-                  <text x={wallboard ? 34 : 13} y={wallboard ? 20 : 4} fill={C.textMuted} fontSize={wallboard ? 22 : 10} fontWeight={wallboard ? 750 : 600}>
+                  <rect x={0} y={wallboard ? 4 : 5} width={wallboard ? 24 : 10} height={wallboard ? 6 : 3} rx={3} fill={seriesConfig.color} />
+                  <text x={wallboard ? 34 : 13} y={wallboard ? 20 : 12} fill={C.textMuted} fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX} fontWeight={wallboard ? 750 : 600}>
                     {seriesConfig.name}
                   </text>
                 </g>
@@ -2748,7 +2749,7 @@ export const TelemetryTrendChart = React.memo(function TelemetryTrendChart({
             padding: wallboard ? '14px 16px' : '7px 8px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             color: C.textBright,
-            fontSize: wallboard ? '24px' : '0.68rem',
+            fontSize: wallboard ? '24px' : '0.75rem',
             lineHeight: 1.35,
             minWidth: wallboard
               ? activeStatusTooltip || activeMissingDataTooltip ? 300 : 220
@@ -2846,7 +2847,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
   const margin = useMemo(
     () => wallboard
       ? { left: 72, right: 22, top: 28, bottom: 46 }
-      : { left: 20, right: 5, top: 12, bottom: 18 },
+      : { left: 32, right: 5, top: 12, bottom: 24 },
     [wallboard],
   );
 
@@ -2944,10 +2945,10 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
       return context.measureText(text).width;
     };
 
-    const titleFontSize = wallboard ? 24 : 11;
-    const metaFontSize = wallboard ? 22 : 9;
-    const titleLineHeight = wallboard ? 30 : 14;
-    const metaLineHeight = wallboard ? 28 : 12;
+    const titleFontSize = wallboard ? 24 : CHART_UI_FONT_SIZE_PX;
+    const metaFontSize = wallboard ? 22 : CHART_UI_FONT_SIZE_PX;
+    const titleLineHeight = wallboard ? 30 : 15;
+    const metaLineHeight = wallboard ? 28 : 15;
     const padX = wallboard ? 16 : 8;
     const padTop = wallboard ? 14 : 7;
     const padBottom = wallboard ? 12 : 6;
@@ -3130,7 +3131,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
                   x={peakAnnotation.textX}
                   y={peakAnnotation.titleY}
                   fill={C.textBright}
-                  fontSize={wallboard ? 24 : 11}
+                  fontSize={wallboard ? 24 : CHART_UI_FONT_SIZE_PX}
                   fontWeight={800}
                 >
                   {peakAnnotation.titleText}
@@ -3139,7 +3140,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
                   x={peakAnnotation.textX}
                   y={peakAnnotation.freqY}
                   fill={axisLabelColor}
-                  fontSize={wallboard ? 22 : 9}
+                  fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX}
                   fontWeight={wallboard ? 700 : 600}
                 >
                   {peakAnnotation.freqText}
@@ -3148,7 +3149,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
                   x={peakAnnotation.textX}
                   y={peakAnnotation.ampY}
                   fill={axisLabelColor}
-                  fontSize={wallboard ? 22 : 9}
+                  fontSize={wallboard ? 22 : CHART_UI_FONT_SIZE_PX}
                   fontWeight={wallboard ? 700 : 600}
                 >
                   {peakAnnotation.ampText}
@@ -3175,7 +3176,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
             tickFormat={(value) => formatCompactAxisNumber(Number(value))}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: wallboard ? 22 : 7,
+              fontSize: wallboard ? 22 : CHART_UI_FONT_SIZE_PX,
               fontWeight: wallboard ? 700 : 400,
               textAnchor: "end",
               dy: "0.33em",
@@ -3199,7 +3200,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
             }}
             tickLabelProps={() => ({
               fill: axisLabelColor,
-              fontSize: wallboard ? 22 : 8,
+              fontSize: wallboard ? 22 : CHART_UI_FONT_SIZE_PX,
               fontWeight: wallboard ? 700 : 400,
               textAnchor: "middle",
             })}
@@ -3237,7 +3238,7 @@ export const SpectrumZoomChart = React.memo(function SpectrumZoomChart({
             padding: wallboard ? "14px 16px" : "7px 9px",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             color: C.textBright,
-            fontSize: wallboard ? "24px" : "0.68rem",
+            fontSize: wallboard ? "24px" : "0.75rem",
             lineHeight: 1.35,
             minWidth: wallboard ? 300 : 150,
           }}
@@ -3294,7 +3295,7 @@ export function ChartSection({
             title={title}
             style={{
               color: C.textBright,
-              fontSize: wallboard ? "30px" : "0.7rem",
+              fontSize: wallboard ? "30px" : "0.75rem",
               fontWeight: wallboard ? 800 : 700,
               minWidth: 0,
               overflow: "hidden",
@@ -3364,7 +3365,7 @@ export function SpectrumLoadingState({
           border: overlay ? "1px solid rgba(15, 23, 42, 0.16)" : `1px solid ${C.border}`,
           background: overlay ? "rgba(255, 255, 255, 0.96)" : `${C.surface}EE`,
           color: overlay ? "#0f172a" : C.textBright,
-          fontSize: "0.68rem",
+          fontSize: "0.75rem",
           fontWeight: 700,
           boxShadow: overlay ? "0 8px 20px rgba(15, 23, 42, 0.12)" : "0 10px 22px rgba(15, 23, 42, 0.14)",
         }}
@@ -3424,7 +3425,7 @@ export function SpectrumNoDataState({
           border: `1px solid ${accentColor}55`,
           background: `${accentColor}12`,
           color: C.textBright,
-          fontSize: "0.68rem",
+          fontSize: "0.75rem",
           fontWeight: 800,
           whiteSpace: "nowrap",
         }}

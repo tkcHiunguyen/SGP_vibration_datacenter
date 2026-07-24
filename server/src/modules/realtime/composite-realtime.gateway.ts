@@ -47,6 +47,10 @@ export class CompositeRealtimeGateway implements RealtimeGateway {
     this.forEachGateway((gateway) => gateway.broadcastDeviceSensorStatus(payload));
   }
 
+  broadcastDisplayRefresh(requestId: string): void {
+    this.forEachGateway((gateway) => gateway.broadcastDisplayRefresh(requestId));
+  }
+
   sendCommand(deviceId: string, command: DeviceCommand): void {
     this.forEachGateway((gateway) => gateway.sendCommand(deviceId, command));
   }

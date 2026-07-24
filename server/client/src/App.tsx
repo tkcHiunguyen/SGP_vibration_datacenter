@@ -1,4 +1,4 @@
-import { lazy, Profiler, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from "react";
+import { lazy, Profiler, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ProfilerOnRenderCallback } from "react";
 import { io } from "socket.io-client";
 import { ThemeProvider, useTheme } from "./app/context/ThemeContext";
 import { DisplayModeProvider, useDisplayMode } from "./app/context/DisplayModeContext";
@@ -7,6 +7,7 @@ import { LeftPanel } from "./app/components/LeftPanel";
 import { MainPanel } from "./app/components/MainPanel";
 import { DisplayScreenshotReporter } from "./app/components/DisplayScreenshotReporter";
 import { ToastStack } from "./app/components/ui";
+import { APP_VERSION_CHECK_EVENT, APP_VERSION_QUERY_KEY, createAppVersionReloadUrl } from "./app/app-version";
 import {
   DeviceListItem,
   DeviceAdxlHealth,
@@ -30,6 +31,14 @@ const NAV_TO_PATH: Record<string, string> = {
   "Quản lý khu vực": "/zones",
   "Phân tích": "/analysis",
   "Cài đặt": "/settings",
+};
+
+const NAV_TO_TITLE: Record<string, string> = {
+  "Tổng quan": "Tổng quan",
+  "Update Center": "Update Center",
+  "Quản lý khu vực": "Quản lý khu vực",
+  "Phân tích": "Phân tích ngưỡng",
+  "Cài đặt": "Cài đặt",
 };
 
 const SIDEBAR_NAV_ORDER = [
@@ -631,6 +640,10 @@ function DashboardShell({
   const navigateToNav = useCallback((label: string, mode: "push" | "replace" = "push") => {
     const targetLabel = label || "Tổng quan";
     const targetPath = pathFromNav(targetLabel);
+    const currentVersion = new URLSearchParams(window.location.search).get(APP_VERSION_QUERY_KEY);
+    const targetUrl = currentVersion
+      ? createAppVersionReloadUrl(new URL(targetPath, window.location.origin).toString(), currentVersion)
+      : targetPath;
     setActiveNav(targetLabel);
 
     if (normalizePathname(window.location.pathname) === normalizePathname(targetPath)) {
@@ -638,11 +651,11 @@ function DashboardShell({
     }
 
     if (mode === "replace") {
-      window.history.replaceState({}, "", targetPath);
+      window.history.replaceState({}, "", targetUrl);
       return;
     }
 
-    window.history.pushState({}, "", targetPath);
+    window.history.pushState({}, "", targetUrl);
   }, []);
 
   useEffect(() => {
@@ -659,6 +672,10 @@ function DashboardShell({
     };
   }, [navigateToNav]);
 
+  useEffect(() => {
+    document.title = `${NAV_TO_TITLE[activeNav] || activeNav} · SGP Vibration Datacenter`;
+  }, [activeNav]);
+
   return (
     <div
       className={`dc-app-shell${wallboard ? " dc-wallboard-mode" : ""}`}
@@ -668,7 +685,10 @@ function DashboardShell({
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         transition: "background 0.25s",
         colorScheme: theme,
-      }}
+        "--dc-theme-text-bright": C.textBright,
+        "--dc-theme-text-muted": C.textMuted,
+        "--dc-theme-warning": C.warning,
+      } as CSSProperties}
     >
       <TopHeader
         activeNav={activeNav}
@@ -1250,7 +1270,6 @@ export default function App() {
   }
 
   useEffect(() => {
-    document.title = "SGP Vibration Datacenter";
     void loadDeviceInventory(true);
 
     const refreshInventory = () => {
@@ -1283,6 +1302,7 @@ export default function App() {
     });
 
     socket.on("connect", () => {
+      window.dispatchEvent(new Event(APP_VERSION_CHECK_EVENT));
       showToast({
         text: "Đã kết nối tới server realtime",
         type: "success",
@@ -1296,6 +1316,13 @@ export default function App() {
         text: "Mất kết nối realtime, đang thử kết nối lại",
         type: "warning",
       });
+    });
+
+    socket.on("display:refresh", (event: unknown) => {
+      const requestId = safeString(asRecord(event).requestId).trim();
+      if (requestId) {
+        window.location.replace(createAppVersionReloadUrl(window.location.href, requestId));
+      }
     });
 
     socket.on("telemetry", (event: unknown) => {

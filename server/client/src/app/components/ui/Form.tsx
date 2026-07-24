@@ -38,7 +38,7 @@ export function FormInput(
     <input
       {...rest}
       className={cx(
-        "w-full border-none bg-transparent text-[0.74rem] outline-none",
+        "w-full border-none bg-transparent text-[0.75rem] outline-none",
         className,
       )}
       style={{ color: C.textBright, ...style }}
@@ -58,7 +58,7 @@ export function FormSelect(
     <select
       {...rest}
       className={cx(
-        "w-full border-none bg-transparent text-[0.72rem] outline-none",
+        "w-full border-none bg-transparent text-[0.75rem] outline-none",
         className,
       )}
       style={{ color: C.textBright, ...style }}
@@ -78,7 +78,7 @@ export function FormTextarea(
     <textarea
       {...rest}
       className={cx(
-        "w-full rounded-[9px] border px-2.5 py-2.5 text-[0.74rem] outline-none",
+        "w-full rounded-[9px] border px-2.5 py-2.5 text-[0.75rem] outline-none",
         className,
       )}
       style={{

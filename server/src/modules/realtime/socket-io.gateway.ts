@@ -51,6 +51,10 @@ export class SocketIoGateway implements RealtimeGateway {
     this.io.to(DASHBOARD_ROOM).emit('device:sensor-status', payload);
   }
 
+  broadcastDisplayRefresh(requestId: string): void {
+    this.io.to(DASHBOARD_ROOM).emit('display:refresh', { requestId });
+  }
+
   sendCommand(deviceId: string, command: DeviceCommand): void {
     const payload =
       command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)

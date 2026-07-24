@@ -1,11 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MotorSceneCanvas } from "./MotorSceneCanvas";
 
 export function ThreeDPage() {
   const [panoramaQuality, setPanoramaQuality] = useState<"balanced" | "high">("balanced");
 
+  useEffect(() => {
+    document.title = "Mô hình 3D · SGP Vibration Datacenter";
+  }, []);
+
   return (
-    <div style={{ position: "relative", width: "100vw", height: "100dvh" }}>
+    <main style={{ position: "relative", width: "100vw", height: "100dvh" }}>
+      <h1 className="sr-only">Mô hình thiết bị 3D</h1>
       <MotorSceneCanvas className="motor-scene-canvas--viewport" panoramaQuality={panoramaQuality} />
       <button
         type="button"
@@ -28,6 +33,6 @@ export function ThreeDPage() {
       >
         Panorama: {panoramaQuality === "high" ? "8K" : "4K tối ưu"}
       </button>
-    </div>
+    </main>
   );
 }

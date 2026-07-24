@@ -12,8 +12,12 @@ import { useDisplayMode } from "../context/DisplayModeContext";
 import {
   buildDeviceTelemetryCardReadout,
   DEFAULT_DEVICE_SORT,
+  filterDashboardDevices,
   getDeviceAxisPeakMagnitude,
+  getDeviceZoneKey,
+  getDeviceZoneLabel,
   getLatestDeviceTelemetryPoint,
+  type DeviceStatusFilter,
   type DeviceSortKey,
 } from "./device-display";
 
@@ -190,7 +194,7 @@ const DeviceCard = React.memo(function DeviceCard({
             title={sensor.name}
             style={{
               color: C.textBright,
-              fontSize: "0.72rem",
+              fontSize: "0.875rem",
               fontWeight: 750,
               lineHeight: 1,
               flex: "1 1 auto",
@@ -247,7 +251,7 @@ const DeviceCard = React.memo(function DeviceCard({
                 background: C.surface,
                 border: `1px solid ${C.border}`,
                 color: C.textBase,
-                fontSize: "0.58rem",
+                fontSize: "0.75rem",
                 fontWeight: 600,
                 padding: "2px 6px",
                 borderRadius: 6,
@@ -305,7 +309,7 @@ const DeviceCard = React.memo(function DeviceCard({
                   background: C.surface,
                   border: `1px solid ${C.border}`,
                   color: C.textBase,
-                  fontSize: "0.58rem",
+                  fontSize: "0.75rem",
                   fontWeight: 600,
                   padding: "2px 6px",
                   borderRadius: 6,
@@ -355,7 +359,7 @@ const DeviceCard = React.memo(function DeviceCard({
                 gap: 3,
               }}
             >
-              <span className="dc-device-card-temp-label" style={{ color: C.warning, fontSize: "0.4rem", fontWeight: 900, letterSpacing: "0.09em", lineHeight: 1 }}>
+              <span className="dc-device-card-temp-label" style={{ color: C.warning, fontSize: "0.75rem", fontWeight: 900, letterSpacing: "0.04em", lineHeight: 1 }}>
                 TEMP
               </span>
               <TelemetryValue
@@ -395,7 +399,7 @@ const DeviceCard = React.memo(function DeviceCard({
                       className="dc-device-card-axis-label"
                       style={{
                         color: C.textMuted,
-                        fontSize: "0.42rem",
+                        fontSize: "0.75rem",
                         fontWeight: 850,
                         letterSpacing: "0.02em",
                         lineHeight: 1,
@@ -449,6 +453,7 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls="device-sort-menu"
         aria-label={`Sắp xếp theo ${current.label}`}
         onClick={() => setOpen(v => !v)}
         style={{
@@ -471,7 +476,7 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={() => setOpen(false)} />
-          <div className="dc-device-sort-menu" style={{
+          <div id="device-sort-menu" className="dc-device-sort-menu" role="menu" style={{
             position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 20,
             background: C.card, border: `1px solid ${C.cardBorder}`,
             borderRadius: 10, overflow: "hidden", minWidth: 175,
@@ -489,7 +494,7 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
                   width: "100%", padding: "8px 12px", textAlign: "left",
                   background: value === opt.key ? C.primaryBg : "transparent",
                   color: value === opt.key ? C.primary : C.textBase,
-                  fontSize: "0.73rem", fontWeight: value === opt.key ? 600 : 400,
+                  fontSize: "0.75rem", fontWeight: value === opt.key ? 600 : 400,
                   border: "none", cursor: "pointer",
                   borderLeft: value === opt.key ? `2px solid ${C.primary}` : "2px solid transparent",
                   transition: "background 0.1s",
@@ -513,8 +518,6 @@ function SortDropdown({ value, onChange }: { value: SortKey; onChange: (v: SortK
   );
 }
 
-const UNASSIGNED_ZONE_LABEL = "Chưa gán";
-
 type ZoneDeviceGroup = {
   key: string;
   label: string;
@@ -524,25 +527,12 @@ type ZoneDeviceGroup = {
   abnormal: number;
 };
 
-function normalizeZoneLabel(value?: string): string {
-  const trimmed = value?.trim() || "";
-  return trimmed && trimmed !== "--" ? trimmed : "";
-}
-
-function getSensorZoneLabel(sensor: Sensor): string {
-  return normalizeZoneLabel(sensor.zoneCode) || normalizeZoneLabel(sensor.zone) || UNASSIGNED_ZONE_LABEL;
-}
-
-function getSensorZoneKey(sensor: Sensor): string {
-  return getSensorZoneLabel(sensor).toLocaleLowerCase("vi-VN");
-}
-
 function groupSensorsByZone(sensors: Sensor[]): ZoneDeviceGroup[] {
   const groups = new Map<string, ZoneDeviceGroup>();
 
   sensors.forEach((sensor) => {
-    const label = getSensorZoneLabel(sensor);
-    const key = getSensorZoneKey(sensor);
+    const label = getDeviceZoneLabel(sensor);
+    const key = getDeviceZoneKey(sensor);
 
     if (!groups.has(key)) {
       groups.set(key, {
@@ -656,7 +646,7 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
                 rel="noreferrer"
                 style={{
                   color: C.primary,
-                  fontSize: "0.72rem",
+                  fontSize: "0.75rem",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 5,
@@ -754,7 +744,6 @@ function DeviceWebModal({ sensor, onClose }: { sensor: Sensor | null; onClose: (
 }
 
 /* ── Main Component ── */
-type FilterKey = "all" | "online" | "offline" | "abnormal";
 type DeviceInfoMode = "view" | "edit" | "delete";
 
 type DeviceContextMenuState = {
@@ -893,9 +882,9 @@ export function DeviceManagement({
   const [exitingDeviceIds, setExitingDeviceIds] = useState<Set<string>>(() => new Set());
   const [hiddenDeviceIds, setHiddenDeviceIds] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter] = useState<DeviceStatusFilter>("all");
+  const [zoneFilter, setZoneFilter] = useState("all");
   const [sort, setSort]     = useState<SortKey>(DEFAULT_DEVICE_SORT);
-  const [sortIconHovered, setSortIconHovered] = useState(false);
   const [page, setPage] = useState(() => readStoredNumber(STORAGE_PAGE_KEY, 1));
   const [pageSize, setPageSize] = useState(() => {
     const stored = readStoredNumber(STORAGE_PAGE_SIZE_KEY, 20);
@@ -1056,29 +1045,24 @@ export function DeviceManagement({
   const offline  = visibleSensors.filter(s => !s.online).length;
   const abnormal = visibleSensors.filter(s => s.status === "abnormal").length;
 
-  const FILTERS: { key: FilterKey; label: string; count: number }[] = [
+  const FILTERS: { key: DeviceStatusFilter; label: string; count: number }[] = [
     { key: "all",      label: "Tất cả thiết bị", count: total    },
     { key: "online",   label: "Online",          count: online   },
     { key: "offline",  label: "Offline",         count: offline  },
     { key: "abnormal", label: "Đang cảnh báo",   count: abnormal },
   ];
 
-  const baseFilteredSensors = useMemo(() => {
-    return visibleSensors.filter(s => {
-      const q = search.toLowerCase();
-      const matchSearch =
-        s.name.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        s.zone.toLowerCase().includes(q) ||
-        s.zoneCode.toLowerCase().includes(q);
-      const matchFilter =
-        filter === "all" ? true :
-        filter === "online"   ? s.online :
-        filter === "offline"  ? !s.online :
-        s.status === "abnormal";
-      return matchSearch && matchFilter;
-    });
-  }, [visibleSensors, search, filter]);
+  const zoneOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    visibleSensors.forEach((sensor) => options.set(getDeviceZoneKey(sensor), getDeviceZoneLabel(sensor)));
+    return Array.from(options, ([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "vi"));
+  }, [visibleSensors]);
+
+  const baseFilteredSensors = useMemo(
+    () => filterDashboardDevices(visibleSensors, { search, status: filter, zone: zoneFilter }),
+    [visibleSensors, search, filter, zoneFilter],
+  );
 
   const displayed = useMemo(() => {
     let list = [...baseFilteredSensors];
@@ -1098,7 +1082,7 @@ export function DeviceManagement({
         list = [...list].sort((a, b) => a.name.localeCompare(b.name, "vi"));
         break;
       case "zone":
-        list = [...list].sort((a, b) => getSensorZoneLabel(a).localeCompare(getSensorZoneLabel(b), "vi"));
+        list = [...list].sort((a, b) => getDeviceZoneLabel(a).localeCompare(getDeviceZoneLabel(b), "vi"));
         break;
       case "device-id":
         list = [...list].sort((a, b) => a.id.localeCompare(b.id, "vi"));
@@ -1113,7 +1097,7 @@ export function DeviceManagement({
       return;
     }
     setPage(1);
-  }, [search, filter, sort, pageSize]);
+  }, [search, filter, zoneFilter, sort, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(displayed.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -1425,7 +1409,7 @@ export function DeviceManagement({
       alignItems: "center",
       gap: 8,
       padding: "10px 11px",
-      fontSize: "0.74rem",
+      fontSize: "0.75rem",
       transition: "background 140ms ease, color 140ms ease, transform 120ms ease",
       transform: hovered ? "translateX(1px)" : "translateX(0)",
     };
@@ -1511,11 +1495,90 @@ export function DeviceManagement({
           <input
             data-ux="device-search"
             type="text"
+            aria-label="Tìm thiết bị theo tên, ID hoặc khu vực"
             placeholder="Tìm theo tên, ID, khu vực…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.72rem", flex: 1, minWidth: 0 }}
+            style={{ background: "transparent", border: "none", outline: "none", color: C.textBright, fontSize: "0.875rem", flex: 1, minWidth: 0 }}
           />
+        </div>
+
+        <div
+          className="dc-device-filter-shell"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            height: 32,
+            padding: "0 8px",
+            borderRadius: 12,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+            width: "auto",
+            justifyContent: "flex-start",
+            minWidth: 0,
+            flexShrink: 0,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              color: C.textMuted,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              flexShrink: 0,
+            }}
+          >
+            <Filter size={13} strokeWidth={2} />
+          </span>
+          <select
+            className="dc-device-filter-select"
+            aria-label="Lọc thiết bị theo trạng thái"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as DeviceStatusFilter)}
+            style={{
+              height: 28,
+              minWidth: 124,
+              padding: "0 8px",
+              borderRadius: 7,
+              border: `1px solid ${C.cardBorder}`,
+              background: C.card,
+              color: C.textBase,
+              fontSize: "0.75rem",
+              cursor: "pointer",
+            }}
+          >
+            {FILTERS.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+          <select
+            className="dc-device-filter-select"
+            aria-label="Lọc thiết bị theo khu vực"
+            value={zoneFilter}
+            onChange={(event) => setZoneFilter(event.target.value)}
+            style={{
+              height: 28,
+              minWidth: 124,
+              padding: "0 8px",
+              borderRadius: 7,
+              border: `1px solid ${C.cardBorder}`,
+              background: C.card,
+              color: C.textBase,
+              fontSize: "0.75rem",
+              cursor: "pointer",
+            }}
+          >
+            <option value="all">Tất cả khu vực</option>
+            {zoneOptions.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
         </div>
 
         <div
@@ -1536,63 +1599,16 @@ export function DeviceManagement({
             flexShrink: 0,
           }}
         >
-          <div
-            style={{ position: "relative", display: "inline-flex", alignItems: "center", flexShrink: 0 }}
-            onMouseEnter={() => setSortIconHovered(true)}
-            onMouseLeave={() => setSortIconHovered(false)}
-          >
-            <span
-              style={{
-                color: C.textMuted,
-                fontSize: "0.66rem",
-                fontWeight: 600,
-                display: "inline-flex",
-                alignItems: "center",
-                width: 30,
-                height: 26,
-                justifyContent: "center",
-                borderRadius: 8,
-                border: `1px solid ${C.cardBorder}`,
-                background: C.card,
-              }}
-              aria-label="Bộ lọc sắp xếp"
-            >
-              <Filter size={12} strokeWidth={2} />
-            </span>
-            <div
-              className="dc-device-sort-tooltip"
-              style={{
-                position: "absolute",
-                bottom: "calc(100% + 6px)",
-                left: "50%",
-                transform: sortIconHovered
-                  ? "translateX(-50%) translateY(0)"
-                  : "translateX(-50%) translateY(2px)",
-                opacity: sortIconHovered ? 1 : 0,
-                pointerEvents: "none",
-                transition: "opacity 0.14s ease, transform 0.14s ease",
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                color: C.textBase,
-                fontSize: "0.62rem",
-                fontWeight: 600,
-                padding: "2px 7px",
-                borderRadius: 6,
-                whiteSpace: "nowrap",
-                zIndex: 5,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-              }}
-            >
-              Sắp xếp
-            </div>
-          </div>
+          <span aria-hidden="true" style={{ color: C.textMuted, display: "inline-flex", alignItems: "center" }}>
+            <ArrowUpDown size={13} strokeWidth={2} />
+          </span>
           <div style={{ width: 1, height: 16, background: C.border, flexShrink: 0 }} />
           <div style={{ minWidth: 0, flex: "0 0 auto", display: "flex", justifyContent: "flex-start" }}>
             <SortDropdown value={sort} onChange={setSort} />
           </div>
         </div>
 
-        <div className="dc-device-result-count" style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
+        <div className="dc-device-result-count" style={{ color: C.textMuted, display: dashboardHeaderControlsSingleColumn ? "none" : "block", fontSize: "0.75rem", fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap", flexShrink: 0 }}>
           Hiển thị {pagedDevices.length} / {displayed.length} thiết bị
         </div>
 
@@ -1615,7 +1631,7 @@ export function DeviceManagement({
               gap: 6,
               cursor: "pointer",
               flexShrink: 0,
-              fontSize: "0.7rem",
+              fontSize: "0.75rem",
               fontWeight: 700,
             }}
           >
@@ -1647,14 +1663,15 @@ export function DeviceManagement({
             }}>
               <Layers size={28} strokeWidth={1.2} />
               <div className="dc-device-empty-state-title" style={{ fontSize: "0.82rem" }}>Không tìm thấy thiết bị nào</div>
-              <div className="dc-device-empty-state-copy" style={{ fontSize: "0.7rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
-              {(search || filter !== "all") ? (
+              <div className="dc-device-empty-state-copy" style={{ fontSize: "0.75rem", color: C.textDim }}>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm</div>
+              {(search || filter !== "all" || zoneFilter !== "all") ? (
                 <button
                   className="dc-device-empty-state-action"
                   type="button"
                   onClick={() => {
                     setSearch("");
                     setFilter("all");
+                    setZoneFilter("all");
                   }}
                   style={{
                     height: 32,
@@ -1665,7 +1682,7 @@ export function DeviceManagement({
                     background: C.surface,
                     color: C.textBase,
                     cursor: "pointer",
-                    fontSize: "0.7rem",
+                    fontSize: "0.75rem",
                     fontWeight: 700,
                   }}
                 >
@@ -1715,11 +1732,11 @@ export function DeviceManagement({
                           >
                             {zoneGroup.label}
                           </h3>
-                          <span className="dc-zone-device-count" style={{ color: C.textMuted, fontSize: "0.68rem", fontWeight: 650, whiteSpace: "nowrap" }}>
+                          <span className="dc-zone-device-count" style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 650, whiteSpace: "nowrap" }}>
                             {zoneGroup.total} thiết bị
                           </span>
                         </div>
-                        <div className="dc-zone-status" style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.66rem", fontWeight: 650, flexWrap: "wrap" }}>
+                        <div className="dc-zone-status" style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: "0.75rem", fontWeight: 650, flexWrap: "wrap" }}>
                           <span style={{ color: C.success, whiteSpace: "nowrap" }}>{zoneGroup.online} online</span>
                           {zoneGroup.abnormal > 0 && <span style={{ color: C.danger, whiteSpace: "nowrap" }}>{zoneGroup.abnormal} cảnh báo</span>}
                         </div>
@@ -1796,7 +1813,7 @@ export function DeviceManagement({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: C.textMuted, fontSize: "0.7rem", fontWeight: 600 }}>
+                  <span style={{ color: C.textMuted, fontSize: "0.75rem", fontWeight: 600 }}>
                     Thiết bị / trang
                   </span>
                   <div style={{ position: "relative" }}>
@@ -1811,7 +1828,7 @@ export function DeviceManagement({
                         background: C.card,
                         border: `1px solid ${C.cardBorder}`,
                         color: C.textBase,
-                        fontSize: "0.72rem",
+                        fontSize: "0.75rem",
                         padding: "0 28px 0 10px",
                         appearance: "none",
                         cursor: "pointer",
@@ -1855,7 +1872,7 @@ export function DeviceManagement({
                   </button>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>Trang</span>
+                    <span style={{ color: C.textMuted, fontSize: "0.75rem" }}>Trang</span>
                     <input
                       data-ux="page-input"
                       className="page-input"
@@ -1878,12 +1895,12 @@ export function DeviceManagement({
                         border: `1px solid ${C.cardBorder}`,
                         background: C.card,
                         color: C.textBase,
-                        fontSize: "0.72rem",
+                        fontSize: "0.75rem",
                         textAlign: "center",
                         outline: "none",
                       }}
                     />
-                    <span style={{ color: C.textMuted, fontSize: "0.7rem" }}>/ {totalPages}</span>
+                    <span style={{ color: C.textMuted, fontSize: "0.75rem" }}>/ {totalPages}</span>
                   </div>
 
                   <button

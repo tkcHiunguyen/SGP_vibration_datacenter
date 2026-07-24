@@ -3,7 +3,7 @@ import { domToBlob } from "modern-screenshot";
 import { isAppVersionWatcherBusy } from "../app-version";
 
 const DISPLAY_CLIENT_ID_STORAGE_KEY = "sgp:display-client-id:v1";
-const CAPTURE_DELAY_MS = 8_000;
+const CAPTURE_DELAY_MS = 5_000;
 const RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 30_000, 60_000] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

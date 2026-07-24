@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CHART_UI_FONT_SIZE_PX,
   DEFAULT_HISTORY_PRESET_KEY,
   FFT_AXIS_DISPLAY_ORDER,
   getChartModalLayout,
   toSpectrumChartData,
   VIBRATION_AXIS_LABELS,
 } from "./chart-parts";
+
+test("keeps operational chart text at the 12px readability floor", () => {
+  assert.equal(CHART_UI_FONT_SIZE_PX, 12);
+});
 
 test("opens the data view with the last hour selected", () => {
   assert.equal(DEFAULT_HISTORY_PRESET_KEY, "1h");

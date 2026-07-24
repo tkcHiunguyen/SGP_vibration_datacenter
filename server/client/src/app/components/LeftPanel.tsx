@@ -82,7 +82,7 @@ export function LeftPanel({
           { label: "Cảnh báo", value: alertCount, color: C.danger, icon: <AlertTriangle size={12} strokeWidth={2.2} /> },
         ].map((stat) => (
           <div className="dc-sidebar-stat-card" key={stat.label} style={{ border: `1px solid ${C.cardBorder}`, background: C.card, borderRadius: 10, padding: "7px 8px", minWidth: 0 }}>
-            <div className="dc-sidebar-stat-label" style={{ display: "flex", alignItems: "center", gap: 5, color: stat.color, fontSize: "0.62rem", fontWeight: 760, textTransform: "uppercase" }}>
+            <div className="dc-sidebar-stat-label" style={{ display: "flex", alignItems: "center", gap: 5, color: stat.color, fontSize: "0.75rem", fontWeight: 760, textTransform: "uppercase" }}>
               {stat.icon}<span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stat.label}</span>
             </div>
             <div className="dc-sidebar-stat-value" style={{ marginTop: 4, color: C.textBright, fontSize: "1.05rem", fontWeight: 820, lineHeight: 1 }}>{stat.value}</div>
@@ -99,17 +99,6 @@ export function LeftPanel({
             <div
               className="dc-sidebar-nav-item"
               key={label}
-              role="button"
-              aria-current={isActive ? "page" : undefined}
-              aria-label={`Mở ${label}`}
-              tabIndex={0}
-              onClick={() => onNavChange(label)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onNavChange(label);
-                }
-              }}
               onMouseEnter={() => setHoveredItem(label)}
               onMouseLeave={() => setHoveredItem((current) => (current === label ? null : current))}
               style={{
@@ -124,39 +113,61 @@ export function LeftPanel({
                     : C.card,
                 color: isActive ? C.primary : isHovered ? C.textBright : C.textBase,
                 display: "grid",
-                gridTemplateColumns: "28px minmax(0, 1fr) 32px",
+                gridTemplateColumns: "minmax(0, 1fr) 32px",
                 alignItems: "center",
                 gap: 8,
                 padding: "5px 7px 5px 8px",
-                cursor: "pointer",
                 userSelect: "none",
-                outline: "none",
                 transform: isActive ? "translateX(2px)" : isHovered ? "translateX(2px)" : "translateX(0)",
                 transition:
                   "background 180ms ease-out, border-color 180ms ease-out, color 160ms ease-out, transform 180ms ease-out",
               }}
             >
-              <div
+              <button
+                className="dc-sidebar-nav-link"
+                type="button"
+                aria-current={isActive ? "page" : undefined}
+                aria-label={`Mở ${label}`}
+                onClick={() => onNavChange(label)}
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 9,
-                  background: isActive ? C.primary + "20" : isHovered ? C.primary + "16" : C.surface,
-                  border: `1px solid ${isActive ? C.primary + "55" : C.border}`,
-                  color: isActive ? C.primary : C.textMuted,
-                  display: "inline-flex",
+                  minWidth: 0,
+                  minHeight: 32,
+                  padding: 0,
+                  border: 0,
+                  borderRadius: 8,
+                  background: "transparent",
+                  color: "inherit",
+                  cursor: "pointer",
+                  display: "grid",
+                  gridTemplateColumns: "28px minmax(0, 1fr)",
                   alignItems: "center",
-                  justifyContent: "center",
+                  gap: 8,
+                  textAlign: "left",
                 }}
               >
-                {navIcon(label)}
-              </div>
-
-              <div style={{ minWidth: 0, display: "flex", alignItems: "center" }}>
-                <span className="dc-sidebar-nav-label" style={{ minWidth: 0, color: isActive ? C.textBright : "inherit", fontSize: "0.74rem", fontWeight: isActive ? 760 : 620, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {label}
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 9,
+                    background: isActive ? C.primary + "20" : isHovered ? C.primary + "16" : C.surface,
+                    border: `1px solid ${isActive ? C.primary + "55" : C.border}`,
+                    color: isActive ? C.primary : C.textMuted,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {navIcon(label)}
                 </span>
-              </div>
+
+                <span style={{ minWidth: 0, display: "flex", alignItems: "center" }}>
+                  <span className="dc-sidebar-nav-label" style={{ minWidth: 0, color: isActive ? C.textBright : "inherit", fontSize: "0.75rem", fontWeight: isActive ? 760 : 620, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {label}
+                  </span>
+                </span>
+              </button>
 
               <button
                 className="dc-sidebar-pin-button"
@@ -180,7 +191,7 @@ export function LeftPanel({
                   alignItems: "center",
                   justifyContent: "center",
                   transition:
-                    "background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.22s ease",
+                    "background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease",
                   transform: isPinned ? "rotate(-16deg) scale(1.05)" : isHovered ? "scale(1.04)" : "scale(1)",
                 }}
               >
